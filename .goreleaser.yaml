@@ -1,0 +1,78 @@
+---
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: sextant
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: sextant
+    main: ./cmd/sextant
+    binary: sextant
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .CommitDate }}
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files: [LICENSE, README.md]
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  # The edge workflow sets SEXTANT_SNAPSHOT_VERSION=edge so that the rolling
+  # prerelease produces stable artifact names — sextant_edge_linux_amd64.tar.gz —
+  # which is what lets the README publish a download URL that never expires.
+  # Unset, as in `make snapshot`, this is the usual next-patch name.
+  #
+  # `index .Env` rather than `.Env.SEXTANT_SNAPSHOT_VERSION`: the latter is a
+  # template error when the variable is absent, which would break local builds.
+  version_template: >-
+    {{ with index .Env "SEXTANT_SNAPSHOT_VERSION" }}{{ . }}{{ else }}{{ incpatch .Version }}-next{{ end }}
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+  filters:
+    exclude: ['^docs:', '^test:', '^chore:', '^ci:', Merge pull request]
+
+release:
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Install
+
+    ```sh
+    # Linux x86_64
+    curl -sSfL https://github.com/runlevel-six/sextant/releases/download/{{ .Tag }}/sextant_{{ .Version }}_linux_amd64.tar.gz \
+      | tar -xz -C ~/bin sextant
+
+    # macOS Apple Silicon
+    curl -sSfL https://github.com/runlevel-six/sextant/releases/download/{{ .Tag }}/sextant_{{ .Version }}_darwin_arm64.tar.gz \
+      | tar -xz -C ~/bin sextant
+    ```
+
+    Verify with `sextant --version`.

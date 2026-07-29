@@ -1,0 +1,436 @@
+// Package ceph reports a Rook-managed Ceph cluster's health.
+//
+// Detail comes from `ceph -s --format=json` run inside a tools pod, so this is a
+// tiered plugin: without `pods/exec` it reports what the CephCluster CR alone
+// says, which is a health enum and nothing else.
+//
+// # Tested against
+//
+// The parser is exercised against captured output from a production Reef cluster
+// (see testdata), including the summary-only `mgrmap` that current releases emit.
+package ceph
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/runlevel-six/sextant/internal/plugin/kube"
+	"github.com/runlevel-six/sextant/pkg/store"
+	"github.com/runlevel-six/sextant/pkg/tui"
+)
+
+// Name is the plugin's registration name.
+const Name = "ceph"
+
+// KeyState holds a State.
+const KeyState = "ceph/state"
+
+// pollInterval is how often `ceph -s` is re-run: one or two execs per poll.
+const pollInterval = 20 * time.Second
+
+// Check is one health check Ceph is reporting.
+type Check struct {
+	Name     string
+	Severity string
+	Message  string
+}
+
+// Mons is the monitor quorum.
+type Mons struct {
+	Total    int
+	InQuorum int
+}
+
+// Healthy reports whether every monitor is in quorum.
+func (m Mons) Healthy() bool { return m.Total > 0 && m.InQuorum == m.Total }
+
+// Mgr is the manager summary.
+type Mgr struct {
+	Available bool
+	Standbys  int
+	// Active is the active manager's name. Empty means the name was not
+	// reported, which is not the same as there being none — see ActiveUnknown.
+	Active  string
+	Modules int
+}
+
+// ActiveUnknown reports that a manager is available but unnamed.
+//
+// Current releases emit a summary-only mgrmap with no active_name, so an empty
+// name alongside Available is a gap in the data rather than a missing manager.
+// Rendering it as "no active manager" would be a false alarm.
+func (m Mgr) ActiveUnknown() bool { return m.Available && m.Active == "" }
+
+// OSDs is the object-store daemon summary.
+type OSDs struct {
+	Total      int
+	Up         int
+	In         int
+	RemappedPG int
+	Epoch      int64
+}
+
+// Healthy reports whether every OSD is both up and in.
+func (o OSDs) Healthy() bool { return o.Total > 0 && o.Up == o.Total && o.In == o.Total }
+
+// PGState is one placement-group state and its count.
+type PGState struct {
+	Name  string
+	Count int64
+}
+
+// PGs is the placement-group and capacity summary.
+type PGs struct {
+	Total   int64
+	Pools   int64
+	Objects int64
+	ByState []PGState
+	// DataBytes is stored data before replication; UsedBytes includes it. The
+	// distinction matters: a three-way replicated pool uses roughly three times
+	// its data, and reporting DataBytes as usage would understate a nearly full
+	// cluster by that factor.
+	DataBytes  int64
+	UsedBytes  int64
+	AvailBytes int64
+	TotalBytes int64
+}
+
+// CleanPGs returns the count of placement groups in a fully clean state.
+func (p PGs) CleanPGs() int64 {
+	var n int64
+	for _, s := range p.ByState {
+		if s.Name == "active+clean" {
+			n += s.Count
+		}
+	}
+	return n
+}
+
+// AllClean reports whether every placement group is active+clean.
+func (p PGs) AllClean() bool { return p.Total > 0 && p.CleanPGs() == p.Total }
+
+// UsedPercent returns raw capacity used, or -1 when unknown.
+func (p PGs) UsedPercent() int {
+	if p.TotalBytes <= 0 {
+		return -1
+	}
+	return int(p.UsedBytes * 100 / p.TotalBytes)
+}
+
+// IO is current client throughput.
+type IO struct {
+	ReadBytesPerSec  int64
+	WriteBytesPerSec int64
+	ReadOpsPerSec    int64
+	WriteOpsPerSec   int64
+}
+
+// Status is what `ceph -s` reports.
+type Status struct {
+	FSID        string
+	Health      string
+	Checks      []Check
+	MutedChecks int
+	Mons        Mons
+	Mgr         Mgr
+	OSDs        OSDs
+	PGs         PGs
+	IO          IO
+	// Unreadable names the sections that could not be decoded.
+	Unreadable []string
+}
+
+// HealthOK reports whether Ceph itself says everything is fine.
+func (s Status) HealthOK() bool { return s.Health == "HEALTH_OK" }
+
+// State is everything the plugin publishes.
+type State struct {
+	Tier       kube.Tier
+	TierReason string
+	Status     Status
+	// Pod names the tools pod the status came from.
+	Pod       string
+	UpdatedAt time.Time
+	Err       error
+}
+
+// Settings is the plugin's profile configuration.
+type Settings struct {
+	// Namespace pins where Rook runs. Empty derives it from the tools workload.
+	Namespace string
+	// ToolsSelector pins the tools pod's label selector. Empty discovers the pod
+	// by deployment name instead.
+	ToolsSelector string
+}
+
+// Defaults leave everything to discovery, following the pattern the earlier
+// plugins arrived at the hard way: every hardcoded name and namespace in this
+// codebase was wrong on the first real cluster it met.
+func Defaults() Settings { return Settings{} }
+
+// SettingsFrom reads a profile's plugin block over the defaults.
+func SettingsFrom(raw map[string]any) Settings {
+	s := Defaults()
+	if v, ok := raw["namespace"].(string); ok && v != "" {
+		s.Namespace = v
+	}
+	if v, ok := raw["tools_selector"].(string); ok && v != "" {
+		s.ToolsSelector = v
+	}
+	return s
+}
+
+// toolsSuffix is what a Rook tools Deployment's name ends with.
+const toolsSuffix = "tools"
+
+// Plugin observes Ceph.
+type Plugin struct {
+	client   *kube.Client
+	settings Settings
+
+	namespace  string
+	tier       kube.Tier
+	tierReason string
+}
+
+// New builds the plugin.
+func New(c *kube.Client, settings Settings) *Plugin {
+	return &Plugin{client: c, settings: settings}
+}
+
+// Name implements plugin.Plugin.
+func (p *Plugin) Name() string { return Name }
+
+// Detect finds Rook's tools workload and decides the tier.
+//
+// The tools Deployment is the probe rather than the CephCluster CRD, because the
+// CRD being registered does not mean a cluster exists, and the tools pod is what
+// the detail actually comes from. Its namespace is discovered from the workload
+// rather than assumed.
+func (p *Plugin) Detect(ctx context.Context) (bool, error) {
+	ns, err := p.findNamespace(ctx)
+	if err != nil || ns == "" {
+		p.tier = kube.TierAbsent
+		return false, err
+	}
+	p.namespace = ns
+
+	pod, err := p.toolsPod(ctx)
+	if err != nil {
+		// Rook is installed but the tools deployment is scaled to zero, which is a
+		// common way to run it. Ceph is present; the detail is not reachable.
+		p.tier = kube.TierInformer
+		p.tierReason = "no running tools pod: " + err.Error()
+		// Present, not reachable: reported so --debug-snapshot can explain the
+		// thin pane, and active so the pane still exists. See plugin.Source.
+		return true, err
+	}
+	ok, forbidden := p.client.ExecProbe(ctx, ns, pod, "")
+	switch {
+	case ok:
+		p.tier = kube.TierFull
+	case forbidden:
+		p.tier = kube.TierInformer
+		p.tierReason = "no pods/exec permission on " + ns
+	default:
+		// Not a verdict — poll re-derives this every time.
+		p.tier = kube.TierInformer
+		p.tierReason = "tools pod " + pod + " did not answer"
+	}
+	return true, nil
+}
+
+// findNamespace locates the namespace holding Rook's tools Deployment.
+func (p *Plugin) findNamespace(ctx context.Context) (string, error) {
+	if p.settings.Namespace != "" {
+		return p.settings.Namespace, nil
+	}
+	list, err := p.client.Typed.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("list deployments: %w", err)
+	}
+	for _, d := range list.Items {
+		// "rook-ceph-tools" is the conventional name; matching both markers avoids
+		// adopting an unrelated "tools" deployment in a shared namespace.
+		if strings.HasSuffix(d.Name, toolsSuffix) && strings.Contains(d.Name, "ceph") {
+			return d.Namespace, nil
+		}
+	}
+	return "", nil
+}
+
+// toolsPod finds a Running tools pod.
+//
+// A configured selector is honored; otherwise pods are matched by name against
+// the tools Deployment, since a Deployment's pods carry its name as a prefix and
+// Rook's labels have varied across releases.
+func (p *Plugin) toolsPods(ctx context.Context) ([]string, error) {
+	if p.settings.ToolsSelector != "" {
+		return p.client.PodCandidates(ctx, p.namespace, p.settings.ToolsSelector, nil)
+	}
+	// No selector: match by name, but through PodCandidates so the readiness and
+	// terminating-pod rules apply here too. A tools pod on a node that has just
+	// gone down still reports phase Running, and picking it costs the pane its
+	// detail for as long as the pod object survives.
+	return p.client.PodCandidates(ctx, p.namespace, "", func(pod *corev1.Pod) bool {
+		return strings.Contains(pod.Name, toolsSuffix)
+	})
+}
+
+// toolsPod returns the best tools pod, for callers that only need one.
+func (p *Plugin) toolsPod(ctx context.Context) (string, error) {
+	pods, err := p.toolsPods(ctx)
+	if err != nil {
+		return "", err
+	}
+	return pods[0], nil
+}
+
+// Run polls until ctx is canceled.
+func (p *Plugin) Run(ctx context.Context, s *store.Store) error {
+	publish := func() { s.Put(KeyState, p.poll(ctx)) }
+	publish()
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			publish()
+		}
+	}
+}
+
+func (p *Plugin) poll(ctx context.Context) State {
+	state := State{Tier: p.tier, TierReason: p.tierReason, UpdatedAt: time.Now()}
+	// Attempted every poll, whatever happened last time — including a permission
+	// denial, which can be repaired mid-session. See [kube.Forbidden].
+	pods, err := p.toolsPods(ctx)
+	if err != nil {
+		state.Tier = kube.TierInformer
+		state.TierReason = "no tools pod ready right now"
+		return state
+	}
+
+	out, pod, err := p.client.ExecFirstOf(ctx, p.namespace, pods, "",
+		[]string{"ceph", "-s", "--format=json"})
+	if err != nil {
+		state.Tier = kube.TierInformer
+		if kube.Forbidden(err) {
+			state.TierReason = "no pods/exec permission on " + p.namespace
+		} else {
+			state.TierReason = fmt.Sprintf("no tools pod answered (tried %d)", len(pods))
+		}
+		return state
+	}
+	state.Pod = pod
+	// A pod answered, so whatever detection concluded is out of date.
+	p.tier, p.tierReason = kube.TierFull, ""
+	state.Tier, state.TierReason = kube.TierFull, ""
+	status, err := ParseStatus([]byte(out))
+	if err != nil {
+		state.Err = err
+		return state
+	}
+
+	// Fill in the active manager's name when the summary omitted it. Best-effort:
+	// a failure leaves ActiveUnknown true, which the pane renders as "name not
+	// reported" — still better than a false "no active manager".
+	if status.Mgr.ActiveUnknown() {
+		if name, err := p.activeMgrName(ctx, pod); err == nil && name != "" {
+			status.Mgr.Active = name
+		}
+	}
+
+	state.Status = status
+	return state
+}
+
+// activeMgrName reads the active manager from `ceph mgr stat -f json`.
+//
+// A second exec is unwelcome, but current releases emit a summary-only mgrmap with
+// no active_name and this is the canonical small endpoint that has it. It is only
+// called when the name is actually missing, so a release that reports it pays
+// nothing.
+func (p *Plugin) activeMgrName(ctx context.Context, pod string) (string, error) {
+	out, err := p.client.Exec(ctx, p.namespace, pod, "", []string{"ceph", "mgr", "stat", "-f", "json"})
+	if err != nil {
+		return "", err
+	}
+	return ParseMgrStat([]byte(out))
+}
+
+// Summary implements plugin.SummaryProvider, delegating to the shared projection
+// so the overview block and the banner cannot disagree about Ceph's state.
+func (p *Plugin) Summary(s *store.Store) (tui.SummaryBlock, bool) {
+	return summaryBlock(s)
+}
+
+// Cells implements plugin.BannerProvider.
+func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
+	state, ok := store.Get[State](s, KeyState)
+	if !ok {
+		return nil
+	}
+
+	cell := tui.BannerCell{Name: "Ceph"}
+	st := state.Status
+	switch {
+	case state.Err != nil:
+		cell.Status = tui.BannerWarn
+		cell.Detail = "read error"
+	case state.Tier != kube.TierFull:
+		cell.Status = tui.BannerLoading
+		cell.Detail = "no detail"
+	case st.Health == "HEALTH_ERR":
+		cell.Status = tui.BannerErr
+		cell.Detail = firstCheckName(st.Checks)
+	case st.Health == "HEALTH_WARN":
+		cell.Status = tui.BannerWarn
+		cell.Detail = firstCheckName(st.Checks)
+	case !st.OSDs.Healthy():
+		// Ceph can report OK while an OSD is out, if the data is still replicated.
+		cell.Status = tui.BannerWarn
+		cell.Detail = fmt.Sprintf("%d/%d OSDs up", st.OSDs.Up, st.OSDs.Total)
+	case st.HealthOK():
+		cell.Status = tui.BannerOK
+	default:
+		cell.Status = tui.BannerLoading
+	}
+	return []tui.BannerCell{cell}
+}
+
+// firstCheckName names the check driving the status, so the cell says what is
+// wrong rather than only that something is.
+func firstCheckName(checks []Check) string {
+	if len(checks) == 0 {
+		return ""
+	}
+	return checks[0].Name
+}
+
+// Panes implements plugin.PaneProvider.
+// Panes contributes none: Ceph reports through the overview instead.
+//
+// Storage is a prerequisite for what this tool watches rather than a peer of it —
+// you do not drain a host unless the cluster can lose it — so its headline belongs
+// beside the cluster and node summaries at the top, not in a bottom-row column
+// competing with the network and the cloud. See [summaryBlock].
+//
+// Giving up the column is also what lets the OpenStack pane grow into it, which is
+// what the server-migration table needed: a pair of real compute hostnames does
+// not fit in one column of four.
+//
+// The pane renderer itself is kept, and still under test, because this is a
+// presentation decision rather than a discovery that the detail was worthless. To
+// put Ceph back in the grid, return newPane(s) here.
+func (p *Plugin) Panes(*store.Store) []tui.Pane {
+	return nil
+}

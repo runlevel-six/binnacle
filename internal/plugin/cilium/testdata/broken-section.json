@@ -1,0 +1,7 @@
+{
+  "cilium": {"state": "Ok", "version": "1.17.0"},
+  "kube-proxy-replacement": {"mode": "True"},
+  "ipam": "this release put a string here",
+  "hubble": {"state": "Ok", "observer": {"seen-flows": 42}},
+  "controllers": [{"status": {"success-count": 1, "consecutive-failure-count": 0}}]
+}

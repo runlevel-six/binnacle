@@ -1,0 +1,28 @@
+{
+  "_comment": "Reduced from a real production Ceph. Note the summary-only mgrmap: available and num_standbys are present but there is no active_name, which is why the plugin makes a second exec to ceph mgr stat.",
+  "fsid": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+  "health": {"status": "HEALTH_OK", "checks": {}, "mutes": []},
+  "quorum_names": ["a", "b", "c"],
+  "monmap": {"num_mons": 3},
+  "mgrmap": {
+    "available": true,
+    "num_standbys": 2,
+    "modules": ["cephadm", "dashboard", "iostat", "nfs", "prometheus", "restful"],
+    "services": {"dashboard": "https://10.0.0.10:8443/", "prometheus": "http://10.0.0.10:9283/"}
+  },
+  "osdmap": {
+    "epoch": 57775, "num_osds": 36, "num_up_osds": 36,
+    "osd_up_since": 1782919357, "num_in_osds": 36,
+    "osd_in_since": 1782311943, "num_remapped_pgs": 0
+  },
+  "pgmap": {
+    "pgs_by_state": [{"state_name": "active+clean", "count": 1137}],
+    "num_pgs": 1137, "num_pools": 27, "num_objects": 5659981,
+    "data_bytes": 5930900892346,
+    "bytes_used": 16760803098624,
+    "bytes_avail": 121506324086784,
+    "bytes_total": 138267127185408,
+    "read_bytes_sec": 4331412, "write_bytes_sec": 15055410,
+    "read_op_per_sec": 975, "write_op_per_sec": 1351
+  }
+}

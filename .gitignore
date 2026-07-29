@@ -1,0 +1,19 @@
+# Build output
+/dist/
+/sextant
+
+# Test and coverage artifacts
+*.test
+*.out
+coverage.txt
+
+# Local tooling
+/bin/
+
+# Screenshots taken against a real cluster, which carry hostnames, contexts and
+# address pools. Only the repo root is ignored — deliberate, sanitised images
+# under docs/ are still addable.
+/*.png
+
+# Editor and OS files belong in your global gitignore, not here:
+#   git config --global core.excludesfile ~/.gitignore

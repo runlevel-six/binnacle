@@ -1,0 +1,6 @@
+{
+  "cilium": {"state": "Ok", "version": "1.15.0"},
+  "ipam": {"ipv4": [
+    {"pool": "default", "used": 3, "available": 7}
+  ]}
+}

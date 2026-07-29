@@ -1,0 +1,32 @@
+{
+  "fsid": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+  "health": {
+    "status": "HEALTH_WARN",
+    "checks": {
+      "OSD_NEARFULL": {
+        "severity": "HEALTH_WARN",
+        "summary": {"message": "2 nearfull osd(s)"}
+      },
+      "PG_DEGRADED": {
+        "severity": "HEALTH_WARN",
+        "summary": {"message": "Degraded data redundancy: 412/5659981 objects degraded"}
+      }
+    },
+    "mutes": [{"code": "POOL_NO_REDUNDANCY"}]
+  },
+  "quorum_names": ["a", "b"],
+  "monmap": {"num_mons": 3},
+  "mgrmap": {"available": true, "num_standbys": 0, "active_name": "mgr-a"},
+  "osdmap": {"num_osds": 36, "num_up_osds": 34, "num_in_osds": 35, "num_remapped_pgs": 18},
+  "pgmap": {
+    "pgs_by_state": [
+      {"state_name": "active+clean", "count": 1100},
+      {"state_name": "active+undersized+degraded", "count": 37}
+    ],
+    "num_pgs": 1137, "num_pools": 27, "num_objects": 5659981,
+    "data_bytes": 5930900892346,
+    "bytes_used": 124440414466867,
+    "bytes_avail": 13826712718540,
+    "bytes_total": 138267127185408
+  }
+}

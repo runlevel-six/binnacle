@@ -1,0 +1,533 @@
+// Package metallb reports MetalLB's state: which address pools exist, how they
+// are advertised, whether the speaker is running, and which LoadBalancer Services
+// are still waiting for an address.
+//
+// Those four together answer the questions a bare-metal operator actually has —
+// "is the speaker up" and "are we about to run out of addresses" — neither of
+// which is visible from any single object.
+//
+// This is the simplest plugin shape: everything comes from the API, so there is no
+// exec and no informer-only tier to fall back to. It is either present or absent.
+package metallb
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+
+	"github.com/runlevel-six/sextant/internal/plugin/kube"
+	"github.com/runlevel-six/sextant/pkg/store"
+	"github.com/runlevel-six/sextant/pkg/tui"
+)
+
+// Name is the plugin's registration name.
+const Name = "metallb"
+
+// Datastore keys.
+const (
+	// KeyState holds a State.
+	KeyState = "metallb/state"
+)
+
+// API group and kinds. Versions are absent so the RESTMapper resolves them, which
+// is what keeps this working across MetalLB releases.
+const group = "metallb.io"
+
+var (
+	gkIPAddressPool    = schema.GroupKind{Group: group, Kind: "IPAddressPool"}
+	gkL2Advertisement  = schema.GroupKind{Group: group, Kind: "L2Advertisement"}
+	gkBGPAdvertisement = schema.GroupKind{Group: group, Kind: "BGPAdvertisement"}
+)
+
+// pollInterval is how often the state is refreshed. MetalLB's objects change
+// rarely, so this is deliberately unhurried.
+const pollInterval = 15 * time.Second
+
+// Pool is one IPAddressPool.
+//
+// Addresses is the raw spec, because the syntax is heterogeneous — a CIDR, a
+// dashed range, or a single address — and guessing at pool sizes from it would
+// report confident nonsense. Showing the spec verbatim lets an operator check it
+// against what they meant.
+type Pool struct {
+	Namespace  string
+	Name       string
+	Addresses  []string
+	AutoAssign bool
+	// Advertised names how this pool is advertised: "L2", "BGP", both, or empty
+	// when nothing advertises it. An unadvertised pool hands out addresses that
+	// nothing announces, which is a real and otherwise silent misconfiguration.
+	Advertised []string
+	// Assigned counts the LoadBalancer Services holding an address from it.
+	Assigned int
+}
+
+// Service is one LoadBalancer Service.
+type Service struct {
+	Namespace  string
+	Name       string
+	ExternalIP string
+	Pool       string
+}
+
+// Pending reports whether the service is still waiting for an address.
+func (s Service) Pending() bool { return s.ExternalIP == "" }
+
+// State is everything the plugin publishes.
+type State struct {
+	Pools    []Pool
+	Services []Service
+	// Namespace is where MetalLB was found, derived from the pools unless pinned.
+	Namespace string
+	// SpeakerReady and SpeakerDesired describe the speaker DaemonSet. A pool
+	// with addresses and no speaker announces nothing.
+	SpeakerReady   int32
+	SpeakerDesired int32
+	UpdatedAt      time.Time
+	Err            error
+}
+
+// PendingServices counts the Services still without an address.
+func (s State) PendingServices() int {
+	n := 0
+	for _, svc := range s.Services {
+		if svc.Pending() {
+			n++
+		}
+	}
+	return n
+}
+
+// UnadvertisedPools names pools that nothing advertises.
+func (s State) UnadvertisedPools() []string {
+	var out []string
+	for _, p := range s.Pools {
+		if len(p.Advertised) == 0 {
+			out = append(out, p.Name)
+		}
+	}
+	return out
+}
+
+// Settings is the plugin's profile configuration.
+type Settings struct {
+	// Namespace pins where MetalLB is installed. Leave it empty to derive it,
+	// which is the default — see namespaceFor.
+	Namespace string
+	// SpeakerName pins the speaker DaemonSet's name. Leave it empty to discover
+	// it, which is the default — see findSpeaker.
+	SpeakerName string
+}
+
+// Defaults leave both the namespace and the speaker name unset so each is
+// derived from the cluster.
+//
+// Two hardcoded guesses were wrong on the first real cluster they met. The name
+// varies because the upstream manifest installs "speaker" while Helm prefixes the
+// release name; the namespace varies because "metallb-system" is only a
+// convention. Rather than guess again, both are discovered — and there is a
+// reliable signal for it, since IPAddressPool objects live in MetalLB's own
+// namespace.
+func Defaults() Settings { return Settings{} }
+
+// SettingsFrom reads a profile's plugin block over the defaults.
+func SettingsFrom(raw map[string]any) Settings {
+	s := Defaults()
+	if v, ok := raw["namespace"].(string); ok && v != "" {
+		s.Namespace = v
+	}
+	if v, ok := raw["speaker_name"].(string); ok && v != "" {
+		s.SpeakerName = v
+	}
+	return s
+}
+
+// Plugin observes MetalLB.
+type Plugin struct {
+	client   *kube.Client
+	dyn      dynamic.Interface
+	settings Settings
+}
+
+// New builds the plugin.
+func New(c *kube.Client, dyn dynamic.Interface, settings Settings) *Plugin {
+	return &Plugin{client: c, dyn: dyn, settings: settings}
+}
+
+// Name implements plugin.Plugin.
+func (p *Plugin) Name() string { return Name }
+
+// Detect reports whether MetalLB's CRDs are registered.
+//
+// The CRD is the right probe rather than the speaker DaemonSet: a cluster can have
+// MetalLB installed with the speaker temporarily scaled to zero, and that is a
+// state worth showing rather than hiding.
+func (p *Plugin) Detect(ctx context.Context) (bool, error) {
+	return p.client.HasKind(group, "IPAddressPool"), nil
+}
+
+// Run polls until ctx is canceled.
+func (p *Plugin) Run(ctx context.Context, s *store.Store) error {
+	publish := func() { s.Put(KeyState, p.poll(ctx)) }
+	publish() // once immediately, so the pane is never stuck on "loading"
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			publish()
+		}
+	}
+}
+
+// poll reads everything once and assembles a State.
+//
+// A failure in one part does not discard the others: a denied read of Services
+// still leaves the pools worth showing, so the error is recorded alongside
+// whatever was obtained.
+func (p *Plugin) poll(ctx context.Context) State {
+	state := State{UpdatedAt: time.Now()}
+	var firstErr error
+	note := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	pools, err := p.listPools(ctx)
+	note(err)
+	services, err := p.listServices(ctx)
+	note(err)
+	adverts := p.listAdvertisements(ctx)
+
+	// The pools locate MetalLB, so the speaker is looked for where they live
+	// rather than in an assumed namespace.
+	namespace, err := p.namespaceFor(pools)
+	note(err)
+	if namespace != "" {
+		ready, desired, speakerErr := p.speaker(ctx, namespace)
+		note(speakerErr)
+		state.SpeakerReady = ready
+		state.SpeakerDesired = desired
+		state.Namespace = namespace
+	}
+
+	attributeAdvertisements(pools, adverts)
+	attributeServices(pools, services)
+
+	state.Pools = pools
+	state.Services = services
+	state.Err = firstErr
+	return state
+}
+
+// namespaceFor decides which namespace MetalLB occupies.
+//
+// A configured namespace wins. Otherwise it is taken from the IPAddressPool
+// objects, which are namespaced and live alongside the installation — a far more
+// reliable signal than the "metallb-system" convention, which was wrong on the
+// first cluster this met.
+//
+// Pools in several namespaces is not a shape MetalLB supports, so it is reported
+// rather than silently picking one.
+func (p *Plugin) namespaceFor(pools []Pool) (string, error) {
+	if p.settings.Namespace != "" {
+		return p.settings.Namespace, nil
+	}
+	seen := map[string]bool{}
+	for _, pool := range pools {
+		if pool.Namespace != "" {
+			seen[pool.Namespace] = true
+		}
+	}
+	switch len(seen) {
+	case 0:
+		return "", nil // no pools yet; nothing to locate, and not an error
+	case 1:
+		for ns := range seen {
+			return ns, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"IPAddressPools span %d namespaces (%s); pin one with the namespace setting",
+		len(seen), strings.Join(sortedKeys(seen), ", "))
+}
+
+func (p *Plugin) listPools(ctx context.Context) ([]Pool, error) {
+	objs, err := p.list(ctx, gkIPAddressPool)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Pool, 0, len(objs))
+	for _, o := range objs {
+		// autoAssign defaults to true when absent, per MetalLB's schema.
+		autoAssign := true
+		if v, found, _ := unstructured.NestedBool(o.Object, "spec", "autoAssign"); found {
+			autoAssign = v
+		}
+		addrs, _, _ := unstructured.NestedStringSlice(o.Object, "spec", "addresses")
+		out = append(out, Pool{
+			Namespace:  o.GetNamespace(),
+			Name:       o.GetName(),
+			Addresses:  addrs,
+			AutoAssign: autoAssign,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// advertisement is an L2 or BGP advertisement.
+type advertisement struct {
+	mode  string
+	pools []string
+}
+
+// listAdvertisements reads both advertisement kinds.
+//
+// It cannot fail: a cluster using only L2 has no BGPAdvertisement CRD registered
+// at all, so an absent kind is the normal case rather than an error.
+func (p *Plugin) listAdvertisements(ctx context.Context) []advertisement {
+	var out []advertisement
+
+	for _, spec := range []struct {
+		gk   schema.GroupKind
+		mode string
+	}{
+		{gkL2Advertisement, "L2"},
+		{gkBGPAdvertisement, "BGP"},
+	} {
+		objs, err := p.list(ctx, spec.gk)
+		if err != nil {
+			// One advertisement kind may legitimately be absent — a cluster
+			// using only L2 has no BGPAdvertisement CRD at all.
+			continue
+		}
+		for _, o := range objs {
+			pools, _, _ := unstructured.NestedStringSlice(o.Object, "spec", "ipAddressPools")
+			out = append(out, advertisement{mode: spec.mode, pools: pools})
+		}
+	}
+	return out
+}
+
+// attributeAdvertisements marks which pools are advertised and how.
+//
+// An advertisement with no pool list applies to every pool, which is MetalLB's
+// own semantics — reading an empty list as "none" would report every pool
+// unadvertised on a default installation.
+func attributeAdvertisements(pools []Pool, adverts []advertisement) {
+	for i := range pools {
+		modes := map[string]bool{}
+		for _, a := range adverts {
+			if len(a.pools) == 0 || containsString(a.pools, pools[i].Name) {
+				modes[a.mode] = true
+			}
+		}
+		pools[i].Advertised = sortedKeys(modes)
+	}
+}
+
+func (p *Plugin) listServices(ctx context.Context) ([]Service, error) {
+	list, err := p.client.Typed.CoreV1().Services("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list services: %w", err)
+	}
+	out := make([]Service, 0)
+	for _, svc := range list.Items {
+		if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
+			continue
+		}
+		s := Service{
+			Namespace: svc.Namespace,
+			Name:      svc.Name,
+			Pool:      svc.Annotations["metallb.universe.tf/address-pool"],
+		}
+		for _, ing := range svc.Status.LoadBalancer.Ingress {
+			if ing.IP != "" {
+				s.ExternalIP = ing.IP
+				break
+			}
+		}
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Namespace != out[j].Namespace {
+			return out[i].Namespace < out[j].Namespace
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
+}
+
+// attributeServices counts services per pool.
+//
+// Only an explicit pool annotation attributes a service, because matching an
+// address back to a pool would mean parsing MetalLB's heterogeneous address
+// syntax and would be wrong for a range expressed a way we did not anticipate.
+func attributeServices(pools []Pool, services []Service) {
+	index := map[string]int{}
+	for i, p := range pools {
+		index[p.Name] = i
+	}
+	for _, s := range services {
+		if s.Pool == "" || s.Pending() {
+			continue
+		}
+		if i, ok := index[s.Pool]; ok {
+			pools[i].Assigned++
+		}
+	}
+}
+
+// speakerSuffix is what every MetalLB speaker DaemonSet name ends with, whatever
+// release prefix precedes it.
+const speakerSuffix = "speaker"
+
+// speaker reports the speaker DaemonSet's readiness.
+//
+// The name is discovered rather than assumed, because it depends on how MetalLB
+// was installed: the upstream manifest calls it "speaker" and Helm prefixes the
+// release name. A pinned name in a profile is honored first, for a site that has
+// renamed it beyond recognition.
+func (p *Plugin) speaker(ctx context.Context, namespace string) (ready, desired int32, err error) {
+	name := p.settings.SpeakerName
+	if name == "" {
+		name, err = p.findSpeaker(ctx, namespace)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	ds, err := p.client.Typed.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return 0, 0, fmt.Errorf("get daemonset %s/%s: %w", namespace, name, err)
+	}
+	return ds.Status.NumberReady, ds.Status.DesiredNumberScheduled, nil
+}
+
+// findSpeaker locates the speaker DaemonSet by name.
+//
+// Matching the name rather than a label, because MetalLB's labels have themselves
+// changed across releases and installation methods while the name has always
+// ended in "speaker".
+//
+// Matching is deliberately tight, and ordered. An exact "speaker" wins; failing
+// that, exactly one name ending in "-speaker". A bare suffix match would be
+// risky now that the namespace is discovered rather than assumed: MetalLB is
+// commonly installed into kube-system, where it sits among a dozen unrelated
+// DaemonSets. Several candidates is reported rather than resolved by guessing,
+// since picking the wrong one would report another workload's readiness as
+// MetalLB's.
+func (p *Plugin) findSpeaker(ctx context.Context, namespace string) (string, error) {
+	list, err := p.client.Typed.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("list daemonsets in %s: %w", namespace, err)
+	}
+	if len(list.Items) == 0 {
+		return "", fmt.Errorf("no daemonsets in namespace %s", namespace)
+	}
+
+	var suffixed []string
+	names := make([]string, 0, len(list.Items))
+	for _, ds := range list.Items {
+		names = append(names, ds.Name)
+		switch {
+		case ds.Name == speakerSuffix:
+			return ds.Name, nil
+		case strings.HasSuffix(ds.Name, "-"+speakerSuffix):
+			suffixed = append(suffixed, ds.Name)
+		}
+	}
+
+	sort.Strings(suffixed)
+	switch len(suffixed) {
+	case 1:
+		return suffixed[0], nil
+	case 0:
+		sort.Strings(names)
+		return "", fmt.Errorf(
+			"no daemonset in %s is named %q or ends in %q (found: %s); pin one with the speaker_name setting",
+			namespace, speakerSuffix, "-"+speakerSuffix, strings.Join(names, ", "))
+	}
+	return "", fmt.Errorf(
+		"several daemonsets in %s could be the speaker (%s); pin one with the speaker_name setting",
+		namespace, strings.Join(suffixed, ", "))
+}
+
+func (p *Plugin) list(ctx context.Context, gk schema.GroupKind) ([]unstructured.Unstructured, error) {
+	mapping, err := p.client.Mapper.RESTMapping(gk)
+	if err != nil {
+		return nil, fmt.Errorf("%s is not available: %w", gk, err)
+	}
+	list, err := p.dyn.Resource(mapping.Resource).Namespace("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list %s: %w", gk, err)
+	}
+	return list.Items, nil
+}
+
+// Cells implements plugin.BannerProvider.
+func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
+	state, ok := store.Get[State](s, KeyState)
+	if !ok {
+		return nil
+	}
+
+	cell := tui.BannerCell{Name: "MetalLB"}
+	switch {
+	case state.Err != nil:
+		cell.Status = tui.BannerWarn
+		cell.Detail = "read error"
+	case state.SpeakerDesired > 0 && state.SpeakerReady < state.SpeakerDesired:
+		cell.Status = tui.BannerErr
+		cell.Detail = fmt.Sprintf("speaker %d/%d", state.SpeakerReady, state.SpeakerDesired)
+	case state.PendingServices() > 0:
+		// A pending LoadBalancer usually means the pool is exhausted, which is
+		// the failure this plugin exists to make visible.
+		cell.Status = tui.BannerWarn
+		cell.Detail = fmt.Sprintf("%d pending", state.PendingServices())
+	case len(state.UnadvertisedPools()) > 0:
+		cell.Status = tui.BannerWarn
+		cell.Detail = fmt.Sprintf("%d pool(s) unadvertised", len(state.UnadvertisedPools()))
+	default:
+		cell.Status = tui.BannerOK
+	}
+	return []tui.BannerCell{cell}
+}
+
+// Panes implements plugin.PaneProvider.
+func (p *Plugin) Panes(s *store.Store) []tui.Pane {
+	return []tui.Pane{newPane(s)}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, h := range haystack {
+		if h == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedKeys(m map[string]bool) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
