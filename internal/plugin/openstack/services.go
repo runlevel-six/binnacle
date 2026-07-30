@@ -200,7 +200,7 @@ func CollectServices(s *store.Store, namespace string) (Services, bool) {
 			byService[app] = svc
 			byComponent[app] = map[string]*Component{}
 		}
-		svc.Rollout = svc.Rollout.Add(r)
+		svc.Rollout = svc.Add(r)
 
 		name := app
 		if part := w.Labels["component"]; part != "" {
@@ -211,7 +211,7 @@ func CollectServices(s *store.Store, namespace string) (Services, bool) {
 			c = &Component{Name: name}
 			byComponent[app][name] = c
 		}
-		c.Rollout = c.Rollout.Add(r)
+		c.Rollout = c.Add(r)
 	}
 
 	out := Services{Namespace: ns, Items: make([]Service, 0, len(byService))}

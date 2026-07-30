@@ -66,7 +66,7 @@ func (p *rolloutPane) Render(w, h int, _ bool) string {
 
 	// The converged components are the first thing to give up when the frame is
 	// short, and giving them up costs nothing: "ovsdb-nb 3/3" is a row that says
-	// the same thing every day for months. Dropping them in favour of the ones
+	// the same thing every day for months. Dropping them in favor of the ones
 	// that are behind is the difference between a table that truncates to
 	// "+ 4 more" — hiding the only rows worth reading — and one that shows the
 	// work outstanding and counts the rest on a single line.

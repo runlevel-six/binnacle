@@ -49,9 +49,9 @@ func (p *cloudPane) HeightWeight() int      { return 2 }
 
 // rolling reports whether a Cluster API rollout is under way.
 //
-// Retained for the empty-state wording only: "no active migrations" is
-// reassurance during a rollout, where a drain that had stalled would show here,
-// and merely a statement of fact outside one.
+// Used for the empty-state wording only. The pane itself is no longer
+// mode-aware: migrations are shown whoever is draining, and the two people who
+// drain hosts are not synchronized.
 func (p *cloudPane) rolling() bool {
 	return rollout.Active(p.store, p.targetVersion)
 }
@@ -104,9 +104,14 @@ func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
 
 	items := Relevant(LatestPerServer(snap.Items), now)
 	if len(items) == 0 {
-		// An idle migration list during a rollout is good news, and saying so is
-		// more useful than an empty table: it means the drain is not stuck.
-		return table.Placeholder(w, h, "no active migrations")
+		// An idle list during a rollout is good news — it means the drain is not
+		// stuck — so it is worth saying rather than leaving an empty table. Outside
+		// one there is no drain to be reassured about, and the same words would
+		// imply a process that is not running.
+		if p.rolling() {
+			return table.Placeholder(w, h, "no active migrations")
+		}
+		return table.Placeholder(w, h, "no migrations")
 	}
 
 	rows := make([][]string, 0, len(items))

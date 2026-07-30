@@ -129,7 +129,7 @@ func TestCollectServicesSkipsEmptyWorkloads(t *testing.T) {
 }
 
 // The namespace is derived, because every hardcoded namespace in this codebase
-// has been wrong on the first real cluster it met. A stray labelled object
+// has been wrong on the first real cluster it met. A stray labeled object
 // elsewhere must not outrank the actual control plane.
 func TestCollectServicesDerivesNamespaceByServiceCount(t *testing.T) {
 	svcs, ok := CollectServices(withWorkloads(

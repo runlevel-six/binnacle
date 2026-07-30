@@ -291,7 +291,7 @@ func pluginRows(s *store.Store) []reportRow {
 
 	// Service versions come from the cluster rather than the cloud, so they are
 	// their own row: an operator reading this needs to see that the two halves
-	// disagree — agents up, versions behind — rather than have one summarised into
+	// disagree — agents up, versions behind — rather than have one summarized into
 	// the other.
 	//
 	// Manual services are named even when they are up to date, on the same
