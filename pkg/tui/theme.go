@@ -196,10 +196,18 @@ func LCARSTheme() Theme {
 		Frame: FrameBlock,
 		// Neon Carrot is absent on purpose: it is the focus color, and a
 		// resting pane wearing it would compete with the focused one.
+		//
+		// The order is not arbitrary. Accents are handed out by a pane's position
+		// in the priority order, so this sequence decides which pane wears which
+		// color, and swapping two entries repaints two panes in every row they
+		// appear in. Golden Tanoi leads because the panes that land on it —
+		// the machine inventory and the network — are the two an operator scans
+		// first, and amber carries further across a wide console than the blues
+		// do. Rearrange with that in mind rather than for the palette's own sake.
 		Accents: []lipgloss.Color{
 			lipgloss.Color("#CC99CC"), // African Violet
-			lipgloss.Color("#99CCFF"), // Anakiwa
 			lipgloss.Color("#FFCC66"), // Golden Tanoi
+			lipgloss.Color("#99CCFF"), // Anakiwa
 			lipgloss.Color("#9999CC"), // Blue Bell
 		},
 

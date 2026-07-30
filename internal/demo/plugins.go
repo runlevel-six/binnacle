@@ -84,7 +84,7 @@ func putPlugins(s *store.Store, now time.Time) {
 	s.Put(metallb.KeyState, metallb.State{
 		Namespace:      "metallb-system",
 		SpeakerReady:   4,
-		SpeakerDesired: 5, // node-06 is gone, so one speaker is missing.
+		SpeakerDesired: 5, // compute-node-3 is gone, so one speaker is missing.
 		Pools: []metallb.Pool{
 			{
 				Namespace: "metallb-system", Name: "default",
@@ -112,7 +112,10 @@ func putPlugins(s *store.Store, now time.Time) {
 		Tier:          kube.TierFull,
 		AgentsReady:   4,
 		AgentsDesired: 5,
-		Pod:           "cilium-k7d2n",
+		// The agent DaemonSet is part-way through its own roll, which readiness
+		// alone would not reveal.
+		Rollout: kube.Rollout{Desired: 5, Updated: 4, Ready: 4},
+		Pod:     "cilium-k7d2n",
 		Status: cilium.Status{
 			Version:              "1.17.1",
 			State:                "Ok",
@@ -131,6 +134,31 @@ func putPlugins(s *store.Store, now time.Time) {
 			raft("OVN_Northbound", "nb"),
 			raft("OVN_Southbound", "sb"),
 		},
+		// Mid-upgrade, in the order OVN requires: databases and northd are
+		// through, the per-host controllers are rolling, and Open vSwitch has not
+		// moved because it cannot move on its own. That last row is the state no
+		// other tool reports — see [kube.Rollout].
+		Components: []ovn.Component{
+			{Name: "ovsdb-nb", Rollout: kube.Rollout{Desired: 3, Updated: 3, Ready: 3}},
+			{Name: "ovsdb-sb", Rollout: kube.Rollout{Desired: 3, Updated: 3, Ready: 3}},
+			{Name: "ovn-northd", Rollout: kube.Rollout{Desired: 3, Updated: 3, Ready: 3}},
+			{Name: "ovn-controller", Rollout: kube.Rollout{
+				Desired: 5, Updated: 3, Ready: 5,
+				StaleNodes: []string{
+					"compute-node-2.site-a.demo.example",
+					"compute-node-3.site-a.demo.example",
+				},
+			}},
+			{Name: "openvswitch", Rollout: kube.Rollout{
+				Desired: 5, Updated: 1, Ready: 5, Manual: true,
+				StaleNodes: []string{
+					"compute-node-1.site-a.demo.example",
+					"compute-node-2.site-a.demo.example",
+					"compute-node-3.site-a.demo.example",
+					"control-node-3.site-a.demo.example",
+				},
+			}},
+		},
 		UpdatedAt: now,
 	})
 
@@ -139,7 +167,7 @@ func putPlugins(s *store.Store, now time.Time) {
 		Pod:  "rook-ceph-tools-6d4f8b9c7-x2mkq",
 		Status: ceph.Status{
 			FSID: "1f2e3d4c-5b6a-7980-a1b2-c3d4e5f60718",
-			// Rebalancing after node-06 took an OSD with it. Not an outage, but
+			// Rebalancing after compute-node-3 took an OSD with it. Not an outage, but
 			// not the all-clear either, which is the interesting middle state.
 			Health: "HEALTH_WARN",
 			Checks: []ceph.Check{{
@@ -180,14 +208,14 @@ func putPlugins(s *store.Store, now time.Time) {
 			{Service: "block-storage", Total: 3, Up: 3},
 		},
 		Agents: []openstack.Agent{
-			{Service: "compute", Binary: "nova-conductor", Host: "node-01", Zone: "internal", Up: true, Enabled: true, UpdatedAt: now},
-			{Service: "compute", Binary: "nova-scheduler", Host: "node-01", Zone: "internal", Up: true, Enabled: true, UpdatedAt: now},
-			{Service: "compute", Binary: "nova-compute", Host: "node-04", Zone: "nova", Up: true, Enabled: true, UpdatedAt: now},
-			{Service: "compute", Binary: "nova-compute", Host: "node-05", Zone: "nova", Up: true, Enabled: false, UpdatedAt: now},
-			{Service: "compute", Binary: "nova-compute", Host: "node-06", Zone: "nova", Up: false, Enabled: true, UpdatedAt: now.Add(-14 * time.Minute)},
-			{Service: "network", Binary: "neutron-ovn-metadata-agent", Host: "node-04", Zone: "", Up: true, Enabled: true, UpdatedAt: now},
-			{Service: "network", Binary: "neutron-ovn-metadata-agent", Host: "node-05", Zone: "", Up: true, Enabled: true, UpdatedAt: now},
-			{Service: "block-storage", Binary: "cinder-volume", Host: "node-01", Zone: "nova", Up: true, Enabled: true, UpdatedAt: now},
+			{Service: "compute", Binary: "nova-conductor", Host: "control-node-1", Zone: "internal", Up: true, Enabled: true, UpdatedAt: now},
+			{Service: "compute", Binary: "nova-scheduler", Host: "control-node-1", Zone: "internal", Up: true, Enabled: true, UpdatedAt: now},
+			{Service: "compute", Binary: "nova-compute", Host: "compute-node-1", Zone: "nova", Up: true, Enabled: true, UpdatedAt: now},
+			{Service: "compute", Binary: "nova-compute", Host: "compute-node-2", Zone: "nova", Up: true, Enabled: false, UpdatedAt: now},
+			{Service: "compute", Binary: "nova-compute", Host: "compute-node-3", Zone: "nova", Up: false, Enabled: true, UpdatedAt: now.Add(-14 * time.Minute)},
+			{Service: "network", Binary: "neutron-ovn-metadata-agent", Host: "compute-node-1", Zone: "", Up: true, Enabled: true, UpdatedAt: now},
+			{Service: "network", Binary: "neutron-ovn-metadata-agent", Host: "compute-node-2", Zone: "", Up: true, Enabled: true, UpdatedAt: now},
+			{Service: "block-storage", Binary: "cinder-volume", Host: "control-node-1", Zone: "nova", Up: true, Enabled: true, UpdatedAt: now},
 		},
 		UpdatedAt: now,
 	})
@@ -204,19 +232,19 @@ func putOpenStackWork(s *store.Store, now time.Time) {
 			{
 				ID: 4471, Status: "migrating", Type: "live-migration",
 				InstanceUUID:  "6f1c2b8e-4a3d-4f19-9c7e-2b8a5d1e0f34",
-				SourceCompute: "node-06", DestCompute: "node-04",
+				SourceCompute: "compute-node-3", DestCompute: "compute-node-1",
 				CreatedAt: now.Add(-9 * time.Minute), UpdatedAt: now.Add(-40 * time.Second),
 			},
 			{
 				ID: 4472, Status: "preparing", Type: "live-migration",
 				InstanceUUID:  "b3d9a7f2-1c8e-4b60-8f2a-9e7c4d3b1a58",
-				SourceCompute: "node-06", DestCompute: "node-05",
+				SourceCompute: "compute-node-3", DestCompute: "compute-node-2",
 				CreatedAt: now.Add(-3 * time.Minute), UpdatedAt: now.Add(-12 * time.Second),
 			},
 			{
 				ID: 4468, Status: "error", Type: "live-migration",
 				InstanceUUID:  "e8c4b1a9-7d2f-4e35-b6c8-1a9f3e7d2b40",
-				SourceCompute: "node-06", DestCompute: "node-04",
+				SourceCompute: "compute-node-3", DestCompute: "compute-node-1",
 				CreatedAt: now.Add(-22 * time.Minute), UpdatedAt: now.Add(-18 * time.Minute),
 			},
 		},

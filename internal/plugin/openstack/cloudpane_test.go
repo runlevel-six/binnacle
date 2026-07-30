@@ -10,38 +10,43 @@ import (
 	"github.com/gophercloud/gophercloud/v2"
 
 	"github.com/runlevel-six/sextant/pkg/store"
+	"github.com/runlevel-six/sextant/pkg/tui"
 )
 
-// The mode drives both the title and the content, and it must agree with the
-// rest of the dashboard: an asserted target version means a rollout.
-func TestCloudPaneModeFollowsRollout(t *testing.T) {
+// Migrations are shown whoever is draining, so the title no longer depends on
+// whether Cluster API happens to be rolling.
+func TestCloudPaneTitleIsStable(t *testing.T) {
 	s := store.New()
-
-	atRest := newCloudPane(s, "")
-	if got := atRest.Title(); got != "OpenStack Resources" {
-		t.Errorf("at rest the title is %q, want OpenStack Resources", got)
-	}
-
-	rolling := newCloudPane(s, "v1.31.4")
-	if got := rolling.Title(); got != "Server Migrations" {
-		t.Errorf("during a rollout the title is %q, want Server Migrations", got)
+	for _, target := range []string{"", "v1.31.4"} {
+		if got := newCloudPane(s, target).Title(); got != "Server Migrations" {
+			t.Errorf("target %q: title = %q, want Server Migrations", target, got)
+		}
 	}
 }
 
-// The plugin contributes two panes, and their IDs have to differ or one becomes
+// The plugin contributes four panes, and their IDs have to differ or one becomes
 // unreachable by focus and jump keys.
-func TestPluginContributesBothPanes(t *testing.T) {
+func TestPluginContributesDistinctPanes(t *testing.T) {
 	panes := New(Settings{Cloud: "my-cloud", TargetVersion: "v1.31.4"}).Panes(store.New())
-	if len(panes) != 2 {
-		t.Fatalf("got %d panes, want 2", len(panes))
+	if len(panes) != 4 {
+		t.Fatalf("got %d panes, want 4", len(panes))
 	}
-	if panes[0].ID() == panes[1].ID() {
-		t.Fatalf("both panes use the ID %q", panes[0].ID())
+	seen := map[string]bool{}
+	for _, pane := range panes {
+		if seen[pane.ID()] {
+			t.Fatalf("duplicate pane ID %q", pane.ID())
+		}
+		seen[pane.ID()] = true
 	}
-	// The target version has to reach the pane, or the mode-aware slot would
-	// silently render the at-rest content through an entire upgrade.
-	if got := panes[1].Title(); got != "Server Migrations" {
-		t.Errorf("second pane title = %q, want Server Migrations", got)
+	// Everything but migrations belongs to the Cloud frame; migrations stands
+	// alone, because it needs a full column of its own during a drain.
+	for _, i := range []int{0, 1, 2} {
+		if _, ok := panes[i].(tui.GroupedPane); !ok {
+			t.Errorf("pane %q is not grouped", panes[i].ID())
+		}
+	}
+	if _, ok := panes[3].(tui.GroupedPane); ok {
+		t.Errorf("migrations pane %q should not be grouped", panes[3].ID())
 	}
 }
 
@@ -117,7 +122,7 @@ func TestCloudPaneRendersInventoryAtRest(t *testing.T) {
 		{Label: "Volumes", Err: errors.New("cinder denied the request")},
 	}})
 
-	body := stripANSI(newCloudPane(s, "").Render(80, 10, false))
+	body := stripANSI(newResourcesPane(s).Render(80, 10, false))
 
 	for _, want := range []string{
 		"Projects:", "42",
@@ -144,21 +149,21 @@ func TestCloudPaneInventorySurvivesPartialFailure(t *testing.T) {
 		{Label: "Servers", Total: 12},
 	}})
 
-	body := stripANSI(newCloudPane(s, "").renderInventory(80, 10))
+	body := stripANSI(renderInventory(s, 80, 10))
 	if !strings.Contains(body, "Servers:") || !strings.Contains(body, "12") {
 		t.Errorf("a working count was lost to a failing one:\n%s", body)
 	}
 }
 
 func TestCloudPaneInventoryPlaceholderAndAuthError(t *testing.T) {
-	if body := stripANSI(newCloudPane(store.New(), "").renderInventory(80, 6)); !strings.Contains(body, "polling OpenStack resources") {
+	if body := stripANSI(renderInventory(store.New(), 80, 6)); !strings.Contains(body, "polling OpenStack resources") {
 		t.Errorf("want a polling placeholder before the first poll, got:\n%s", body)
 	}
 
 	// An authentication failure is pane-wide: nothing could have been counted.
 	s := store.New()
 	s.Put(KeyInventory, Inventory{Err: errors.New("authenticate to cloud \"my-cloud\": bad credentials")})
-	if body := stripANSI(newCloudPane(s, "").renderInventory(80, 6)); !strings.Contains(body, "bad credentials") {
+	if body := stripANSI(renderInventory(s, 80, 6)); !strings.Contains(body, "bad credentials") {
 		t.Errorf("want the auth error, got:\n%s", body)
 	}
 }
@@ -188,8 +193,8 @@ func TestCloudPaneRespectsBounds(t *testing.T) {
 		{Label: "Volumes", Total: 8, ByState: map[string]int{"in-use": 8}},
 	}})
 
-	for _, mode := range []string{"", "v1.31.4"} {
-		p := newCloudPane(s, mode)
+	for _, p := range []tui.Pane{newCloudPane(s, "v1.31.4"), newResourcesPane(s)} {
+		mode := p.ID()
 		for _, size := range [][2]int{{50, 5}, {80, 6}, {120, 12}} {
 			w, h := size[0], size[1]
 			body := p.Render(w, h, false)
@@ -265,11 +270,11 @@ func TestAgeReportsUnknownForAZeroTimestamp(t *testing.T) {
 // The migrations table has to fit a full pair of compute hostnames in one grid
 // column of four, which is where the operator will be reading it during a drain.
 //
-// This is pinned with a test because the demo fixture's hostnames are short —
-// "node-06" against a site's real ones — so the layout looks comfortable there
-// while truncating the destination on the cluster that matters. The destination is
-// the half that carries the news: during a drain the source is the hypervisor you
-// are draining and you already know it.
+// This is pinned with a test rather than left to the demo fixture, because a
+// fixture's hostnames are whatever someone typed. Short ones make the layout look
+// comfortable while it truncates the destination on the cluster that matters, and
+// the destination is the half that carries the news: during a drain the source is
+// the hypervisor you are draining and you already know it.
 //
 // Keep these fixture hostnames at 14 characters before the domain. That is the
 // width the column was calibrated against, and shortening them to make room would
@@ -303,5 +308,57 @@ func TestCloudPaneMigrationsFitOneGridColumn(t *testing.T) {
 		if got := lipgloss.Width(line); got > bodyWidth {
 			t.Errorf("line %d is %d columns, want at most %d", i, got, bodyWidth)
 		}
+	}
+}
+
+// Cinder reports more states than a one-column frame can hold, and the line has
+// to lose the rarest rather than lose the end of a word.
+//
+// Taken from a live cloud, where the pane rendered
+// "... ERROR_DELETING 10, ATTACHI" hard against the border: a state that does not
+// exist, followed by however many the reader could not know were there. Resources
+// moved from a two-column pane into a section of the Cloud frame, which halved
+// its width, and the breakdown had always been written in full and clipped.
+func TestInventoryBreakdownDropsRarestRatherThanTruncating(t *testing.T) {
+	s := store.New()
+	s.Put(KeyInventory, Inventory{Counts: []Count{
+		{Label: "Load Balancers", Total: 4, ByState: map[string]int{"ACTIVE": 3, "ERROR": 1}},
+		{Label: "Volumes", Total: 104, ByState: map[string]int{
+			"IN-USE": 66, "AVAILABLE": 16, "RESERVED": 11,
+			"ERROR_DELETING": 10, "ATTACHING": 1,
+		}},
+	}})
+
+	const width = 74 // one grid column of four, less the frame's chrome
+	body := stripANSI(renderInventory(s, width, 6))
+
+	for _, line := range strings.Split(body, "\n") {
+		if lipgloss.Width(line) > width {
+			t.Errorf("line overflows %d columns:\n%q", width, line)
+		}
+	}
+
+	volumes := ""
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "Volumes:") {
+			volumes = strings.TrimRight(line, " ")
+		}
+	}
+	if volumes == "" {
+		t.Fatalf("no Volumes line:\n%s", body)
+	}
+	// The bulk state survives, the parenthesis is closed, and the states that
+	// did not fit are counted rather than silently gone.
+	for _, want := range []string{"104", "IN-USE 66", ")"} {
+		if !strings.Contains(volumes, want) {
+			t.Errorf("Volumes line missing %q: %q", want, volumes)
+		}
+	}
+	if !strings.Contains(volumes, "+") {
+		t.Errorf("dropped states are not counted: %q", volumes)
+	}
+	// The specific failure this replaced: a state name cut mid-word.
+	if strings.Contains(volumes, "ATTACHI") && !strings.Contains(volumes, "ATTACHING") {
+		t.Errorf("a state name is truncated mid-word: %q", volumes)
 	}
 }

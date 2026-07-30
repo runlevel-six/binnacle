@@ -289,6 +289,49 @@ func pluginRows(s *store.Store) []reportRow {
 		out = append(out, row)
 	}
 
+	// Service versions come from the cluster rather than the cloud, so they are
+	// their own row: an operator reading this needs to see that the two halves
+	// disagree — agents up, versions behind — rather than have one summarized into
+	// the other.
+	//
+	// Manual services are named even when they are up to date, on the same
+	// reasoning as the OVN components. This is read by someone asking whether the
+	// tool sees the cluster correctly, and a line confirming the OnDelete strategy
+	// was detected is worth having months before the chart bump that makes it
+	// matter. Waiting for the real event to discover the detector is broken is how
+	// a detector ships broken.
+	if svcs, ok := openstack.CollectServices(s, ""); ok {
+		row := reportRow{key: "openstack/services"}
+		row.summary = fmt.Sprintf("ns=%s, %d service(s), %d up to date",
+			svcs.Namespace, len(svcs.Items), len(svcs.Items)-len(svcs.Pending()))
+		var notes []string
+		for _, svc := range svcs.Items {
+			switch {
+			case !svc.Converged():
+				note := fmt.Sprintf("%s %d/%d up to date", svc.Name, svc.Updated, svc.Desired)
+				if svc.Manual {
+					note += " (manual: OnDelete)"
+				}
+				if behind := svc.Behind(); len(behind) > 0 {
+					parts := make([]string, 0, len(behind))
+					for _, c := range behind {
+						parts = append(parts, fmt.Sprintf("%s %d/%d",
+							openstack.TrimComponent(svc.Name, c.Name), c.Updated, c.Desired))
+					}
+					note += " behind: " + strings.Join(parts, ", ")
+				}
+				notes = append(notes, note)
+			case svc.Manual:
+				notes = append(notes, fmt.Sprintf("%s %d/%d up to date (manual: OnDelete)",
+					svc.Name, svc.Updated, svc.Desired))
+			}
+		}
+		if len(notes) > 0 {
+			row.summary += "; " + strings.Join(notes, "; ")
+		}
+		out = append(out, row)
+	}
+
 	// Migrations and inventory are reported separately from the agent state
 	// because they are separate polls against separate services: an operator
 	// whose credential can list Nova services but not every project's servers

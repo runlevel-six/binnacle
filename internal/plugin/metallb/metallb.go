@@ -91,8 +91,11 @@ type State struct {
 	// with addresses and no speaker announces nothing.
 	SpeakerReady   int32
 	SpeakerDesired int32
-	UpdatedAt      time.Time
-	Err            error
+	// Rollout is the speaker DaemonSet's progress toward its own pod template,
+	// which readiness alone does not report.
+	Rollout   kube.Rollout
+	UpdatedAt time.Time
+	Err       error
 }
 
 // PendingServices counts the Services still without an address.
@@ -216,10 +219,11 @@ func (p *Plugin) poll(ctx context.Context) State {
 	namespace, err := p.namespaceFor(pools)
 	note(err)
 	if namespace != "" {
-		ready, desired, speakerErr := p.speaker(ctx, namespace)
+		rollout, speakerErr := p.speaker(ctx, namespace)
 		note(speakerErr)
-		state.SpeakerReady = ready
-		state.SpeakerDesired = desired
+		state.Rollout = rollout
+		state.SpeakerReady = rollout.Ready
+		state.SpeakerDesired = rollout.Desired
 		state.Namespace = namespace
 	}
 
@@ -395,25 +399,30 @@ func attributeServices(pools []Pool, services []Service) {
 // release prefix precedes it.
 const speakerSuffix = "speaker"
 
-// speaker reports the speaker DaemonSet's readiness.
+// speaker reports the speaker DaemonSet's readiness and rollout state.
 //
 // The name is discovered rather than assumed, because it depends on how MetalLB
 // was installed: the upstream manifest calls it "speaker" and Helm prefixes the
 // release name. A pinned name in a profile is honored first, for a site that has
 // renamed it beyond recognition.
-func (p *Plugin) speaker(ctx context.Context, namespace string) (ready, desired int32, err error) {
+func (p *Plugin) speaker(ctx context.Context, namespace string) (kube.Rollout, error) {
 	name := p.settings.SpeakerName
+	var err error
 	if name == "" {
 		name, err = p.findSpeaker(ctx, namespace)
 		if err != nil {
-			return 0, 0, err
+			return kube.Rollout{}, err
 		}
 	}
 	ds, err := p.client.Typed.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return 0, 0, fmt.Errorf("get daemonset %s/%s: %w", namespace, name, err)
+		return kube.Rollout{}, fmt.Errorf("get daemonset %s/%s: %w", namespace, name, err)
 	}
-	return ds.Status.NumberReady, ds.Status.DesiredNumberScheduled, nil
+	r := kube.RolloutOfDaemonSet(ds)
+	if !r.Converged() {
+		r.StaleNodes = p.client.StaleNodes(ctx, ds)
+	}
+	return r, nil
 }
 
 // findSpeaker locates the speaker DaemonSet by name.

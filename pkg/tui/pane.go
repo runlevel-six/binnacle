@@ -113,6 +113,32 @@ type WidePane interface {
 	ColSpan() int
 }
 
+// SpanFloorPane is implemented by panes whose extra columns improve them rather
+// than being required.
+//
+// The distinction matters because a wide grid and a narrow one want different
+// answers. Pod Health needs two columns wherever it is placed — a pod name and a
+// node FQDN do not fit in one, and denying it the width truncates data. A merged
+// frame is the other case: it asks for two columns so it can flow its sections
+// side by side, and if it does not get them it stacks them instead and loses
+// nothing but elegance.
+//
+// Granting the second kind its request on a three-column grid is actively worse
+// than refusing. It leaves a single column for the rest of the row, which pushes
+// a pane onto a new grid row, and the new row's height comes out of every row
+// above it — measured on a 240x63 terminal, that turned a five-row section into
+// two rows and a "+ 3 more".
+//
+// This is [minColsForRowSpan]'s reasoning applied to columns, except declared by
+// the pane rather than fixed by the grid, because only the pane knows whether its
+// span is a need or a preference.
+type SpanFloorPane interface {
+	Pane
+	// MinColsForSpan is the narrowest grid on which this pane's ColSpan is
+	// honored. Below it the pane is placed in a single column.
+	MinColsForSpan() int
+}
+
 // TallPane is implemented by panes that need more than one grid row.
 //
 // Width and height starve different panes. [WidePane] answers the pane whose

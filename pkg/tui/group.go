@@ -106,6 +106,66 @@ func (g *GroupPane) HeightWeight() int {
 	return max(out, 1) + max(len(g.members)-1, 0)
 }
 
+// innerGutter is the blank column between a frame's flowed columns. One column,
+// because the sections already carry their own labels and a wider channel would
+// read as two frames that forgot their borders.
+const innerGutter = 1
+
+// flowMinMembers is the section count at which a frame prefers two columns.
+//
+// Four, arrived at by measurement rather than by reasoning about averages. Three
+// sections stack acceptably in one column — measured on a live cloud, the Cloud
+// frame's agents, versions and resources all rendered in full — while the second
+// grid column a flowing frame needs has to come from somewhere. At four columns
+// it came out of the row itself: a two-column Network beside a two-column Cloud
+// filled the row and pushed the migrations pane onto a row of its own, where it
+// spread seventy columns of table across three hundred.
+//
+// So the threshold is where stacking genuinely stops working rather than where it
+// starts to be tight. A four-section frame in one column gives each a quarter,
+// which is when a table renders its header and then "+ 2 more".
+const flowMinMembers = 4
+
+// ColSpan implements [tui.WidePane].
+//
+// A frame that will flow its sections has to be given the width to flow into,
+// and the grid allocates columns before anything renders — so the request is made
+// here from the member count rather than discovered at draw time. A frame with
+// too few sections to flow asks for one column and is placed exactly as before.
+func (g *GroupPane) ColSpan() int {
+	if len(g.members) < flowMinMembers {
+		return 1
+	}
+	return 2
+}
+
+// MinColsForSpan implements [SpanFloorPane]. A frame's second column lets it flow
+// its sections; it is never required, so it is surrendered on any grid that
+// cannot spare it. Four is the point at which a two-column frame still leaves two
+// columns beside it — the same threshold row spans use.
+func (g *GroupPane) MinColsForSpan() int { return 4 }
+
+// flowCols is how many inner columns to use at this width.
+//
+// The width test is against the widest member rather than the average: every
+// section renders at its column's width, so one demanding member sets the floor
+// for all of them. A frame that asked for two grid columns and did not get them —
+// a narrow terminal, a row with no room — falls back to stacking rather than
+// flowing into columns too narrow to hold anything.
+func (g *GroupPane) flowCols(w int) int {
+	if len(g.members) < flowMinMembers {
+		return 1
+	}
+	widest := 0
+	for _, m := range g.members {
+		widest = max(widest, m.MinWidth())
+	}
+	if w >= widest*2+innerGutter {
+		return 2
+	}
+	return 1
+}
+
 // Render stacks the members, each under its own label.
 //
 // Height is divided by [Pane.HeightWeight], not evenly. Sections are not
@@ -128,6 +188,101 @@ func (g *GroupPane) Render(w, h int, focused bool) string {
 		return g.members[0].Render(w, h, focused)
 	}
 
+	// Two inner columns when the frame is wide enough to hold them. The split
+	// point is chosen to balance the columns by weight but is always contiguous,
+	// so reading order stays down the left column and then down the right — the
+	// same order the single-column frame had, which is what keeps a section from
+	// moving when a terminal is resized across the threshold.
+	if cols := g.flowCols(w); cols == 2 {
+		half := g.splitAt()
+		leftW := (w - innerGutter) / 2
+		rightW := w - innerGutter - leftW
+		left := g.renderStack(g.members[:half], leftW, h)
+		right := g.renderStack(g.members[half:], rightW, h)
+		return joinColumns(left, right, leftW, rightW, h)
+	}
+	return g.renderStack(g.members, w, h)
+}
+
+// splitAt returns the index where the members divide between the two columns.
+//
+// Balanced by summed [Pane.HeightWeight] rather than by count, because sections
+// are not equal-sized things: splitting three members down the middle puts two
+// tables on the left and one status block alone on the right, which leaves the
+// right column half empty while the left one clips. Weight is already every
+// pane's declaration of how much vertical space it can use, so the same number
+// that sizes a section inside a column decides which column it lands in.
+//
+// The split is contiguous, so declaration order is preserved.
+func (g *GroupPane) splitAt() int {
+	total := 0
+	for _, m := range g.members {
+		total += max(m.HeightWeight(), 1)
+	}
+
+	best, bestDiff := 1, -1
+	running := 0
+	// Both columns must get at least one member, so the candidate split points
+	// stop one short of the end.
+	for i := 0; i < len(g.members)-1; i++ {
+		running += max(g.members[i].HeightWeight(), 1)
+		diff := total - 2*running
+		if diff < 0 {
+			diff = -diff
+		}
+		if bestDiff < 0 || diff < bestDiff {
+			best, bestDiff = i+1, diff
+		}
+	}
+	return best
+}
+
+// joinColumns places two rendered blocks side by side, padding each to its own
+// width so a short line in one cannot pull the other's column leftwards.
+func joinColumns(left, right string, leftW, rightW, h int) string {
+	l, r := strings.Split(left, "\n"), strings.Split(right, "\n")
+	lines := make([]string, 0, h)
+	for i := range h {
+		var lp, rp string
+		if i < len(l) {
+			lp = l[i]
+		}
+		if i < len(r) {
+			rp = r[i]
+		}
+		lines = append(lines, padTo(lp, leftW)+strings.Repeat(" ", innerGutter)+padTo(rp, rightW))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// padTo pads a line to width, measuring in cells rather than bytes so styled
+// content lands in the right column.
+func padTo(s string, width int) string {
+	if n := lipgloss.Width(s); n < width {
+		return s + strings.Repeat(" ", width-n)
+	}
+	return s
+}
+
+// renderStack draws members top to bottom under their labels, filling exactly
+// w x h.
+func (g *GroupPane) renderStack(members []Pane, w, h int) string {
+	if len(members) == 0 || h <= 0 {
+		return strings.TrimRight(strings.Repeat(strings.Repeat(" ", max(w, 0))+"\n", max(h, 0)), "\n")
+	}
+	if len(members) == 1 {
+		// One section in this column still gets its label: unlike a group of one,
+		// the frame's title names the group and not this member.
+		th := CurrentTheme()
+		label := lipgloss.NewStyle().Foreground(th.Muted).Bold(true)
+		if th.Grounded() {
+			label = label.Background(th.PaneBG)
+		}
+		lines := append([]string{label.Render(th.Label(members[0].Title()))},
+			strings.Split(members[0].Render(w, h-1, false), "\n")...)
+		return clampLines(lines, h)
+	}
+
 	th := CurrentTheme()
 	label := lipgloss.NewStyle().Foreground(th.Muted).Bold(true)
 	if th.Grounded() {
@@ -142,17 +297,17 @@ func (g *GroupPane) Render(w, h int, focused bool) string {
 	// row of data: this frame sits in the lowest-priority row, and on a large
 	// cluster it is already the first place height is taken from.
 	gap := 1
-	if h < len(g.members)*4 {
+	if h < len(members)*4 {
 		gap = 0
 	}
-	avail := h - gap*(len(g.members)-1)
+	avail := h - gap*(len(members)-1)
 	total := 0
-	for _, m := range g.members {
+	for _, m := range members {
 		total += max(m.HeightWeight(), 1)
 	}
 
 	lines := make([]string, 0, h)
-	for i, m := range g.members {
+	for i, m := range members {
 		if i > 0 {
 			for range gap {
 				lines = append(lines, "")
@@ -161,7 +316,7 @@ func (g *GroupPane) Render(w, h int, focused bool) string {
 		// A label plus one row is the floor: a section squeezed below that is
 		// better dropped than shown as a heading with nothing under it.
 		sectionH := max(avail*max(m.HeightWeight(), 1)/total, 2)
-		if i == len(g.members)-1 {
+		if i == len(members)-1 {
 			// The last section absorbs the rounding remainder, so the frame is
 			// filled to exactly the height it was given.
 			sectionH = h - len(lines)
@@ -174,8 +329,12 @@ func (g *GroupPane) Render(w, h int, focused bool) string {
 			lines = append(lines, strings.Split(m.Render(w, bodyH, false), "\n")...)
 		}
 	}
-	// Trim or pad to exactly h: a member that returned the wrong line count must
-	// not be able to push the grid off the bottom of the terminal.
+	return clampLines(lines, h)
+}
+
+// clampLines trims or pads to exactly h lines. A member that returned the wrong
+// line count must not be able to push the grid off the bottom of the terminal.
+func clampLines(lines []string, h int) string {
 	for len(lines) > h {
 		lines = lines[:len(lines)-1]
 	}

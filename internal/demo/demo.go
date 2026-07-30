@@ -127,7 +127,7 @@ func putCore(s *store.Store, now time.Time) {
 	s.Put(model.KeyMgmtMachines, snap(now, []model.Machine{
 		{
 			Namespace: "demo", Name: "demo-control-plane-7fh2d", ClusterName: "demo",
-			NodeName: "node-01.demo.example", Phase: "Running", Version: TargetVersion,
+			NodeName: "control-node-1.site-a.demo.example", Phase: "Running", Version: TargetVersion,
 			OwnerKind: "KubeadmControlPlane", OwnerName: "demo-control-plane",
 			InfraKind: "Metal3Machine", InfraName: "demo-control-plane-7fh2d",
 			Age: 42 * time.Minute,
@@ -142,28 +142,28 @@ func putCore(s *store.Store, now time.Time) {
 		},
 		{
 			Namespace: "demo", Name: "demo-control-plane-b3n8q", ClusterName: "demo",
-			NodeName: "node-03.demo.example", Phase: "Running", Version: priorVersion,
+			NodeName: "control-node-3.site-a.demo.example", Phase: "Running", Version: priorVersion,
 			OwnerKind: "KubeadmControlPlane", OwnerName: "demo-control-plane",
 			InfraKind: "Metal3Machine", InfraName: "demo-control-plane-b3n8q",
 			Age: 168 * 24 * time.Hour,
 		},
 		{
 			Namespace: "demo", Name: "demo-workers-5d9c7-lm2vp", ClusterName: "demo",
-			NodeName: "node-04.demo.example", Phase: "Running", Version: priorVersion,
+			NodeName: "compute-node-1.site-a.demo.example", Phase: "Running", Version: priorVersion,
 			OwnerKind: "MachineSet", OwnerName: "demo-workers-5d9c7",
 			InfraKind: "Metal3Machine", InfraName: "demo-workers-5d9c7-lm2vp",
 			Age: 168 * 24 * time.Hour,
 		},
 		{
 			Namespace: "demo", Name: "demo-workers-5d9c7-qt6rk", ClusterName: "demo",
-			NodeName: "node-05.demo.example", Phase: "Running", Version: priorVersion,
+			NodeName: "compute-node-2.site-a.demo.example", Phase: "Running", Version: priorVersion,
 			OwnerKind: "MachineSet", OwnerName: "demo-workers-5d9c7",
 			InfraKind: "Metal3Machine", InfraName: "demo-workers-5d9c7-qt6rk",
 			Age: 168 * 24 * time.Hour,
 		},
 		{
 			Namespace: "demo", Name: "demo-workers-5d9c7-w8xzc", ClusterName: "demo",
-			NodeName: "node-06.demo.example", Phase: "Running", Version: priorVersion,
+			NodeName: "compute-node-3.site-a.demo.example", Phase: "Running", Version: priorVersion,
 			OwnerKind: "MachineSet", OwnerName: "demo-workers-5d9c7",
 			InfraKind: "Metal3Machine", InfraName: "demo-workers-5d9c7-w8xzc",
 			Age: 168 * 24 * time.Hour,
@@ -181,25 +181,25 @@ func putCore(s *store.Store, now time.Time) {
 	// for every row, which is exactly the wrong thing for a bare-metal tool's
 	// screenshot to show.
 	s.Put(model.KeyMgmtMetal3Machines, snap(now, []model.Metal3Machine{
-		m3("demo-control-plane-7fh2d", "node-01", true),
-		m3("demo-control-plane-x9k4m", "node-07", false),
-		m3("demo-control-plane-b3n8q", "node-03", true),
-		m3("demo-workers-5d9c7-lm2vp", "node-04", true),
-		m3("demo-workers-5d9c7-qt6rk", "node-05", true),
-		m3("demo-workers-5d9c7-w8xzc", "node-06", true),
+		m3("demo-control-plane-7fh2d", "control-node-1", true),
+		m3("demo-control-plane-x9k4m", "control-node-4", false),
+		m3("demo-control-plane-b3n8q", "control-node-3", true),
+		m3("demo-workers-5d9c7-lm2vp", "compute-node-1", true),
+		m3("demo-workers-5d9c7-qt6rk", "compute-node-2", true),
+		m3("demo-workers-5d9c7-w8xzc", "compute-node-3", true),
 	}))
 
 	s.Put(model.KeyMgmtBareMetalHosts, snap(now, []model.BareMetalHost{
-		host("node-01", "provisioned", "demo-control-plane-7fh2d"),
-		host("node-02", "available", ""),
-		host("node-03", "provisioned", "demo-control-plane-b3n8q"),
-		host("node-04", "provisioned", "demo-workers-5d9c7-lm2vp"),
-		host("node-05", "provisioned", "demo-workers-5d9c7-qt6rk"),
-		host("node-06", "provisioned", "demo-workers-5d9c7-w8xzc"),
+		host("control-node-1", "provisioned", "demo-control-plane-7fh2d"),
+		host("control-node-2", "available", ""),
+		host("control-node-3", "provisioned", "demo-control-plane-b3n8q"),
+		host("compute-node-1", "provisioned", "demo-workers-5d9c7-lm2vp"),
+		host("compute-node-2", "provisioned", "demo-workers-5d9c7-qt6rk"),
+		host("compute-node-3", "provisioned", "demo-workers-5d9c7-w8xzc"),
 		{
 			// The failure a rollout most often stalls on, and the reason the
 			// Hosts banner cell is red rather than amber.
-			Namespace: "demo", Name: "node-07", State: "provisioning",
+			Namespace: "demo", Name: "control-node-4", State: "provisioning",
 			OperationalStatus: "error", PoweredOn: false, Online: true,
 			ConsumerKind: "Metal3Machine", ConsumerNamespace: "demo",
 			ConsumerName: "demo-control-plane-x9k4m",
@@ -209,39 +209,39 @@ func putCore(s *store.Store, now time.Time) {
 	}))
 
 	s.Put(model.KeyWorkloadNodes, snap(now, []model.Node{
-		node("node-01", "control-plane", TargetVersion, "192.0.2.11", 42*time.Minute, nodeOpts{}),
-		node("node-03", "control-plane", priorVersion, "192.0.2.13", 168*24*time.Hour, nodeOpts{}),
-		node("node-04", "worker", priorVersion, "192.0.2.14", 168*24*time.Hour, nodeOpts{}),
+		node("control-node-1", "control-plane", TargetVersion, "192.0.2.11", 42*time.Minute, nodeOpts{}),
+		node("control-node-3", "control-plane", priorVersion, "192.0.2.13", 168*24*time.Hour, nodeOpts{}),
+		node("compute-node-1", "worker", priorVersion, "192.0.2.14", 168*24*time.Hour, nodeOpts{}),
 		// Drained ahead of its turn in the rollout: cordoned and Ready, which
 		// must read as amber rather than as a fault.
-		node("node-05", "worker", priorVersion, "192.0.2.15", 168*24*time.Hour, nodeOpts{cordoned: true}),
+		node("compute-node-2", "worker", priorVersion, "192.0.2.15", 168*24*time.Hour, nodeOpts{cordoned: true}),
 		// Has not come back. This is the red one.
-		node("node-06", "worker", priorVersion, "192.0.2.16", 168*24*time.Hour, nodeOpts{notReady: true}),
+		node("compute-node-3", "worker", priorVersion, "192.0.2.16", 168*24*time.Hour, nodeOpts{notReady: true}),
 	}))
 
 	s.Put(model.KeyWorkloadPods, snap(now, []model.Pod{
-		pod("kube-system", "coredns-6f8b4d9c7-2xk9v", 1, 1, "Running", 0, 168*24*time.Hour, "node-01.demo.example", true),
-		pod("kube-system", "kube-apiserver-node-01", 1, 1, "Running", 0, 42*time.Minute, "node-01.demo.example", true),
-		pod("kube-system", "kube-apiserver-node-03", 1, 1, "Running", 0, 168*24*time.Hour, "node-03.demo.example", true),
-		// The pods that noticed node-06 going away.
+		pod("kube-system", "coredns-6f8b4d9c7-2xk9v", 1, 1, "Running", 0, 168*24*time.Hour, "control-node-1.site-a.demo.example", true),
+		pod("kube-system", "kube-apiserver-control-node-1", 1, 1, "Running", 0, 42*time.Minute, "control-node-1.site-a.demo.example", true),
+		pod("kube-system", "kube-apiserver-control-node-3", 1, 1, "Running", 0, 168*24*time.Hour, "control-node-3.site-a.demo.example", true),
+		// The pods that noticed compute-node-3 going away.
 		pod("monitoring", "prometheus-server-0", 0, 2, "Pending", 0, 11*time.Minute, "", false),
-		pod("ingress", "ingress-nginx-controller-t4w7p", 0, 1, "Terminating", 0, 168*24*time.Hour, "node-06.demo.example", false),
-		pod("storage", "csi-node-driver-9mq2f", 0, 3, "CrashLoopBackOff", 7, 168*24*time.Hour, "node-06.demo.example", false),
+		pod("ingress", "ingress-nginx-controller-t4w7p", 0, 1, "Terminating", 0, 168*24*time.Hour, "compute-node-3.site-a.demo.example", false),
+		pod("storage", "csi-node-driver-9mq2f", 0, 3, "CrashLoopBackOff", 7, 168*24*time.Hour, "compute-node-3.site-a.demo.example", false),
 	}))
 
-	s.Put(model.KeyWorkloadWorkloads, snap(now, []model.Workload{
+	s.Put(model.KeyWorkloadWorkloads, snap(now, append([]model.Workload{
 		{Namespace: "kube-system", Name: "coredns", Kind: "Deployment", Ready: 2, Desired: 2},
 		{Namespace: "kube-system", Name: "kube-proxy", Kind: "DaemonSet", Ready: 4, Desired: 5},
 		{Namespace: "ingress", Name: "ingress-nginx-controller", Kind: "Deployment", Ready: 1, Desired: 2},
 		{Namespace: "monitoring", Name: "prometheus-server", Kind: "StatefulSet", Ready: 0, Desired: 1},
 		{Namespace: "storage", Name: "csi-node-driver", Kind: "DaemonSet", Ready: 4, Desired: 5},
-	}))
+	}, openStackWorkloads()...)))
 
 	s.Put(model.KeyMgmtEvents, snap(now, []model.Event{
-		event(now, "Warning", "ProvisioningError", "BareMetalHost", "node-07",
+		event(now, "Warning", "ProvisioningError", "BareMetalHost", "control-node-4",
 			"Introspection timed out after 30m0s", 4*time.Minute, 3),
 		event(now, "Normal", "DrainNode", "Machine", "demo-control-plane-x9k4m",
-			"Draining node node-02.demo.example", 8*time.Minute, 1),
+			"Draining node control-node-2.site-a.demo.example", 8*time.Minute, 1),
 		event(now, "Normal", "MachineCreated", "MachineSet", "demo-control-plane",
 			"Created machine demo-control-plane-x9k4m", 9*time.Minute, 1),
 		event(now, "Normal", "RollingUpdate", "KubeadmControlPlane", "demo-control-plane",
@@ -253,8 +253,8 @@ func putCore(s *store.Store, now time.Time) {
 			"Back-off restarting failed container", 2*time.Minute, 7),
 		event(now, "Warning", "FailedScheduling", "Pod", "prometheus-server-0",
 			"0/5 nodes are available: 1 node(s) had untolerated taint", 3*time.Minute, 11),
-		event(now, "Normal", "NodeNotReady", "Node", "node-06.demo.example",
-			"Node node-06.demo.example status is now: NodeNotReady", 14*time.Minute, 1),
+		event(now, "Normal", "NodeNotReady", "Node", "compute-node-3.site-a.demo.example",
+			"Node compute-node-3.site-a.demo.example status is now: NodeNotReady", 14*time.Minute, 1),
 	}))
 }
 
@@ -296,7 +296,7 @@ func node(short, role, version, ip string, age time.Duration, o nodeOpts) model.
 	}
 	roles := []string{role}
 	n := model.Node{
-		Name: short + ".demo.example", Status: status, Roles: roles, Role: role,
+		Name: short + ".site-a.demo.example", Status: status, Roles: roles, Role: role,
 		Age: age, Version: version, InternalIP: ip,
 		OSImage:          "Ubuntu 24.04.1 LTS",
 		KernelVersion:    "6.8.0-51-generic",
@@ -329,5 +329,54 @@ func event(now time.Time, typ, reason, kind, name, msg string,
 		ObjectKind: kind, ObjectName: name, Message: msg,
 		FirstTimestamp: last.Add(-time.Duration(count) * time.Minute),
 		LastTimestamp:  last, Count: count,
+	}
+}
+
+// openStackWorkloads is the cloud's own control plane as Kubernetes sees it.
+//
+// Present in the fixture because the agent APIs cover only Nova, Neutron and
+// Cinder, so without these the demo would show three services on a cloud running
+// a dozen — and the service-version view exists precisely to correct that.
+//
+// Mid-upgrade, and deliberately not uniformly so. Keystone and Glance are through;
+// Nova is part-way, with the API tier done and the hypervisors behind; Neutron's
+// metadata agents are behind for the same reason. `application` and `component`
+// are the OpenStack-Helm labels the grouping keys on.
+func openStackWorkloads() []model.Workload {
+	svc := func(app, part, kind string, desired, updated, ready int32, manual bool) model.Workload {
+		name := app
+		if part != "" {
+			name = app + "-" + part
+		}
+		return model.Workload{
+			Namespace: "openstack", Name: name, Kind: kind,
+			Desired: desired, Updated: updated, Ready: ready, Manual: manual,
+			Labels: map[string]string{"application": app, "component": part},
+		}
+	}
+	return []model.Workload{
+		svc("keystone", "api", "Deployment", 3, 3, 3, false),
+		svc("glance", "api", "Deployment", 3, 3, 3, false),
+		svc("placement", "api", "Deployment", 3, 3, 3, false),
+		svc("heat", "api", "Deployment", 3, 3, 3, false),
+		svc("heat", "engine", "Deployment", 3, 3, 3, false),
+		svc("barbican", "api", "Deployment", 3, 3, 3, false),
+		svc("octavia", "api", "Deployment", 3, 3, 3, false),
+		svc("octavia", "worker", "Deployment", 3, 3, 3, false),
+		svc("magnum", "api", "Deployment", 3, 3, 3, false),
+		svc("magnum", "conductor", "StatefulSet", 3, 3, 3, false),
+		svc("cinder", "api", "Deployment", 3, 3, 3, false),
+		svc("cinder", "volume", "Deployment", 1, 1, 1, false),
+		// The API tier rolled; the hypervisors have not, which is the shape of
+		// every real OpenStack upgrade.
+		svc("nova", "os-api", "Deployment", 3, 3, 3, false),
+		svc("nova", "conductor", "Deployment", 3, 3, 3, false),
+		svc("nova", "scheduler", "Deployment", 3, 3, 3, false),
+		svc("nova", "compute", "DaemonSet", 5, 2, 5, false),
+		svc("neutron", "server", "Deployment", 3, 3, 3, false),
+		svc("neutron", "ovn-metadata-agent", "DaemonSet", 5, 3, 5, false),
+		// Carries every instance's networking, so its chart ships OnDelete and it
+		// moves only when an operator drains each host.
+		svc("libvirt", "libvirt", "DaemonSet", 5, 1, 5, true),
 	}
 }

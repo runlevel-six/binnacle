@@ -27,10 +27,17 @@ func (p *pane) MinWidth() int          { return 46 }
 func (p *pane) MinHeight() int         { return 6 }
 func (p *pane) HeightWeight() int      { return 2 }
 
-// Group puts this pane in the shared "Cloud" frame; see [tui.GroupedPane].
-func (p *pane) GroupID() string    { return "cloud" }
-func (p *pane) GroupTitle() string { return "Cloud" }
-func (p *pane) GroupOrder() int    { return 1 }
+// Group puts this pane in the shared "Network" frame; see [tui.GroupedPane].
+//
+// The network, not the cloud. OVN is a network layer that happens to be driven by
+// Neutron, and an operator asking "what is wrong with the network" should find
+// Cilium, MetalLB and OVN in one place rather than two of them here and the third
+// under a heading about OpenStack. That grouping also stops the frame implying a
+// division of labor that does not exist: the same person's workloads ride Cilium
+// while their tenants' ride OVN, so nobody is only interested in one of them.
+func (p *pane) GroupID() string    { return "network" }
+func (p *pane) GroupTitle() string { return "Network" }
+func (p *pane) GroupOrder() int    { return 2 }
 
 var raftCols = []table.Column{
 	{Header: "DB"},
@@ -247,6 +254,30 @@ func Summary(state State) []string {
 			// Claiming 3/3 from that view is how the false alarm's mirror image
 			// would look: a blind spot reported as health.
 			line += fmt.Sprintf(" members unchecked (read from %s)", st.Pod)
+		}
+		out = append(out, line)
+	}
+
+	// Workload versions too, and the manual ones are reported even when they are
+	// up to date.
+	//
+	// That asymmetry is deliberate. The pane stays quiet about a converged
+	// component because there is nothing to do about it, but a diagnostic is read
+	// by someone asking whether the tool is seeing the cluster correctly — and
+	// "openvswitch 4/4 (manual)" is the line that confirms the OnDelete strategy
+	// was detected, months before the chart bump that makes it matter. Waiting for
+	// the real event to find out whether the detector works is how a detector
+	// ships broken.
+	for _, c := range state.Components {
+		line := fmt.Sprintf("%s %d/%d up to date", c.Name, c.Updated, c.Desired)
+		if c.Manual {
+			line += " (manual: OnDelete)"
+		}
+		if nodes, more := kube.ShortNodeNames(c.StaleNodes, 4); len(nodes) > 0 {
+			line += " pending: " + strings.Join(nodes, ", ")
+			if more > 0 {
+				line += fmt.Sprintf(", +%d", more)
+			}
 		}
 		out = append(out, line)
 	}

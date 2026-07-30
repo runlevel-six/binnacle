@@ -86,8 +86,16 @@ func row(label, value string) string {
 	return tui.StyleMuted.Render(table.PadOrTrunc(label, labelWidth)) + " " + value
 }
 
+// agentText reports readiness, and version drift beside it when there is any.
+//
+// Folded into the one line rather than given a row of its own, because a second
+// permanent row saying "up to date" on every healthy cluster is a row nobody
+// reads. It appears only mid-rollout, which is when it means something.
 func agentText(s State) string {
 	text := fmt.Sprintf("%d/%d ready", s.AgentsReady, s.AgentsDesired)
+	if r := s.Rollout; r.Known() && !r.Converged() {
+		text += tui.StyleAccent.Render(fmt.Sprintf("  %d/%d updated", r.Updated, r.Desired))
+	}
 	switch {
 	case s.AgentsDesired == 0:
 		return tui.StyleMuted.Render("none scheduled")

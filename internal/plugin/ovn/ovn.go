@@ -251,9 +251,13 @@ type State struct {
 	Tier       kube.Tier
 	TierReason string
 	// Statuses is one entry per database, in Databases order.
-	Statuses  []ClusterStatus
-	UpdatedAt time.Time
-	Err       error
+	Statuses []ClusterStatus
+	// Components is the rollout state of the OVN and Open vSwitch workloads, in
+	// upgrade order. Read from workload status alone, so it survives a denied
+	// pods/exec — which is exactly when Statuses above it goes empty.
+	Components []Component
+	UpdatedAt  time.Time
+	Err        error
 }
 
 // Healthy reports whether every database is in order.
@@ -445,6 +449,9 @@ func (p *Plugin) Run(ctx context.Context, s *store.Store) error {
 
 func (p *Plugin) poll(ctx context.Context) State {
 	state := State{Tier: p.tier, TierReason: p.tierReason, UpdatedAt: time.Now()}
+	// Independent of the Raft queries below and of the tier they depend on: this
+	// needs no exec, so a plugin stuck at informer-only still reports it.
+	state.Components = p.pollComponents(ctx)
 	// Attempted every poll, whatever happened last time — including a permission
 	// denial, which can be repaired mid-session. See [kube.Forbidden].
 	for _, db := range Databases {
@@ -607,6 +614,29 @@ func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
 		}
 		cell.Detail = strings.Join(problems, ", ")
 	}
+
+	// Version drift rides on the same cell rather than claiming one of its own.
+	// The strip is a row of subsystems, not of questions about them, and a second
+	// OVN cell would read as a second OVN.
+	if pending := PendingComponents(state.Components); len(pending) > 0 {
+		var stale int32
+		manual := false
+		for _, c := range pending {
+			stale += c.Stale()
+			manual = manual || c.Manual
+		}
+		note := fmt.Sprintf("%d pod(s) behind", stale)
+		if manual {
+			// The drift that will still be there next week unless somebody acts,
+			// so it is worth amber on a cell that is otherwise green.
+			note += " (manual)"
+			cell.Status = cell.Status.Worse(tui.BannerWarn)
+		}
+		if cell.Detail != "" {
+			note = cell.Detail + ", " + note
+		}
+		cell.Detail = note
+	}
 	return []tui.BannerCell{cell}
 }
 
@@ -622,5 +652,5 @@ func databaseLabel(name string) string {
 
 // Panes implements plugin.PaneProvider.
 func (p *Plugin) Panes(s *store.Store) []tui.Pane {
-	return []tui.Pane{newPane(s)}
+	return []tui.Pane{newPane(s), newRolloutPane(s)}
 }
