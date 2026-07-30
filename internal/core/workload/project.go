@@ -288,6 +288,8 @@ func ProjectDeployments(raw []*appsv1.Deployment) []model.Workload {
 		out = append(out, model.Workload{
 			Namespace: d.Namespace, Name: d.Name, Kind: KindDeployment,
 			Ready: d.Status.ReadyReplicas, Desired: desired,
+			Updated: d.Status.UpdatedReplicas,
+			Labels:  d.Labels,
 		})
 	}
 	return out
@@ -304,6 +306,9 @@ func ProjectStatefulSets(raw []*appsv1.StatefulSet) []model.Workload {
 		out = append(out, model.Workload{
 			Namespace: s.Namespace, Name: s.Name, Kind: KindStatefulSet,
 			Ready: s.Status.ReadyReplicas, Desired: desired,
+			Updated: s.Status.UpdatedReplicas,
+			Manual:  s.Spec.UpdateStrategy.Type == appsv1.OnDeleteStatefulSetStrategyType,
+			Labels:  s.Labels,
 		})
 	}
 	return out
@@ -318,6 +323,9 @@ func ProjectDaemonSets(raw []*appsv1.DaemonSet) []model.Workload {
 		out = append(out, model.Workload{
 			Namespace: d.Namespace, Name: d.Name, Kind: KindDaemonSet,
 			Ready: d.Status.NumberReady, Desired: d.Status.DesiredNumberScheduled,
+			Updated: d.Status.UpdatedNumberScheduled,
+			Manual:  d.Spec.UpdateStrategy.Type == appsv1.OnDeleteDaemonSetStrategyType,
+			Labels:  d.Labels,
 		})
 	}
 	return out

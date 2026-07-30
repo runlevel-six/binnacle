@@ -91,6 +91,12 @@ func (p *pane) summary(state State) string {
 	}
 
 	parts := []string{speaker}
+	// Version drift, only while there is any: a speaker fleet mid-roll is worth a
+	// word, a converged one is not.
+	if r := state.Rollout; r.Known() && !r.Converged() {
+		parts = append(parts, tui.StyleAccent.Render(
+			fmt.Sprintf("%d/%d updated", r.Updated, r.Desired)))
+	}
 	if n := state.PendingServices(); n > 0 {
 		parts = append(parts, tui.StyleWarn.Render(fmt.Sprintf("%d Service(s) pending an address", n)))
 	} else if len(state.Services) > 0 {

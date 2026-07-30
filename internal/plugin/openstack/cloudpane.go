@@ -14,16 +14,22 @@ import (
 	"github.com/runlevel-six/sextant/pkg/tui/table"
 )
 
-// cloudPane is the mode-aware slot: server migrations while a rollout is under
-// way, cloud inventory the rest of the time.
+// cloudPane reports server migrations.
 //
-// One slot rather than two panes, because the two contents answer the same
-// question at different times. During a rollout every compute node drains and
-// every VM moves, so "what is moving, and what failed to move" is the only thing
-// worth the space — a stalled migration is what stalls the upgrade. At rest
-// nothing is moving and the useful question becomes "what is in this cloud".
-// Showing both at once would cost a pane to a table that reads "no active
-// migrations" for weeks at a time.
+// This was once a mode-aware slot that showed migrations during a rollout and the
+// resource inventory the rest of the time, on the reasoning that the two answer
+// the same question at different moments. That reasoning held for one reader and
+// not for the other. Migrations are driven by whoever is draining a hypervisor,
+// and the two people who do that are not synchronized: a Kubernetes upgrade drains
+// nodes on the fleet's schedule, while the cloud's own operator drains one host at
+// a time to restart the switching layer under it — work that involves no Cluster
+// API rollout at all. Keying the mode on the rollout signal therefore hid live
+// migrations from precisely the person causing them.
+//
+// So the inventory moved into the Cloud frame as a section of its own, and this is
+// migrations alone. The pane costs one grid column rather than two, which is what
+// it uses: the widest row is a status, a type, a short UUID and a pair of compute
+// hostnames.
 type cloudPane struct {
 	store         *store.Store
 	targetVersion string
@@ -33,36 +39,50 @@ func newCloudPane(s *store.Store, targetVersion string) *cloudPane {
 	return &cloudPane{store: s, targetVersion: targetVersion}
 }
 
-func (p *cloudPane) ID() string { return "openstack-cloud" }
-
-// Title names whichever content the mode has selected, so the border always
-// describes what is underneath it.
-func (p *cloudPane) Title() string {
-	if p.rolling() {
-		return "Server Migrations"
-	}
-	return "OpenStack Resources"
-}
+func (p *cloudPane) ID() string    { return "openstack-cloud" }
+func (p *cloudPane) Title() string { return "Server Migrations" }
 
 func (p *cloudPane) Priority() tui.Priority { return tui.P2Useful }
 func (p *cloudPane) MinWidth() int          { return 50 }
 func (p *cloudPane) MinHeight() int         { return 5 }
 func (p *cloudPane) HeightWeight() int      { return 2 }
 
-// rolling reports whether the rollout-flavored content is the one to show.
+// rolling reports whether a Cluster API rollout is under way.
 //
-// The signal is the same one the core panes use, so the whole dashboard changes
-// mode together rather than one pane disagreeing with the header.
+// Retained for the empty-state wording only: "no active migrations" is
+// reassurance during a rollout, where a drain that had stalled would show here,
+// and merely a statement of fact outside one.
 func (p *cloudPane) rolling() bool {
 	return rollout.Active(p.store, p.targetVersion)
 }
 
 // Render implements tui.Pane.
 func (p *cloudPane) Render(w, h int, _ bool) string {
-	if p.rolling() {
-		return p.renderMigrations(w, h, time.Now())
-	}
-	return p.renderInventory(w, h)
+	return p.renderMigrations(w, h, time.Now())
+}
+
+// resourcesPane is the cloud's resource census, as a section of the Cloud frame.
+type resourcesPane struct {
+	store *store.Store
+}
+
+func newResourcesPane(s *store.Store) *resourcesPane { return &resourcesPane{store: s} }
+
+func (p *resourcesPane) ID() string             { return "openstack-resources" }
+func (p *resourcesPane) Title() string          { return "Resources" }
+func (p *resourcesPane) Priority() tui.Priority { return tui.P2Useful }
+func (p *resourcesPane) MinWidth() int          { return 40 }
+func (p *resourcesPane) MinHeight() int         { return 4 }
+func (p *resourcesPane) HeightWeight() int      { return 2 }
+
+// Group puts this pane in the shared "Cloud" frame; see [tui.GroupedPane].
+func (p *resourcesPane) GroupID() string    { return "cloud" }
+func (p *resourcesPane) GroupTitle() string { return "Cloud" }
+func (p *resourcesPane) GroupOrder() int    { return 2 }
+
+// Render implements tui.Pane.
+func (p *resourcesPane) Render(w, h int, _ bool) string {
+	return renderInventory(p.store, w, h)
 }
 
 var migrationCols = []table.Column{
@@ -125,8 +145,8 @@ func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
 //
 // Every row renders independently of the others' success, so a denied Keystone or
 // an absent Octavia costs one line rather than the pane.
-func (p *cloudPane) renderInventory(w, h int) string {
-	inv, ok := store.Get[Inventory](p.store, KeyInventory)
+func renderInventory(s *store.Store, w, h int) string {
+	inv, ok := store.Get[Inventory](s, KeyInventory)
 	if !ok {
 		return table.Placeholder(w, h, "polling OpenStack resources…")
 	}
@@ -144,12 +164,12 @@ func (p *cloudPane) renderInventory(w, h int) string {
 
 	lines := make([]string, 0, len(inv.Counts))
 	for _, c := range inv.Counts {
-		lines = append(lines, table.PadOrTrunc(countLine(c, labelW), w))
+		lines = append(lines, table.PadOrTrunc(countLine(c, labelW, w), w))
 	}
 	return table.ClipLines(strings.Join(lines, "\n"), h)
 }
 
-func countLine(c Count, labelW int) string {
+func countLine(c Count, labelW, width int) string {
 	label := fmt.Sprintf("%-*s", labelW, c.Label+":")
 	switch {
 	case c.Absent:
@@ -160,7 +180,11 @@ func countLine(c Count, labelW int) string {
 
 	line := label + fmt.Sprintf(" %d", c.Total)
 	if len(c.ByState) > 0 {
-		line += "  " + tui.StyleMuted.Render(breakdown(c.ByState))
+		// The breakdown is fitted to what is left of the line rather than
+		// written in full and clipped. Clipping cuts mid-word — a real cloud
+		// rendered "ERROR_DELETING 10, ATTACHI" at the pane edge, which reads as
+		// a state that does not exist and hides however many followed it.
+		line += "  " + tui.StyleMuted.Render(breakdown(c.ByState, max(width-lipgloss.Width(line)-2, 0)))
 	}
 	return line
 }
@@ -168,7 +192,13 @@ func countLine(c Count, labelW int) string {
 // breakdown formats a state map as "(STATE n, STATE n)", most common first and
 // ties broken alphabetically, so the eye lands on the bulk state without reading
 // the whole parenthesis.
-func breakdown(by map[string]int) string {
+//
+// States that do not fit in width are dropped and counted rather than truncated.
+// Dropping the rarest is the right sacrifice: they are last precisely because
+// they describe the fewest resources, and "+2" is honest about their existence
+// where a severed word is not. A width of zero or less means unconstrained, for
+// callers that have already made room.
+func breakdown(by map[string]int, width int) string {
 	type entry struct {
 		state string
 		n     int
@@ -185,8 +215,31 @@ func breakdown(by map[string]int) string {
 	})
 
 	parts := make([]string, 0, len(entries))
-	for _, e := range entries {
-		parts = append(parts, fmt.Sprintf("%s %d", e.state, e.n))
+	// Two for the parentheses, and the running total tracks the ", " joins.
+	used := 2
+	for i, e := range entries {
+		part := fmt.Sprintf("%s %d", e.state, e.n)
+		cost := len(part)
+		if i > 0 {
+			cost += 2
+		}
+		if width > 0 && used+cost > width {
+			// Room for the marker is made by dropping one more entry if need be,
+			// so the marker itself cannot be what overflows.
+			marker := fmt.Sprintf(", +%d", len(entries)-i)
+			for len(parts) > 0 && used+len(marker) > width {
+				last := parts[len(parts)-1]
+				parts = parts[:len(parts)-1]
+				used -= len(last) + 2
+				marker = fmt.Sprintf(", +%d", len(entries)-len(parts))
+			}
+			if len(parts) == 0 {
+				return ""
+			}
+			return "(" + strings.Join(parts, ", ") + marker + ")"
+		}
+		used += cost
+		parts = append(parts, part)
 	}
 	return "(" + strings.Join(parts, ", ") + ")"
 }

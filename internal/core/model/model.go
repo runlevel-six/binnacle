@@ -298,6 +298,18 @@ type Workload struct {
 	Kind      string // "Deployment" | "StatefulSet" | "DaemonSet"
 	Ready     int32
 	Desired   int32
+	// Updated is how many pods run the workload's current template. Distinct
+	// from Ready, which is about this second: every pod can be Ready while half
+	// of them still run the version before the one the chart now asks for.
+	Updated int32
+	// Manual reports the OnDelete update strategy — no controller will replace
+	// the remaining pods, so the rollout finishes only when someone deletes them
+	// by hand. See [github.com/runlevel-six/sextant/internal/plugin/kube.Rollout].
+	Manual bool
+	// Labels are the workload's own labels, carried so a plugin can group
+	// workloads by whatever convention its charts use without this package
+	// having to know about any of them.
+	Labels map[string]string
 }
 
 // Pod is a core/v1 Pod.

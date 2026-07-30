@@ -160,6 +160,11 @@ func spanOf(p tui.Pane, cols int) int {
 	if !ok {
 		return 1
 	}
+	// A pane whose span is a preference rather than a need gives it up on a grid
+	// too narrow to spare the column. See [tui.SpanFloorPane].
+	if fp, floored := p.(tui.SpanFloorPane); floored && cols < fp.MinColsForSpan() {
+		return 1
+	}
 	return min(max(wp.ColSpan(), 1), max(cols, 1))
 }
 
@@ -469,10 +474,16 @@ func Compute(o Options) Layout {
 		rowCount = max(rowCount, pl.row+pl.rowSpan)
 	}
 
-	// Assign columns, row by row. Within a row the single-column tiles come first,
-	// which lines the wide tables up into one region down the right of the screen
-	// instead of scattering them by priority order — and costs nothing, because
-	// focus order and jump digits come from priority rather than position.
+	// Assign columns, row by row, in priority order.
+	//
+	// Tiles were once ordered within a row by column span, narrow first, to line
+	// the wide tables up down the right of the screen. That was justified on the
+	// grounds that position does not matter because focus order and jump digits
+	// come from priority — which had it backwards. The digits are *printed in the
+	// titles*, so a row rendering [7] [8] [6] left to right is a row where the
+	// labels visibly disagree with the layout, and the reader has to search for
+	// the pane they just read the number of. Priority order costs an aesthetic
+	// alignment and buys a screen that can be read in the order it is numbered.
 	occupied := make([][]bool, rowCount)
 	for i := range occupied {
 		occupied[i] = make([]bool, cols)
@@ -483,9 +494,6 @@ func Compute(o Options) Layout {
 	}
 	for r := range rowCount {
 		starting := byRow[r]
-		sort.SliceStable(starting, func(a, b int) bool {
-			return placements[starting[a]].colSpan < placements[starting[b]].colSpan
-		})
 		for _, i := range starting {
 			pl := &placements[i]
 			for c := 0; c+pl.colSpan <= cols; c++ {

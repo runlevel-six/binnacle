@@ -146,6 +146,9 @@ type Settings struct {
 	// Cloud is the clouds.yaml profile name. Required: there is no sensible
 	// default, since the name is chosen by whoever wrote the file.
 	Cloud string
+	// Namespace pins where the OpenStack workloads run, for the service-version
+	// view. Empty derives it from the workloads themselves.
+	Namespace string
 	// TargetVersion is the Kubernetes version being rolled out, if the operator
 	// asserted one. It is not a profile setting — it comes from --target-version
 	// or the environment — and it reaches this plugin because the mode-aware
@@ -158,6 +161,9 @@ func SettingsFrom(raw map[string]any) Settings {
 	var s Settings
 	if v, ok := raw["cloud"].(string); ok {
 		s.Cloud = v
+	}
+	if v, ok := raw["namespace"].(string); ok {
+		s.Namespace = v
 	}
 	return s
 }
@@ -538,6 +544,21 @@ func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
 			cell.Status = tui.BannerOK
 		}
 	}
+
+	// Whether the deployed services match their charts, from the cluster rather
+	// than the cloud — the agent APIs cover three projects out of a dozen and
+	// carry no version at all, so this is the only place it can come from.
+	if svcs, ok := CollectServices(s, p.settings.Namespace); ok && !svcs.Converged() {
+		note := fmt.Sprintf("%d pod(s) behind", svcs.StalePods())
+		if svcs.NeedsOperator() {
+			note += " (manual)"
+			cell.Status = cell.Status.Worse(tui.BannerWarn)
+		}
+		if cell.Detail != "" {
+			note = cell.Detail + ", " + note
+		}
+		cell.Detail = note
+	}
 	return []tui.BannerCell{cell}
 }
 
@@ -548,6 +569,8 @@ func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
 func (p *Plugin) Panes(s *store.Store) []tui.Pane {
 	return []tui.Pane{
 		newPane(s),
+		newServicesPane(s, p.settings.Namespace),
+		newResourcesPane(s),
 		newCloudPane(s, p.settings.TargetVersion),
 	}
 }

@@ -122,6 +122,10 @@ type State struct {
 	// every tier.
 	AgentsReady   int32
 	AgentsDesired int32
+	// Rollout is the agent DaemonSet's progress toward its own pod template.
+	// Distinct from readiness: every agent can be Ready while half of them still
+	// run the version before the one the chart now asks for.
+	Rollout kube.Rollout
 	// Status is populated only at the full tier.
 	Status Status
 	// Pod names the agent Status came from, so per-node figures can be labeled.
@@ -254,6 +258,10 @@ func (p *Plugin) poll(ctx context.Context) State {
 		Get(ctx, p.settings.DaemonSetName, metav1.GetOptions{}); err == nil {
 		state.AgentsReady = ds.Status.NumberReady
 		state.AgentsDesired = ds.Status.DesiredNumberScheduled
+		state.Rollout = kube.RolloutOfDaemonSet(ds)
+		if !state.Rollout.Converged() {
+			state.Rollout.StaleNodes = p.client.StaleNodes(ctx, ds)
+		}
 	} else {
 		state.Err = fmt.Errorf("get daemonset %s/%s: %w",
 			p.settings.Namespace, p.settings.DaemonSetName, err)

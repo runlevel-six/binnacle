@@ -408,12 +408,12 @@ func TestSpeaker_PinnedNameSkipsDiscovery(t *testing.T) {
 		settings: Settings{SpeakerName: "custom-announcer"},
 	}
 
-	ready, desired, err := p.speaker(context.Background(), "metallb-system")
+	r, err := p.speaker(context.Background(), "metallb-system")
 	if err != nil {
 		t.Fatalf("speaker: %v", err)
 	}
-	if ready != 2 || desired != 3 {
-		t.Errorf("got %d/%d want 2/3", ready, desired)
+	if r.Ready != 2 || r.Desired != 3 {
+		t.Errorf("got %d/%d want 2/3", r.Ready, r.Desired)
 	}
 }
 
@@ -426,12 +426,12 @@ func TestSpeaker_DiscoveredNameIsRead(t *testing.T) {
 		settings: Defaults(),
 	}
 
-	ready, desired, err := p.speaker(context.Background(), "metallb-system")
+	r, err := p.speaker(context.Background(), "metallb-system")
 	if err != nil {
 		t.Fatalf("speaker: %v", err)
 	}
-	if ready != 6 || desired != 6 {
-		t.Errorf("got %d/%d want 6/6", ready, desired)
+	if r.Ready != 6 || r.Desired != 6 {
+		t.Errorf("got %d/%d want 6/6", r.Ready, r.Desired)
 	}
 }
 

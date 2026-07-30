@@ -9,6 +9,7 @@ coverage.txt
 
 # Local tooling
 /bin/
+/.claude/
 
 # Screenshots taken against a real cluster, which carry hostnames, contexts and
 # address pools. Only the repo root is ignored — deliberate, sanitised images
