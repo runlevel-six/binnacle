@@ -14,7 +14,7 @@ tmux-of-`watch`-commands that lives next to a maintenance-window runbook.
 > The dashboard runs. Core panes — rollout overview, machines joined to hosts,
 > nodes, pod health, events — are in place, profiles load from YAML, and the
 > optional subsystem panes (Ceph, Cilium, MetalLB, OVN, OpenStack) appear when
-> those subsystems are detected. Being validated against a production cluster.
+> those subsystems are detected.
 
 ## Install
 
