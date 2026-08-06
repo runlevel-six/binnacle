@@ -200,6 +200,118 @@ func TestJoin_OrdersControlPlaneFirst(t *testing.T) {
 	}
 }
 
+// bound builds a Machine in the given phase, joined all the way down to a host in
+// the given provisioning state.
+func bound(name, ownerKind, phase, state string) (model.Machine, model.Metal3Machine, model.BareMetalHost) {
+	m := machine("capi", name, "owner", ownerKind, name+"-m3m")
+	m.Phase = phase
+	return m,
+		model.Metal3Machine{Namespace: "capi", Name: name + "-m3m", BMHNamespace: "bmh", BMHName: name + "-host"},
+		model.BareMetalHost{Namespace: "bmh", Name: name + "-host", State: state}
+}
+
+// Anything mid-transition outranks the settled fleet, control plane included.
+// On a fleet larger than the pane, this is the difference between seeing the
+// reprovision and having to zoom to find it.
+func TestJoin_OrdersInFlightFirst(t *testing.T) {
+	cp, cpM3M, cpBMH := bound("cp-1", "KubeadmControlPlane", "Running", "provisioned")
+	idle, idleM3M, idleBMH := bound("a-worker", "MachineSet", "Running", "provisioned")
+	gone, goneM3M, goneBMH := bound("z-worker", "MachineSet", "Deleting", "deprovisioning")
+
+	rows := Join(
+		[]model.Machine{cp, idle, gone},
+		[]model.Metal3Machine{cpM3M, idleM3M, goneM3M},
+		[]model.BareMetalHost{cpBMH, idleBMH, goneBMH},
+		nil,
+	)
+	if rows[0].Machine.Name != "z-worker" {
+		t.Errorf("first row: got %q want z-worker (deprovisioning leads)", rows[0].Machine.Name)
+	}
+	// Control plane still leads everything settled.
+	if rows[1].Machine.Name != "cp-1" || rows[2].Machine.Name != "a-worker" {
+		t.Errorf("settled order: got %q,%q want cp-1,a-worker", rows[1].Machine.Name, rows[2].Machine.Name)
+	}
+}
+
+// An error is worth surfacing, but not ahead of what is moving: a host that has
+// been failed for a week must not push the live reprovision off the pane.
+func TestJoin_ErroredRanksBehindInFlight(t *testing.T) {
+	cp, cpM3M, cpBMH := bound("cp-1", "KubeadmControlPlane", "Running", "provisioned")
+	broken, brokenM3M, brokenBMH := bound("a-worker", "MachineSet", "Running", "provisioned")
+	brokenBMH.ErrorMessage = "introspection failed"
+	fresh, freshM3M, freshBMH := bound("z-worker", "MachineSet", "Provisioning", "provisioning")
+
+	rows := Join(
+		[]model.Machine{cp, broken, fresh},
+		[]model.Metal3Machine{cpM3M, brokenM3M, freshM3M},
+		[]model.BareMetalHost{cpBMH, brokenBMH, freshBMH},
+		nil,
+	)
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.Machine.Name)
+	}
+	if want := "z-worker,a-worker,cp-1"; strings.Join(got, ",") != want {
+		t.Errorf("order: got %v want %s", got, want)
+	}
+}
+
+func TestActivityRank(t *testing.T) {
+	tests := []struct {
+		name  string
+		phase string
+		state string
+		errMs string
+		want  int
+	}{
+		{"provisioning host", "Provisioning", "provisioning", "", RankInFlight},
+		{"deprovisioning host", "Running", "deprovisioning", "", RankInFlight},
+		{"released host", "Running", "available", "", RankInFlight},
+		{"inspecting host", "Running", "inspecting", "", RankInFlight},
+		{"deleting machine", "Deleting", "provisioned", "", RankInFlight},
+		{"pending machine", "Pending", "", "", RankInFlight},
+		// A moving host leads even when it is also reporting an error.
+		{"provisioning and errored", "Provisioning", "provisioning", "boom", RankInFlight},
+		{"errored host", "Running", "provisioned", "boom", RankAttention},
+		{"failed machine", "Failed", "provisioned", "", RankAttention},
+		{"running", "Running", "provisioned", "", RankSettled},
+		// Provisioned is hardware that is up, waiting only for its Node.
+		{"provisioned machine", "Provisioned", "provisioned", "", RankSettled},
+		// The Metal3 state machine gains states; an unrecognized one must not
+		// claim the top of the pane.
+		{"unknown host state", "Running", "somethingNew", "", RankSettled},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := HostRow{
+				Machine:       model.Machine{Name: "m", Phase: tc.phase},
+				Metal3Machine: &model.Metal3Machine{Name: "m3m"},
+				BareMetalHost: &model.BareMetalHost{Name: "host", State: tc.state, ErrorMessage: tc.errMs},
+			}
+			if got := ActivityRank(r); got != tc.want {
+				t.Errorf("ActivityRank: got %d want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// A Machine whose provider machine exists but has no host yet is mid-provision:
+// either a host is being selected or none matched, and both want to be seen.
+func TestActivityRank_AwaitingHost(t *testing.T) {
+	r := HostRow{
+		Machine:       model.Machine{Name: "m", Phase: "Running"},
+		Metal3Machine: &model.Metal3Machine{Name: "m3m"},
+	}
+	if got := ActivityRank(r); got != RankInFlight {
+		t.Errorf("awaiting host: got rank %d want %d", got, RankInFlight)
+	}
+	// With no provider machine at all there is nothing in flight to report.
+	r.Metal3Machine = nil
+	if got := ActivityRank(r); got != RankSettled {
+		t.Errorf("no provider machine: got rank %d want %d", got, RankSettled)
+	}
+}
+
 func TestJoin_StableAcrossCalls(t *testing.T) {
 	machines := []model.Machine{
 		machine("ns-b", "m", "ms", "MachineSet", ""),
