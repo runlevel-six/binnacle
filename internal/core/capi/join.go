@@ -54,6 +54,92 @@ func (r HostRow) Provisioned() bool {
 	return r.BareMetalHost != nil && r.BareMetalHost.State == "provisioned"
 }
 
+// Activity ranks, lowest first. A pane renders as many rows as it has lines and
+// replaces the rest with "+ N more", so on a fleet larger than the tile this
+// ordering is what decides whether an operator has to zoom to find the machine
+// that is actually doing something.
+const (
+	// RankInFlight is a Machine or host mid-transition: provisioning,
+	// deprovisioning, or a host that has come back to available.
+	RankInFlight = 0
+	// RankAttention is a failed Machine or a host reporting an error, and is
+	// deliberately *behind* in-flight rows: a host that has been failed for a
+	// week would otherwise pin itself above the reprovision happening now.
+	RankAttention = 1
+	// RankSettled is the bulk of a healthy fleet.
+	RankSettled = 2
+)
+
+// machineInFlightPhases are the Cluster API phases that mean the Machine itself
+// is mid-transition.
+//
+// Running, Provisioned, Failed and Unknown are deliberately absent. Provisioned
+// in particular is a machine whose hardware is up and is waiting only for its
+// Node to register — the rest of the dashboard treats it as settled, and
+// promoting it here would keep a rollout's worth of finished machines at the top.
+var machineInFlightPhases = map[string]bool{
+	"Pending":      true,
+	"Provisioning": true,
+	"Deleting":     true,
+	"Deleted":      true,
+}
+
+// hostInFlightStates are the Metal3 provisioning states that mean the physical
+// host is being worked on.
+//
+// "available" is here even though it is a healthy state, because an available
+// host still bound to a Machine is one that has just been released — the tail of
+// a deprovision, and worth seeing. "ready" is the older name for it.
+//
+// This is not the same set the pane colors amber: there, available is green.
+// The two answer different questions — "is this host healthy" and "is this host
+// changing" — so they are kept apart rather than shared and bent to fit both.
+var hostInFlightStates = map[string]bool{
+	"registering":             true,
+	"inspecting":              true,
+	"matchprofile":            true,
+	"preparing":               true,
+	"available":               true,
+	"ready":                   true,
+	"provisioning":            true,
+	"deprovisioning":          true,
+	"poweringOffBeforeDelete": true,
+	"deleting":                true,
+}
+
+// ActivityRank groups a row by whether it needs a reader's eyes right now.
+//
+// A bare-metal fleet is mostly settled, and the handful of rows worth looking at
+// are the ones changing: a Machine being provisioned or deleted, a host being
+// wiped and handed back. Those are exactly the rows a large fleet pushes below
+// the fold of a small tile, so they lead.
+//
+// A state this function does not recognize ranks as settled, on the same
+// reasoning the pane colors one neutrally: the Metal3 state machine gains states
+// over time, and promoting an unknown one would make the top of the pane
+// unreliable in the one situation it exists for.
+func ActivityRank(r HostRow) int {
+	if machineInFlightPhases[r.Machine.Phase] || hostInFlight(r) {
+		return RankInFlight
+	}
+	if r.Machine.Phase == "Failed" ||
+		(r.BareMetalHost != nil && r.BareMetalHost.ErrorMessage != "") {
+		return RankAttention
+	}
+	return RankSettled
+}
+
+// hostInFlight reports whether the host beneath a row is mid-transition.
+func hostInFlight(r HostRow) bool {
+	if r.BareMetalHost != nil {
+		return hostInFlightStates[r.BareMetalHost.State]
+	}
+	// A provider machine with no host bound is mid-provision by definition:
+	// either a host is being selected or none matched. Both are the pane's
+	// "awaiting host" row, and both want to be seen.
+	return r.Metal3Machine != nil
+}
+
 // RoleFunc derives a Machine's role. It exists so the join stays independent of
 // the profile package: the caller supplies whatever site convention applies.
 type RoleFunc func(model.Machine) string
@@ -128,10 +214,15 @@ func Join(
 		out = append(out, row)
 	}
 
-	// Control plane first, then by role, then by name. Control-plane machines
-	// lead because that is the rollout stage an operator watches most closely.
+	// Moving rows first, then broken ones, then the settled fleet. Within a rank:
+	// control plane first, then by role, then by namespace and name. Control-plane
+	// machines lead because that is the rollout stage an operator watches most
+	// closely.
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]
+		if ra, rb := ActivityRank(a), ActivityRank(b); ra != rb {
+			return ra < rb
+		}
 		if a.ControlPlane != b.ControlPlane {
 			return a.ControlPlane
 		}

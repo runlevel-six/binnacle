@@ -8,6 +8,19 @@ before:
   hooks:
     - go mod tidy
 
+# The rolling `edge` tag is a pointer at main, not a version, and GoReleaser must
+# not resolve it as the current tag. It otherwise wins over v1.0.1 as soon as one
+# is fetched — which is every CI checkout with fetch-depth: 0, and every clone
+# that has run `git fetch --tags` — and then `.Version` is "edge", which the
+# snapshot template below cannot increment:
+#
+#   ⨯ failed to parse snapshot name: ... invalid semantic version
+#
+# Written bare rather than anchored so it matches whether this field is read as a
+# glob or as a regex.
+git:
+  ignore_tags: [edge]
+
 builds:
   - id: sextant
     main: ./cmd/sextant

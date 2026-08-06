@@ -38,13 +38,16 @@ upgrade:
 - **Overview**, top left: clusters, rollout progress per pool, node readiness.
 - **Machines & Hosts**, which joins Cluster API Machines to the physical hosts
   underneath them. This is the pane that tells you a rollout is stuck on hardware.
+  Whatever is moving sorts to the top — provisioning, deprovisioning, a host handed
+  back — then anything failed, then the settled fleet.
 - **Pod Health**, which shows your critical workloads and every unhealthy pod.
 
 Now try the keys:
 
 - `tab` moves focus. `1`–`9` jump straight to a pane.
 - **`z` zooms** the focused pane to the entire screen. Try it on Machines & Hosts —
-  on a large cluster this is how you see every row instead of `+ N more`.
+  on a large cluster this is how you see every row instead of `+ N more`. What
+  `+ N more` hides is the quiet part of the fleet, not the machine you are watching.
 - `[` and `]` change the column count; `\` returns to automatic.
 - `T` cycles themes. `p` freezes the display without stopping the watchers.
 - `?` toggles the key hints. `q` quits.
