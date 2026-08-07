@@ -1,8 +1,12 @@
-# sextant
+<p align="center">
+  <img src="docs/logo.png" alt="sextant" width="320">
+</p>
 
-[![CI](https://github.com/runlevel-six/sextant/actions/workflows/ci.yaml/badge.svg)](https://github.com/runlevel-six/sextant/actions/workflows/ci.yaml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/runlevel-six/sextant.svg)](https://pkg.go.dev/github.com/runlevel-six/sextant)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/runlevel-six/sextant/actions/workflows/ci.yaml"><img src="https://github.com/runlevel-six/sextant/actions/workflows/ci.yaml/badge.svg" alt="CI"></a>
+  <a href="https://pkg.go.dev/github.com/runlevel-six/sextant"><img src="https://pkg.go.dev/badge/github.com/runlevel-six/sextant.svg" alt="Go Reference"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
+</p>
 
 A terminal dashboard for **Cluster API on bare metal**.
 
