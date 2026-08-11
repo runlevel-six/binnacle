@@ -759,7 +759,7 @@ func TestContentWidth_UndeclaredGetsTheAverage(t *testing.T) {
 	wide, _ := tileByID(l, "wide")
 	narrow, _ := tileByID(l, "narrow")
 	quiet, _ := tileByID(l, "quiet")
-	if !(wide.W > quiet.W && quiet.W > narrow.W) {
+	if wide.W <= quiet.W || quiet.W <= narrow.W {
 		t.Errorf("undeclared pane should land between the two declared: wide %d, quiet %d, narrow %d",
 			wide.W, quiet.W, narrow.W)
 	}

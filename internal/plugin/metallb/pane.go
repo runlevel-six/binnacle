@@ -43,7 +43,7 @@ var poolCols = []table.Column{
 // waiting for an address, and a tile that resized when it did would move every
 // boundary in its row for a sentence that truncates harmlessly.
 func (p *pane) ContentWidth() int {
-	cells, _, _ := p.content()
+	cells, _ := p.content()
 	if len(cells) == 0 {
 		return 0
 	}
@@ -55,7 +55,7 @@ func (p *pane) ContentWidth() int {
 // configuration rather than fleet, so this is a number that changes when someone
 // changes it and not otherwise.
 func (p *pane) ContentHeight(int) int {
-	cells, _, summary := p.content()
+	cells, summary := p.content()
 	if len(cells) == 0 {
 		return 0
 	}
@@ -66,15 +66,16 @@ func (p *pane) ContentHeight(int) int {
 	return h
 }
 
-// content builds the pool rows and the summary line, shared by Render and the
-// extent methods so the pane cannot declare one shape and draw another.
-func (p *pane) content() (cells [][]string, styles [][]lipgloss.Style, summary string) {
+// content builds the pool rows and the summary line, shared by the extent methods
+// so the pane cannot declare one shape and draw another. The cell styles are left
+// to Render, which is the only caller that paints anything.
+func (p *pane) content() (cells [][]string, summary string) {
 	state, ok := store.Get[State](p.store, KeyState)
 	if !ok || len(state.Pools) == 0 {
-		return nil, nil, ""
+		return nil, ""
 	}
-	cells, styles = p.poolRows(state)
-	return cells, styles, p.summary(state)
+	cells, _ = p.poolRows(state)
+	return cells, p.summary(state)
 }
 
 // Render implements tui.Pane.
