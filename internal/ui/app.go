@@ -156,8 +156,10 @@ func (m *Model) appetites() map[string]int {
 		}
 		want := cw.ContentWidth()
 		peak, seen := m.peaks[p.ID()]
-		switch {
-		case !seen || want >= peak.want || now.Sub(peak.claim) >= peakHold:
+		// Take the reading when it is the highest the pane has asked for, or when
+		// the standing peak has gone that long without being claimed again. In
+		// between, the peak stands and its claim time does not move.
+		if !seen || want >= peak.want || now.Sub(peak.claim) >= peakHold {
 			peak = widthPeak{want: want, claim: now}
 		}
 		m.peaks[p.ID()] = peak
