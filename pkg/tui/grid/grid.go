@@ -924,7 +924,13 @@ func capRowHeights(rowHeights, rowWeights []int, placements []placement,
 				if v := ch.ContentHeight(bodyW); v > 0 {
 					// A tile spanning rows spends its ceiling across them, the same
 					// way its weight is shared out.
-					h = ceilDiv(v+tui.PaneChromeV, pl.rowSpan)
+					//
+					// The ceiling covers the frame and [tui.PaneVPad] as well as the
+					// content, because a tile sized to exactly what its pane said it
+					// could fill leaves the renderer no slack to take the gutter
+					// from: its first and last rows come out against the border
+					// while every untrimmed pane on the screen breathes.
+					h = ceilDiv(v+tui.PaneChromeV+tui.PaneVPad, pl.rowSpan)
 				}
 			}
 		}

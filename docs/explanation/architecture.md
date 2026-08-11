@@ -92,6 +92,13 @@ fill, with the surplus going to the rows that never claim a ceiling because thei
 count is the cluster's size. Panes that declare neither divide their row evenly, as
 everything did before either existed.
 
+A trimmed row is cut to its content plus a blank line above and below it, never to
+the content exactly. The gutter inside a frame is spent from height the pane did not
+use — the renderer moves the body down a line when there is room, which is free for a
+pane the layout was generous to — so a tile cut to the last line its pane declared has
+nothing left to spend and draws its first and last rows hard against the border. Two
+rows bought back is what keeps a content-sized pane looking like the ones beside it.
+
 Width is settled per *band* — a run of rows joined by a row-spanning tile — rather
 than once for the whole grid. A tile spanning rows is one rectangle, so the rows it
 covers have to agree on the boundaries it sits between; rows that are not joined
