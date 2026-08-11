@@ -187,17 +187,41 @@ func TestNaturalRowWidth_SingleColumnHasNoGap(t *testing.T) {
 }
 
 func TestPaneLeftPad(t *testing.T) {
+	narrow := cols("ABCDEFGHIJKLMNOPQRST") // a 20-cell header row
 	// No slack once MaxStretchPad is reserved: no pad.
-	if got := PaneLeftPad(30, 20); got != 0 {
+	if got := PaneLeftPad(30, narrow); got != 0 {
 		t.Errorf("tight pane: got pad %d want 0", got)
 	}
 	// Abundant slack is capped.
-	if got := PaneLeftPad(400, 20); got != EdgePadCap {
+	if got := PaneLeftPad(400, narrow); got != EdgePadCap {
 		t.Errorf("wide pane: got pad %d want %d", got, EdgePadCap)
 	}
-	// The widest table governs shared alignment.
-	if got, want := PaneLeftPad(60, 10, 40, 20), min((60-40-MaxStretchPad)/2, EdgePadCap); got != want {
+	// The widest schema governs shared alignment.
+	wide := cols("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCD") // 40 cells
+	if got, want := PaneLeftPad(60, cols("ABCDEFGHIJ"), wide, narrow),
+		min((60-40-MaxStretchPad)/2, EdgePadCap); got != want {
 		t.Errorf("multi-table pad: got %d want %d", got, want)
+	}
+}
+
+// The pad is what keeps a table off the pane border, and it must not be the reason
+// the table moves. A single long cell used to push the whole pane four cells left
+// and let it back when the cell went away, on whatever timer the data changed on.
+func TestPaneLeftPad_UnmovedByContent(t *testing.T) {
+	schema := []Column{{Header: "POD", Stretch: true}, {Header: "STATUS"}, {Header: "NODE"}}
+	want := PaneLeftPad(120, schema)
+
+	for _, rows := range [][][]string{
+		nil,
+		{{"a", "Running", "n1"}},
+		{{"openstack/nova-compute-controller-manager-5d9c7b8f4d-xk2mn", "CrashLoopBackOff",
+			"compute-node-3.site-a.example.com"}},
+		{{strings.Repeat("x", 400), "CrashLoopBackOff", strings.Repeat("y", 400)}},
+	} {
+		if _, _, got := Layout(schema, rows, 120); got != want {
+			t.Errorf("pad moved to %d (want %d) for content %d cells wide",
+				got, want, NaturalRowWidth(schema, rows))
+		}
 	}
 }
 
@@ -572,7 +596,7 @@ func TestAppetiteWidth(t *testing.T) {
 	moving := [][]string{{machine,
 		"deprovisioning powered off Introspection timed out after 30m0s"}}
 
-	want := len(machine) + MinGap + len("HOST STATE")
+	want := len(machine) + MinGap + len("HOST STATE") + EdgePadCap
 	if got := AppetiteWidth(cols, settled); got != want {
 		t.Errorf("settled: got %d want %d", got, want)
 	}
@@ -592,7 +616,7 @@ func TestAppetiteWidth_IdentityColumnsChargedInFull(t *testing.T) {
 	cols := []Column{{Header: "NODE", Stretch: true}, {Header: "STATUS"}}
 	fqdn := "compute-node-1.site-a.demo.example"
 	rows := [][]string{{fqdn, "Ready"}}
-	want := len(fqdn) + MinGap + len("STATUS")
+	want := len(fqdn) + MinGap + len("STATUS") + EdgePadCap
 	if got := AppetiteWidth(cols, rows); got != want {
 		t.Errorf("got %d want %d", got, want)
 	}
@@ -602,7 +626,7 @@ func TestAppetiteWidth_IdentityColumnsChargedInFull(t *testing.T) {
 func TestAppetiteWidth_CapsAnyOneColumn(t *testing.T) {
 	cols := []Column{{Header: "POD", Stretch: true}}
 	rows := [][]string{{strings.Repeat("x", 400)}}
-	if got := AppetiteWidth(cols, rows); got != StretchAppetiteCap {
-		t.Errorf("got %d want %d", got, StretchAppetiteCap)
+	if got, want := AppetiteWidth(cols, rows), StretchAppetiteCap+EdgePadCap; got != want {
+		t.Errorf("got %d want %d", got, want)
 	}
 }

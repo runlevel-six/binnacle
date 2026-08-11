@@ -97,14 +97,52 @@ than once for the whole grid. A tile spanning rows is one rectangle, so the rows
 covers have to agree on the boundaries it sits between; rows that are not joined
 agree about nothing and are each sized for themselves.
 
-Sizing from content means re-measuring on every store update, so two rules keep the
-display still. A pane's appetite ignores its *transient* columns — a Metal3 error,
-the nodes still behind, a Kubernetes message — because what identifies a row changes
-when the fleet changes and commentary changes every poll; charging Machines & Hosts
-for its HOST STATE cell moved the pane by 37 cells on a twenty-second timer. And the
-first measurement of a given terminal is the one drawn: a later one is adopted only
-when the arrangement changed or a tile wants to move by four cells or more. A
-dashboard two cells from ideal reads better than one that fidgets.
+Sizing from content means re-measuring on every store update, so several rules keep
+the display still. They sit at three different points, because a dashboard can shift
+in three different ways and no one rule reaches all of them: what a pane asks for,
+when the screen accepts a new answer, and what a pane does inside the tile it has.
+
+**What a pane asks for.** An appetite ignores its *transient* columns — a Metal3
+error, the nodes still behind, a Kubernetes message, the newest object a rollup of
+events happens to name — because what identifies a row changes when the fleet changes
+and commentary changes every poll; charging Machines & Hosts for its HOST STATE cell
+moved the pane by 37 cells on a twenty-second timer. And the layout is sized from
+each pane's *highest recent* appetite rather than its current one, held for a couple
+of minutes after the last time anything claimed it. Two states of a cluster can
+honestly want different widths — a crash-looping pod with a 60-character name needs
+room its neighbours are using, and stops needing it the moment the pod recovers — so
+sizing from the instant reading makes each state starve whichever pane the other one
+fed, and the screen swings for as long as the pod flaps. Holding the peak makes that
+one move instead of one per poll, and every rule about *when* to redraw is downstream
+of an input that will not sit still, so none of them can fix it.
+
+**When the screen accepts a new answer.** The first measurement of a given terminal
+is the one drawn. A later one is
+adopted when the arrangement changed — a pane appeared, was hidden, or moved cell —
+when a row's height changed by four lines or more, or when a tile has become too
+narrow for its own content and the new layout would give it more. What it is
+deliberately *not* adopted for is the ideal boundaries drifting. Width is shared out
+in proportion to appetite, so one pane's content changing length re-proportions its
+whole band whether or not anybody was short of room: a single crash-looping pod with
+a long name moved every border on a four-column screen by up to 34 cells, and moved
+them back when it recovered. A boundary that moves without relieving a truncation has
+bought the reader nothing and cost them their place. A dashboard a few cells from
+ideal reads better than one that fidgets.
+
+The two directions are asked different questions because the panes answer different
+questions: a width is a *want*, and a table reads correctly with more of it or less,
+while a height is a *ceiling*, and a row that changes height is one where lines are
+appearing or disappearing.
+
+**What a pane does inside its tile.** A table sits behind a small edge pad so it is
+not jammed against the border, and that pad is computed from the column *headers*,
+never from the rows. Measured against the rows, one long cell took the pods table
+past the threshold and slid every row of the pane four cells left, then back when the
+pod recovered — inside a tile whose borders never moved, which is movement no layout
+test sees and every reader does. The pad is held even when the rows would rather have
+those cells: the table already knows how to give up width, and giving up four cells
+of a stretch column beats moving the whole pane. A pane's declared appetite includes
+the pad, so a tile sized to what a pane asked for still fits what it asked to show.
 
 Declaring intent rather than a position is what keeps the arrangement correct as
 plugins come and go. A pane that exists only where one subsystem is installed cannot

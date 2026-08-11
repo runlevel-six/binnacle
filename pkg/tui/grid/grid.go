@@ -130,6 +130,15 @@ type Options struct {
 	// for in order to see all of one pane, so a partial enlargement is not what it
 	// means.
 	ZoomedID string
+	// Appetite overrides what a pane reports for [tui.ContentWidthPane], by pane
+	// ID and in the same units — a body width, net of chrome. A pane absent from
+	// the map, or mapped to zero, is asked directly.
+	//
+	// This exists because appetite is a measurement of live data and the layout is
+	// a thing a person is reading. A caller that redraws on every store update
+	// will want to smooth what the panes report before sizing anything from it;
+	// what that smoothing should be is the caller's business, not the grid's.
+	Appetite map[string]int
 }
 
 // columnCount returns the grid column count for a terminal width.
@@ -546,7 +555,7 @@ func Compute(o Options) Layout {
 	}
 
 	// Column widths, per band, from what the panes say they can use.
-	colX, colW := bandWidths(placements, bandOf(placements, rowCount), rowCount, cols, width)
+	colX, colW := bandWidths(placements, bandOf(placements, rowCount), rowCount, cols, width, o.Appetite)
 
 	// Per-row weights: the heaviest pane covering the row. A pane spanning rows
 	// counts its share per row, so it neither dominates every row it touches nor
@@ -691,9 +700,13 @@ func Compute(o Options) Layout {
 	}
 }
 
-// appetiteOf is the tile width a pane says its content can use, chrome included.
-// Zero means the pane did not say — see [tui.ContentWidthPane].
-func appetiteOf(p tui.Pane) int {
+// appetiteOf is the tile width a pane says its content can use, chrome included,
+// or what the caller says on its behalf via [Options.Appetite]. Zero means neither
+// said — see [tui.ContentWidthPane].
+func appetiteOf(p tui.Pane, override map[string]int) int {
+	if w, ok := override[p.ID()]; ok && w > 0 {
+		return w + tui.PaneChromeH
+	}
 	cw, ok := p.(tui.ContentWidthPane)
 	if !ok {
 		return 0
@@ -739,7 +752,8 @@ func bandOf(placements []placement, rowCount int) []int {
 // bandWidths returns each row's column offsets and column widths, sized band by
 // band. Rows in the same band share one vector, which is what keeps a
 // row-spanning tile a single rectangle.
-func bandWidths(placements []placement, band []int, rowCount, cols, width int) (colX, colW [][]int) {
+func bandWidths(placements []placement, band []int, rowCount, cols, width int,
+	appetiteOverride map[string]int) (colX, colW [][]int) {
 	colX, colW = make([][]int, rowCount), make([][]int, rowCount)
 	if rowCount == 0 || cols <= 0 {
 		return colX, colW
@@ -756,7 +770,7 @@ func bandWidths(placements []placement, band []int, rowCount, cols, width int) (
 			// pane's want is compared against the others per column rather than
 			// counted whole in each.
 			span := max(pl.colEnd-pl.col, 1)
-			want := ceilDiv(appetiteOf(pl.pane), span)
+			want := ceilDiv(appetiteOf(pl.pane, appetiteOverride), span)
 			least := ceilDiv(pl.pane.MinWidth(), span)
 			for c := pl.col; c < pl.colEnd && c < cols; c++ {
 				covered[c] = true

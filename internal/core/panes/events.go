@@ -69,7 +69,13 @@ var (
 		{Header: "TYPE"},
 		{Header: "REASON"},
 		{Header: "NAMESPACE"},
-		{Header: "LATEST OBJECT", Stretch: true},
+		// Transient: a rollup row is identified by its namespace, reason and
+		// type, and the object is an example of them — the newest one at the
+		// moment of the poll, which is a different object with a different name
+		// on the next one. Charging the pane for it would ask the layout to
+		// resize itself around a name that is already gone. See
+		// [table.AppetiteWidth].
+		{Header: "LATEST OBJECT", Stretch: true, Transient: true},
 		{Header: "AGE"},
 	}
 	eventCols = []table.Column{

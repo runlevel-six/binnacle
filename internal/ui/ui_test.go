@@ -38,6 +38,13 @@ func resolved() config.Resolved {
 
 func populatedStore() *store.Store {
 	s := store.New()
+	populate(s)
+	return s
+}
+
+// populate fills a store that is already being watched, so a test can see what
+// the dashboard does on the frame the informers first deliver.
+func populate(s *store.Store) {
 	s.Put(model.KeyMgmtKCPs, model.Snapshot[model.KubeadmControlPlane]{
 		Items: []model.KubeadmControlPlane{{
 			Namespace: "capi", Name: "cp", Version: "v1.32.0",
@@ -73,7 +80,6 @@ func populatedStore() *store.Store {
 		},
 		UpdatedAt: time.Now(),
 	})
-	return s
 }
 
 // withTheme applies th for the duration of the test, restoring the default
@@ -814,9 +820,34 @@ func TestSettle_SmallChangesDoNotMoveTheLayout(t *testing.T) {
 	}
 }
 
-// A change big enough to matter is adopted: a fleet whose names grew by thirty
-// cells needs the width, and holding the old layout would truncate it.
-func TestSettle_MaterialChangesAreAdopted(t *testing.T) {
+// A change that outgrows the tile on screen is adopted: the reader cannot read a
+// fleet whose names are truncated to a shared prefix, and the width to fix that is
+// in the tile next door.
+func TestSettle_ContentOutgrowingItsTileIsAdopted(t *testing.T) {
+	s := populatedStore()
+	m := newModel(t, s, 180, 50)
+	before := borderColumns(m.View())
+
+	s.Put(model.KeyMgmtMachines, model.Snapshot[model.Machine]{
+		Items: []model.Machine{
+			{Namespace: "capi-system-with-a-long-name", Phase: "Running",
+				Name: "tenant-01-control-plane-5d9c7b8f4d-lm2vp-and-then-some-more"},
+			{Namespace: "capi-system-with-a-long-name", Phase: "Provisioning",
+				Name: "tenant-01-control-plane-5d9c7b8f4d-qt6rk-and-then-some-more"},
+		},
+		UpdatedAt: time.Now(),
+	})
+	if after := borderColumns(m.View()); slices.Equal(before, after) {
+		t.Errorf("a fleet too wide for its tile should be adopted, but the borders stayed at %v", before)
+	}
+}
+
+// The counterpart, and the reason [Model.adopt] asks about truncation rather than
+// about how far the ideal boundaries moved: content can change by a lot and still
+// fit, and re-proportioning the band for it moves every border on screen to no
+// purpose. Machines & Hosts here grows by seventeen cells inside a tile with more
+// than forty to spare.
+func TestSettle_GrowthThatStillFitsDoesNotMoveTheLayout(t *testing.T) {
 	s := populatedStore()
 	m := newModel(t, s, 240, 50)
 	before := borderColumns(m.View())
@@ -828,8 +859,75 @@ func TestSettle_MaterialChangesAreAdopted(t *testing.T) {
 		},
 		UpdatedAt: time.Now(),
 	})
-	if after := borderColumns(m.View()); slices.Equal(before, after) {
-		t.Errorf("a thirty-cell change should be adopted, but the borders stayed at %v", before)
+	if after := borderColumns(m.View()); !slices.Equal(before, after) {
+		t.Errorf("borders moved for content that still fits: %v then %v", before, after)
+	}
+}
+
+// The churn that prompted this rule. A crash-looping pod appears and clears, which
+// is the most ordinary thing a cluster does, and neither Pod Health nor anything
+// beside it is short of room in either state — so nothing may move.
+func TestSettle_PodChurnDoesNotMoveTheLayout(t *testing.T) {
+	pods := func(unhealthy ...model.Pod) model.Snapshot[model.Pod] {
+		items := []model.Pod{{Namespace: "kube-system", Name: "ok",
+			IsHealthy: true, ReadyReady: 1, ReadyTotal: 1, Status: "Running"}}
+		return model.Snapshot[model.Pod]{Items: append(items, unhealthy...), UpdatedAt: time.Now()}
+	}
+	crashing := model.Pod{Namespace: "kube-system", Name: "bad",
+		ReadyTotal: 1, Status: "CrashLoopBackOff", Node: "n2"}
+	newlyCrashing := model.Pod{Namespace: "openstack", Node: "n2",
+		Name: "nova-compute-5d9c7b8f4d-xk2mn", ReadyTotal: 1, Status: "CrashLoopBackOff"}
+
+	// Four columns: the band has three tiles to re-proportion, so this is where
+	// one pane's appetite changing was felt hardest.
+	s := populatedStore()
+	s.Put(model.KeyWorkloadPods, pods(crashing))
+	m := newModel(t, s, 320, 80)
+	before := borderColumns(m.View())
+
+	s.Put(model.KeyWorkloadPods, pods(crashing, newlyCrashing))
+	during := borderColumns(m.View())
+	if !slices.Equal(before, during) {
+		t.Errorf("borders moved when a pod started crashing: %v then %v", before, during)
+	}
+
+	s.Put(model.KeyWorkloadPods, pods(crashing))
+	if after := borderColumns(m.View()); !slices.Equal(before, after) {
+		t.Errorf("borders moved when it recovered: %v then %v", before, after)
+	}
+}
+
+// The first frame is drawn before any informer has delivered, so the even division
+// that produces is provisional: the layout the reader keeps is the first one
+// measured against real content.
+func TestSettle_LayoutDecidedWithoutContentIsProvisional(t *testing.T) {
+	s := store.New()
+	m := newModel(t, s, 320, 80)
+	empty := borderColumns(m.View())
+
+	populate(s)
+	if after := borderColumns(m.View()); slices.Equal(empty, after) {
+		t.Errorf("the first frame with content should re-decide, but borders stayed at %v", empty)
+	}
+}
+
+// A pane appearing or disappearing is an arrangement change, not a resize, and it
+// has to be adopted however little the surviving tiles move — otherwise the new
+// pane is drawn into a hole the settled geometry never allocated.
+func TestSettle_ArrangementChangeIsAdopted(t *testing.T) {
+	s := populatedStore()
+	res := resolved()
+	all := CorePanes(s, res, nil)
+
+	m := New(res, s, plugin.NewRegistry(), all[:len(all)-1])
+	m.Update(tea.WindowSizeMsg{Width: 320, Height: 80})
+	before := borderColumns(m.View())
+
+	m2 := New(res, s, plugin.NewRegistry(), all)
+	m2.Update(tea.WindowSizeMsg{Width: 320, Height: 80})
+	m2.settled = m.settled
+	if after := borderColumns(m2.View()); slices.Equal(before, after) {
+		t.Errorf("a new pane should re-decide the layout, but the borders stayed at %v", before)
 	}
 }
 
@@ -879,5 +977,151 @@ func TestSettle_FocusStillFollowsTab(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if second := m.View(); first == second {
 		t.Error("tab should still change the frame while the geometry is held")
+	}
+}
+
+// unhealthyPodPane returns a pods snapshot, optionally carrying a crash-looping
+// pod whose name is long enough to change what Pod Health can use.
+func podsSnapshot(crashing bool) model.Snapshot[model.Pod] {
+	items := []model.Pod{
+		{Namespace: "kube-system", Name: "ok", IsHealthy: true,
+			ReadyReady: 1, ReadyTotal: 1, Status: "Running"},
+		{Namespace: "storage", Name: "csi-node-driver-9mq2f", ReadyTotal: 3,
+			Status: "CrashLoopBackOff", Restarts: 7, Node: "compute-node-2"},
+	}
+	if crashing {
+		items = append(items, model.Pod{
+			Namespace: "openstack", Name: "nova-compute-controller-manager-5d9c7b8f4d-xk2mn",
+			ReadyTotal: 3, Status: "CrashLoopBackOff", Restarts: 41,
+			Node: "compute-node-3.site-a.example.com"})
+	}
+	return model.Snapshot[model.Pod]{Items: items, UpdatedAt: time.Now()}
+}
+
+// A pod that crash-loops in and out of the unhealthy list genuinely changes what
+// Pod Health can use, and the two states want different widths — so sizing from the
+// instant reading makes each state starve whichever pane the other one fed, and the
+// screen swings for as long as the pod flaps. The width is taken once and held.
+func TestSettle_FlappingPodMovesTheLayoutOnce(t *testing.T) {
+	s := populatedStore()
+	s.Put(model.KeyWorkloadPods, podsSnapshot(false))
+	m := newModel(t, s, 320, 60)
+	clock := time.Now()
+	m.now = func() time.Time { return clock }
+
+	var seen []string
+	for round := range 10 {
+		s.Put(model.KeyWorkloadPods, podsSnapshot(round%2 == 1))
+		clock = clock.Add(20 * time.Second) // one poll
+		if sig := fmt.Sprint(borderColumns(m.View())); len(seen) == 0 || sig != seen[len(seen)-1] {
+			seen = append(seen, sig)
+		}
+	}
+	if len(seen) > 2 {
+		t.Errorf("the layout moved %d times over ten polls of one flapping pod:\n  %s",
+			len(seen)-1, strings.Join(seen, "\n  "))
+	}
+}
+
+// The width is held, not taken for good. The release happens in the appetite: the
+// pane stops being sized for an incident that is over, and the geometry follows the
+// next time that actually decides something. It deliberately does not follow at
+// once — moving every border to hand back room nobody was short of is the thing
+// this whole mechanism exists to avoid.
+func TestAppetite_PeakIsHeldThenReleased(t *testing.T) {
+	s := populatedStore()
+	m := newModel(t, s, 320, 60)
+	clock := time.Now()
+	m.now = func() time.Time { return clock }
+
+	s.Put(model.KeyWorkloadPods, podsSnapshot(false))
+	base := m.appetites()["pods"]
+	s.Put(model.KeyWorkloadPods, podsSnapshot(true))
+	peak := m.appetites()["pods"]
+	if peak <= base {
+		t.Fatalf("a crash-looping pod with a long name should raise the appetite: %d then %d", base, peak)
+	}
+
+	// Recovered, and still sized for it a poll later.
+	s.Put(model.KeyWorkloadPods, podsSnapshot(false))
+	clock = clock.Add(20 * time.Second)
+	if got := m.appetites()["pods"]; got != peak {
+		t.Errorf("appetite fell to %d one poll after recovery; want the peak %d held", got, peak)
+	}
+
+	// And released once nothing has needed it for the hold.
+	clock = clock.Add(peakHold)
+	if got := m.appetites()["pods"]; got != base {
+		t.Errorf("after %s of quiet the appetite should be back to %d, got %d", peakHold, base, got)
+	}
+}
+
+// The geometry side of the same story: the tile keeps what it was given rather than
+// surrendering it the moment the pod recovers.
+func TestSettle_HeldWidthSurvivesRecovery(t *testing.T) {
+	s := populatedStore()
+	m := newModel(t, s, 320, 60)
+	clock := time.Now()
+	m.now = func() time.Time { return clock }
+
+	s.Put(model.KeyWorkloadPods, podsSnapshot(false))
+	clock = clock.Add(20 * time.Second)
+	before := borderColumns(m.View())
+
+	s.Put(model.KeyWorkloadPods, podsSnapshot(true))
+	clock = clock.Add(20 * time.Second)
+	during := borderColumns(m.View())
+	if slices.Equal(before, during) {
+		t.Fatalf("a pod too wide for the tile should have been given the width: %v", before)
+	}
+
+	s.Put(model.KeyWorkloadPods, podsSnapshot(false))
+	clock = clock.Add(20 * time.Second)
+	if after := borderColumns(m.View()); !slices.Equal(during, after) {
+		t.Errorf("the width was surrendered on the first clean poll: %v then %v", during, after)
+	}
+}
+
+// A pane can be short of room for as long as its content stays long — a fleet of
+// 60-character pod names never fits a quarter of the screen — and being short is
+// the one state in which every rule here is willing to move something. So this
+// pins the end of that: a starved pane whose rows churn underneath it, poll after
+// poll, still may not drag the screen around.
+func TestSettle_StarvedPaneStillHoldsStill(t *testing.T) {
+	// 260 columns is where Pod Health lands just short of what these rows want.
+	const width = 260
+	s := populatedStore()
+	pods := func(round int) model.Snapshot[model.Pod] {
+		var items []model.Pod
+		for i := range 3 {
+			// A different workload crashes each poll, each named a shade longer
+			// than the last: the widest row creeps by a cell and never settles.
+			items = append(items, model.Pod{
+				Namespace: "openstack-services", ReadyTotal: 3, Status: "CrashLoopBackOff",
+				Name: fmt.Sprintf("nova-compute-controller-manager-5d9c7b8f4d-%s%d",
+					strings.Repeat("x", round), i),
+				Node:     "compute-node-3.site-a.example.com",
+				Restarts: int32(9 + round*7), Age: time.Duration(round) * time.Minute,
+			})
+		}
+		return model.Snapshot[model.Pod]{Items: items, UpdatedAt: time.Now()}
+	}
+
+	s.Put(model.KeyWorkloadPods, pods(0))
+	m := newModel(t, s, width, 60)
+	clock := time.Now()
+	m.now = func() time.Time { return clock }
+
+	var seen []string
+	for round := range 12 {
+		s.Put(model.KeyWorkloadPods, pods(round))
+		clock = clock.Add(20 * time.Second)
+		if sig := fmt.Sprint(borderColumns(m.View())); len(seen) == 0 || sig != seen[len(seen)-1] {
+			seen = append(seen, sig)
+		}
+	}
+	if len(seen) > 2 {
+		t.Errorf("a starved pane whose want crept by a cell a poll moved the layout %d times:\n  %s",
+			len(seen)-1, strings.Join(seen, "\n  "))
 	}
 }

@@ -15,9 +15,9 @@
 // discarded — see [FlowGroups].
 //
 // Panes that draw several tables and want them visually aligned should compute
-// a single left pad with [PaneLeftPad] over each table's [NaturalRowWidth],
-// then call [LayoutInner] per table rather than [Layout]. [Table.Render] does
-// the single-table case for you.
+// a single left pad with [PaneLeftPad] over each table's columns, then call
+// [LayoutInner] per table rather than [Layout]. [Table.Render] does the
+// single-table case for you.
 package table
 
 import (
@@ -332,7 +332,7 @@ func Headers(cols []Column) []string {
 // leftPad is the indent to apply to every line. A pane drawing several tables
 // that must align should use [PaneLeftPad] and [LayoutInner] instead.
 func Layout(cols []Column, rows [][]string, totalWidth int) (widths, gaps []int, leftPad int) {
-	leftPad = PaneLeftPad(totalWidth, NaturalRowWidth(cols, rows))
+	leftPad = PaneLeftPad(totalWidth, cols)
 	widths, gaps = LayoutInner(cols, rows, totalWidth-leftPad)
 	return widths, gaps, leftPad
 }
@@ -483,21 +483,36 @@ func AppetiteWidth(cols []Column, rows [][]string) int {
 		}
 		widths[i] = max(min(widths[i], StretchAppetiteCap), header)
 	}
-	return sum(widths) + MinGap*max(len(cols)-1, 0)
+	// The edge pad is width the table will hold back from itself at any
+	// comfortable size, so a pane given exactly its appetite and no allowance for
+	// the pad would truncate by that much — see [PaneLeftPad].
+	return sum(widths) + MinGap*max(len(cols)-1, 0) + EdgePadCap
 }
 
 // PaneLeftPad returns a left pad shared by every table in one pane, so tables
 // with different column schemas still line up at their left edge.
 //
-// totalWidth is the pane's body width; naturals are the [NaturalRowWidth]
-// values of the tables to align. Room is reserved for a stretch column to grow
-// into, and the remainder is split between the two edges, capped at
-// [EdgePadCap].
-func PaneLeftPad(totalWidth int, naturals ...int) int {
+// totalWidth is the pane's body width and colSets are the schemas to align. Room
+// is reserved for a stretch column to grow into, and the remainder is split
+// between the two edges, capped at [EdgePadCap].
+//
+// It is decided from the *headers*, not from the rows, and that is the whole
+// point. This pad used to be measured against [NaturalRowWidth], which tracks the
+// longest cell exactly: one crash-looping pod with a long name took the pods table
+// past the threshold and slid every row of the pane four cells left, and back again
+// when it recovered — inside a tile whose borders never moved, which is the kind of
+// movement no layout test sees and every reader does. A cosmetic margin must not be
+// computed from data that changes every poll, so this one is computed from the
+// schema, which changes never.
+//
+// The pad is therefore held even when the rows would rather have those cells. That
+// is deliberate: the table already knows how to give up width, and it degrades a
+// stretch column by four cells rather than moving the whole pane.
+func PaneLeftPad(totalWidth int, colSets ...[]Column) int {
 	widest := 0
-	for _, n := range naturals {
-		if n > widest {
-			widest = n
+	for _, cols := range colSets {
+		if w := HeaderRowWidth(cols); w > widest {
+			widest = w
 		}
 	}
 	slack := totalWidth - widest - MaxStretchPad
@@ -505,6 +520,19 @@ func PaneLeftPad(totalWidth int, naturals ...int) int {
 		return 0
 	}
 	return min(slack/2, EdgePadCap)
+}
+
+// HeaderRowWidth is the width of a table's header row: every column at its header's
+// own width, with the minimum gaps between them.
+//
+// The narrowest a schema can be drawn at without truncating a header, and the
+// stable half of [NaturalRowWidth] — same shape, no dependence on the rows.
+func HeaderRowWidth(cols []Column) int {
+	total := 0
+	for _, c := range cols {
+		total += max(lipgloss.Width(c.Header), 1)
+	}
+	return total + MinGap*max(len(cols)-1, 0)
 }
 
 // IndentLines prefixes every non-empty line of body with leftPad spaces.
