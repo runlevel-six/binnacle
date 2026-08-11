@@ -97,10 +97,7 @@ func (p *PodHealthPane) Render(w, h int, _ bool) string {
 	// from looking like two unrelated widgets.
 	critCells, critStyles := p.criticalRows(snap.Items)
 	unhealthyCells, unhealthyStyles := unhealthyRows(unhealthy)
-	pad := table.PaneLeftPad(w,
-		table.NaturalRowWidth(criticalCols, critCells),
-		table.NaturalRowWidth(unhealthyCols, unhealthyCells),
-	)
+	pad := table.PaneLeftPad(w, criticalCols, unhealthyCols)
 
 	var blocks []string
 	if len(critCells) > 0 {

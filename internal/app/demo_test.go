@@ -8,12 +8,16 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
 	"github.com/runlevel-six/sextant/internal/config"
+	coremodel "github.com/runlevel-six/sextant/internal/core/model"
 	"github.com/runlevel-six/sextant/internal/testansi"
+	"github.com/runlevel-six/sextant/pkg/store"
 	"github.com/runlevel-six/sextant/pkg/tui"
 )
 
@@ -250,4 +254,106 @@ func TestRenderDemo_DeclaredCeilingsHideNothing(t *testing.T) {
 	if declared == 0 {
 		t.Fatal("no pane declared a content ceiling; the demo should exercise several")
 	}
+}
+
+// A dashboard that re-measures itself on every store update has to converge, or
+// the reader is chasing a moving screen. This drives the full plugin-bearing demo
+// through repeated polls of the churn a real cluster produces — a pod crashing and
+// recovering, events arriving under a new object each time — and requires the
+// arrangement to stop moving and stay stopped.
+//
+// Alternating rather than random on purpose: the failure this guards against is
+// oscillation, where two data states each look worth resizing for and the screen
+// swings between them for as long as the condition lasts.
+func TestRenderDemo_LayoutConvergesUnderChurn(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{395, 111}, {320, 80}, {240, 60}} {
+		t.Run(fmt.Sprintf("%dx%d", size.w, size.h), func(t *testing.T) {
+			setup, err := PrepareDemo(config.Config{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tui.ApplyTheme(setup.Resolved.Theme)
+			setup.Registry.Detect(context.Background())
+			model, err := setup.BuildModel()
+			if err != nil {
+				t.Fatal(err)
+			}
+			model.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+
+			var frames []string
+			for round := range 12 {
+				churn(setup.Store, round%2 == 1)
+				view := model.View()
+				// Held geometry is a whole previous layout, so it still has to
+				// tile the terminal exactly — a frame that shrank would leave the
+				// last one on screen underneath it.
+				if got := lipgloss.Height(view); got != size.h {
+					t.Fatalf("poll %d: frame height %d, want %d", round, got, size.h)
+				}
+				for i, line := range strings.Split(view, "\n") {
+					if got := lipgloss.Width(line); got != size.w {
+						t.Fatalf("poll %d: line %d width %d, want %d", round, i, got, size.w)
+					}
+				}
+				frames = append(frames, borderSignature(view))
+			}
+
+			// Two frames of grace: the first sight of each state may legitimately
+			// need the width. After that the screen must hold still.
+			for i := 2; i < len(frames); i++ {
+				if frames[i] != frames[2] {
+					t.Fatalf("the layout was still moving at poll %d\n  poll 2: %s\n  poll %d: %s",
+						i, frames[2], i, frames[i])
+				}
+			}
+		})
+	}
+}
+
+// churn replaces the pods and events with one of two states a cluster alternates
+// between: a crash-looping pod with a long name that comes and goes, and the next
+// poll's events, which name different objects.
+func churn(s *store.Store, crashing bool) {
+	now := time.Now()
+	pods := []coremodel.Pod{
+		{Namespace: "kube-system", Name: "coredns-6f8b4d9c7-2xk9v", IsHealthy: true,
+			ReadyReady: 1, ReadyTotal: 1, Status: "Running", Node: "control-node-1.site-a.demo.example"},
+		{Namespace: "monitoring", Name: "prometheus-server-0", ReadyTotal: 2, Status: "Pending"},
+	}
+	events := []coremodel.Event{
+		{Namespace: "kube-system", Type: "Warning", Reason: "BackOff", ObjectKind: "Pod",
+			ObjectName: "coredns-6f8b4d9c7-2xk9v", Message: "Back-off restarting failed container",
+			LastTimestamp: now, Count: 3},
+	}
+	if crashing {
+		pods = append(pods, coremodel.Pod{
+			Namespace: "openstack", Name: "nova-compute-5d9c7b8f4d-xk2mn", ReadyTotal: 3,
+			Status: "CrashLoopBackOff", Restarts: 9, Node: "compute-node-3.site-a.demo.example"})
+		events = append(events, coremodel.Event{
+			Namespace: "openstack", Type: "Warning", Reason: "BackOff", ObjectKind: "Pod",
+			ObjectName:    "nova-compute-5d9c7b8f4d-xk2mn-with-a-much-longer-name",
+			Message:       "Back-off restarting failed container nova-compute",
+			LastTimestamp: now, Count: 41})
+	}
+	s.Put(coremodel.KeyWorkloadPods, coremodel.Snapshot[coremodel.Pod]{Items: pods, UpdatedAt: now})
+	s.Put(coremodel.KeyWorkloadEvents, coremodel.Snapshot[coremodel.Event]{Items: events, UpdatedAt: now})
+	s.Put(coremodel.KeyMgmtEvents, coremodel.Snapshot[coremodel.Event]{Items: events, UpdatedAt: now})
+}
+
+// borderSignature is where every tile corner sits, which is the whole arrangement
+// and none of the content.
+func borderSignature(frame string) string {
+	var b strings.Builder
+	for i, line := range strings.Split(testansi.StripANSI(frame), "\n") {
+		var cols []string
+		for c, r := range []rune(line) {
+			if strings.ContainsRune("╭╮╰╯├┤┬┴┼", r) {
+				cols = append(cols, fmt.Sprint(c))
+			}
+		}
+		if len(cols) > 0 {
+			fmt.Fprintf(&b, "%d:%s ", i, strings.Join(cols, ","))
+		}
+	}
+	return b.String()
 }

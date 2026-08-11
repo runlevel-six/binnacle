@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -49,6 +50,12 @@ type Model struct {
 	// settled is the geometry already on screen, kept so that a re-measured
 	// layout does not move tiles the reader is reading. See [Model.settle].
 	settled *settledGeometry
+	// peaks is each pane's appetite as the layout sees it: the highest it has
+	// reported lately, rather than what it reports this instant. See
+	// [Model.appetites].
+	peaks map[string]widthPeak
+	// now is the clock the peaks age against, replaced in tests.
+	now func() time.Time
 
 	showHelp bool
 	// paused freezes the display by ignoring store notifications. The watchers
@@ -104,7 +111,63 @@ func New(resolved config.Resolved, s *store.Store, registry *plugin.Registry, ps
 		paneByID:   byID,
 		orderIndex: idx,
 		focused:    focus,
+		peaks:      map[string]widthPeak{},
+		now:        time.Now,
 	}
+}
+
+// peakHold is how long a pane keeps an appetite it no longer has.
+//
+// Long enough to outlast the thing that caused it. A crash-looping pod restarts on
+// a backoff measured in tens of seconds and a drain takes minutes, so a window of
+// a couple of minutes covers a pane whose widest row keeps coming and going, which
+// is the case that makes a screen swing. Short enough that an incident which is
+// genuinely over gives the width back while the operator is still watching.
+const peakHold = 2 * time.Minute
+
+// widthPeak is the appetite a pane is being sized from and when it last actually
+// claimed it.
+type widthPeak struct {
+	want  int
+	claim time.Time
+}
+
+// appetites is what the layout sizes columns from: each pane's highest appetite
+// over the last [peakHold], not the one it reports this instant.
+//
+// A pane's appetite is a measurement of live data, and two states of a cluster can
+// genuinely want different widths — a crash-looping pod with a 60-character name
+// needs room its neighbors are using, and stops needing it the moment the pod
+// recovers. Sizing from the instant reading means each state starves whichever pane
+// the other one fed, so the screen swings between two layouts for as long as the
+// pod flaps: every rule about *when* to redraw is downstream of an input that will
+// not sit still, and cannot fix it.
+//
+// Holding the peak collapses that to one move. The width is taken when it is first
+// needed and given back once nothing has needed it for a while, so a flapping pod
+// costs the reader a single re-layout instead of one per poll.
+func (m *Model) appetites() map[string]int {
+	now := m.now()
+	out := make(map[string]int, len(m.panes))
+	for _, p := range m.panes {
+		cw, ok := p.(tui.ContentWidthPane)
+		if !ok {
+			continue
+		}
+		want := cw.ContentWidth()
+		peak, seen := m.peaks[p.ID()]
+		// Take the reading when it is the highest the pane has asked for, or when
+		// the standing peak has gone that long without being claimed again. In
+		// between, the peak stands and its claim time does not move.
+		if !seen || want >= peak.want || now.Sub(peak.claim) >= peakHold {
+			peak = widthPeak{want: want, claim: now}
+		}
+		m.peaks[p.ID()] = peak
+		if peak.want > 0 {
+			out[p.ID()] = peak.want
+		}
+	}
+	return out
 }
 
 // dataUpdateMsg fires when the store reports a change.
@@ -223,6 +286,7 @@ func (m *Model) View() string {
 	if m.zoomed {
 		zoomedID = m.focused
 	}
+	appetite := m.appetites()
 	lay := m.settle(grid.Compute(grid.Options{
 		Width:        m.width,
 		Height:       m.height,
@@ -231,7 +295,8 @@ func (m *Model) View() string {
 		HeaderH:      chromeRows,
 		OverrideCols: m.colsOverride,
 		ZoomedID:     zoomedID,
-	}))
+		Appetite:     appetite,
+	}), appetite)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.renderHeader(m.width),
@@ -251,11 +316,60 @@ func (m *Model) View() string {
 const stableSlack = 4
 
 // settledGeometry is the arrangement currently on screen: the terminal and mode it
-// was decided for, and where each tile went.
+// was decided for, which cell of the grid each pane sits in, and the rectangle it
+// was given.
 type settledGeometry struct {
 	width, height, cols int
 	zoomed              bool
-	tiles               map[string][4]int // pane key -> x, y, w, h
+	// structure is which pane is in which grid cell, independent of how wide or
+	// tall the cells are. See [structureOf].
+	structure string
+	// measured records whether any pane had content to size the layout from when
+	// it was decided. A layout decided from nothing is provisional: the first
+	// frame is drawn before the informers have delivered anything, and freezing
+	// the even division that produces would mean the dashboard never adopted a
+	// content-sized layout at all.
+	measured bool
+	tiles    map[string][4]int // pane key -> x, y, w, h
+}
+
+// structureOf describes the arrangement — which pane sits in which grid cell —
+// without describing its size.
+//
+// Tile coordinates cannot be compared directly for this, because a pane's x and y
+// move whenever a *neighbor* is resized, and that is the movement worth ignoring.
+// Ranking the distinct coordinates instead turns the rectangles back into the row
+// and column indices the grid assigned, so this changes when a pane appears, is
+// hidden, or moves cell, and not when the boundaries between cells shift.
+func structureOf(tiles []grid.Tile) string {
+	rows := rankOf(tiles, func(t grid.Tile) int { return t.Y })
+	cols := rankOf(tiles, func(t grid.Tile) int { return t.X })
+
+	cells := make([]string, 0, len(tiles))
+	for _, t := range tiles {
+		cells = append(cells, fmt.Sprintf("%s@%d,%d", tileKey(t), rows[t.Y], cols[t.X]))
+	}
+	sort.Strings(cells)
+	return strings.Join(cells, "|")
+}
+
+// rankOf maps each distinct coordinate the tiles start at to its position in the
+// sorted set of them.
+func rankOf(tiles []grid.Tile, of func(grid.Tile) int) map[int]int {
+	seen := map[int]bool{}
+	for _, t := range tiles {
+		seen[of(t)] = true
+	}
+	vals := make([]int, 0, len(seen))
+	for v := range seen {
+		vals = append(vals, v)
+	}
+	sort.Ints(vals)
+	rank := make(map[int]int, len(vals))
+	for i, v := range vals {
+		rank[v] = i
+	}
+	return rank
 }
 
 // settle keeps the geometry already on screen unless the new one is materially
@@ -268,21 +382,30 @@ type settledGeometry struct {
 // times before it settled and again on every poll that changed a cell's length.
 //
 // So the first measurement of a given terminal wins, and later ones are adopted only
-// when the arrangement itself changed — a pane appeared, was hidden, or moved rows —
-// or when some tile wants to move by [stableSlack] or more. That is the difference
+// when the arrangement itself changed — a pane appeared, was hidden, or moved cell —
+// or when holding still would cost the reader something. That is the difference
 // between a layout that adapts and one that fidgets; a fleet that genuinely grows
 // still gets the width for it, on the frame it grows.
 //
 // Only the geometry is retained. Focus, hidden panes and ordering come from the
 // fresh layout, so tabbing between panes still repaints immediately.
-func (m *Model) settle(next grid.Layout) grid.Layout {
-	key := settledGeometry{width: m.width, height: m.height, cols: m.effectiveCols(), zoomed: m.zoomed}
+func (m *Model) settle(next grid.Layout, appetite map[string]int) grid.Layout {
+	key := settledGeometry{
+		width: m.width, height: m.height, cols: m.effectiveCols(), zoomed: m.zoomed,
+		structure: structureOf(next.Tiles),
+	}
+	// Measured once per frame and shared with adopt: a pane derives its appetite
+	// from the rows it is about to draw, which on a large fleet is not free.
 	fresh := make(map[string][4]int, len(next.Tiles))
+	demand := make(map[string]int, len(next.Tiles))
 	for _, t := range next.Tiles {
-		fresh[tileKey(t)] = [4]int{t.X, t.Y, t.W, t.H}
+		k := tileKey(t)
+		fresh[k] = [4]int{t.X, t.Y, t.W, t.H}
+		demand[k] = m.contentDemand(t, appetite)
+		key.measured = key.measured || demand[k] > 0
 	}
 
-	if m.adopt(key, fresh) {
+	if m.adopt(key, next, demand) {
 		key.tiles = fresh
 		m.settled = &key
 		return next
@@ -297,7 +420,29 @@ func (m *Model) settle(next grid.Layout) grid.Layout {
 }
 
 // adopt reports whether the new geometry should replace what is on screen.
-func (m *Model) adopt(key settledGeometry, fresh map[string][4]int) bool {
+//
+// Vertically a tile that wants to grow or shrink by [stableSlack] is taken at its
+// word: rows are trimmed to the content that exists, so a row changing height means
+// lines are appearing or disappearing either way.
+//
+// Horizontally the test is not whether the ideal boundaries moved but whether the
+// ones on screen have become too narrow for what they hold. Width is divided in
+// proportion to appetite and the slack is shared out with it, so *any* pane's
+// content changing length re-proportions the whole band — a single crash-looping
+// pod with a long name moved every border on a four-column screen by up to
+// thirty-four cells, and moved them back when it recovered, even though no pane was
+// short of room before or after. A boundary that moves without relieving a
+// truncation has bought the reader nothing and cost them their place, so the
+// question asked here is per pane and one-directional: is this tile now too narrow
+// for its own content, and would the fresh layout give it materially more?
+//
+// Both halves of that carry [stableSlack], and the second half is not redundant. A
+// pane can be short of room for as long as its content stays long — a fleet of
+// 60-character pod names never fits a quarter of the screen — and a permanently
+// starved tile whose ideal width drifts by a cell as ages and restart counts tick
+// over would otherwise re-lay out the whole screen on every poll, which is the
+// original complaint wearing a different hat.
+func (m *Model) adopt(key settledGeometry, next grid.Layout, demand map[string]int) bool {
 	switch {
 	case m.settled == nil:
 		return true
@@ -306,21 +451,61 @@ func (m *Model) adopt(key settledGeometry, fresh map[string][4]int) bool {
 	case m.settled.width != key.width, m.settled.height != key.height,
 		m.settled.cols != key.cols, m.settled.zoomed != key.zoomed:
 		return true
-	case len(m.settled.tiles) != len(fresh):
+	// A pane appeared, was hidden, or moved to a different cell.
+	case m.settled.structure != key.structure:
+		return true
+	// The layout on screen was decided before there was anything to size it from.
+	case !m.settled.measured && key.measured:
 		return true
 	}
-	for k, geom := range fresh {
+	for _, t := range next.Tiles {
+		k := tileKey(t)
 		was, ok := m.settled.tiles[k]
 		if !ok {
 			return true // this pane was not on screen, or is in a different stack
 		}
-		for i := range geom {
-			if geom[i]-was[i] >= stableSlack || was[i]-geom[i] >= stableSlack {
-				return true
-			}
+		if t.Y-was[1] >= stableSlack || was[1]-t.Y >= stableSlack ||
+			t.H-was[3] >= stableSlack || was[3]-t.H >= stableSlack {
+			return true
+		}
+		if t.W-was[2] >= stableSlack && demand[k]-was[2] >= stableSlack {
+			return true
 		}
 	}
 	return false
+}
+
+// contentDemand is the tile width a pane's content could use, chrome included —
+// what the grid would size its column from. A stacked tile answers for the
+// hungriest pane sharing it, since they render at one width.
+//
+// Zero for a pane that declares no appetite: it has no opinion about its width, so
+// it is never the reason to redraw. The floor is included because a tile below
+// [tui.Pane.MinWidth] is not merely cramped, it is dropping columns.
+func (m *Model) contentDemand(t grid.Tile, appetite map[string]int) int {
+	if len(t.Stacked) == 0 {
+		return m.paneDemand(t.PaneID, appetite)
+	}
+	most := 0
+	for _, s := range t.Stacked {
+		most = max(most, m.paneDemand(s.PaneID, appetite))
+	}
+	return most
+}
+
+// paneDemand answers from the same smoothed appetite the layout was sized from, so
+// the question "is this tile too narrow" is asked about the width the grid was
+// trying to give it.
+func (m *Model) paneDemand(id string, appetite map[string]int) int {
+	p, ok := m.paneByID[id]
+	if !ok {
+		return 0
+	}
+	w := appetite[id]
+	if w <= 0 {
+		return 0
+	}
+	return max(w+tui.PaneChromeH, p.MinWidth())
 }
 
 // tileKey identifies a tile across frames. A stacked tile has no pane of its own,
