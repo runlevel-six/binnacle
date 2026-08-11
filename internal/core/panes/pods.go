@@ -60,6 +60,29 @@ var (
 	}
 )
 
+// ContentWidth implements [tui.ContentWidthPane]: the wider of the two tables
+// this pane stacks, since they share one envelope and both render at the pane's
+// full width.
+//
+// The cell that decides it is POD, which carries namespace/name — at a quarter of
+// a wide terminal three different rook-ceph pods all render as "rook-ceph/rook-c",
+// and rows a reader cannot tell apart are rows that are not being shown.
+func (p *PodHealthPane) ContentWidth() int {
+	snap, ok := store.Get[model.Snapshot[model.Pod]](p.store, model.KeyWorkloadPods)
+	if !ok {
+		return 0
+	}
+	critCells, _ := p.criticalRows(snap.Items)
+	unhealthyCells, _ := unhealthyRows(unhealthyPods(snap.Items))
+	if len(critCells) == 0 && len(unhealthyCells) == 0 {
+		return 0
+	}
+	return max(
+		table.AppetiteWidth(criticalCols, critCells),
+		table.AppetiteWidth(unhealthyCols, unhealthyCells),
+	)
+}
+
 // Render implements tui.Pane.
 func (p *PodHealthPane) Render(w, h int, _ bool) string {
 	snap, body, ok := snapshotOf[model.Pod](p.store, model.KeyWorkloadPods, w, h, "pods")

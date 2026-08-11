@@ -43,7 +43,56 @@ func (p *servicesPane) GroupOrder() int    { return 1 }
 var serviceVersionCols = []table.Column{
 	{Header: "SERVICE"},
 	{Header: "UP TO DATE"},
-	{Header: "BEHIND", Stretch: true},
+	{Header: "BEHIND", Stretch: true, Transient: true},
+}
+
+// ContentWidth implements [tui.ContentWidthPane]: the version table, and not the
+// rolling summary, which appears and disappears with the rollout it describes.
+func (p *servicesPane) ContentWidth() int {
+	svcs, ok := CollectServices(p.store, p.namespace)
+	if !ok || len(svcs.Items) == 0 {
+		return 0
+	}
+	rows, _ := p.versionRows(svcs.Items)
+	return table.AppetiteWidth(serviceVersionCols, rows)
+}
+
+// ContentHeight implements [tui.ContentHeightPane]: a header, one row per
+// OpenStack service, and the summary line.
+//
+// A converged cloud declares one line instead. That is not a shortcut — it is what
+// this pane draws whenever it has to choose, on the grounds that sixteen rows
+// reading "keystone 3/3" say the same thing every day for months. A ceiling has to
+// take the same reading: claiming the full list would hold a screen of height for
+// rows the pane would rather not draw, and hold it against the fleet tables that
+// are hiding machines two rows above.
+//
+// Once something is behind, every service is worth a row again — the ones that are
+// current are the context the drifting ones are read against.
+func (p *servicesPane) ContentHeight(int) int {
+	svcs, ok := CollectServices(p.store, p.namespace)
+	if !ok || len(svcs.Items) == 0 {
+		return 0
+	}
+	if len(svcs.Pending()) == 0 {
+		return 1
+	}
+	h := len(svcs.Items) + 1
+	if servicesSummary(svcs) != "" {
+		h++
+	}
+	return h
+}
+
+// versionRows renders one row per service.
+func (p *servicesPane) versionRows(svcs []Service) (rows [][]string, styles [][]lipgloss.Style) {
+	rows = make([][]string, 0, len(svcs))
+	styles = make([][]lipgloss.Style, 0, len(svcs))
+	for _, svc := range svcs {
+		rows = append(rows, serviceVersionRow(svc))
+		styles = append(styles, serviceVersionStyles(svc))
+	}
+	return rows, styles
 }
 
 // Render implements tui.Pane.
@@ -103,13 +152,7 @@ func (p *servicesPane) Render(w, h int, _ bool) string {
 	}
 	tableH := max(h-len(trailer), 2)
 
-	rows := make([][]string, 0, len(shown))
-	styles := make([][]lipgloss.Style, 0, len(shown))
-	for _, svc := range shown {
-		rows = append(rows, serviceVersionRow(svc))
-		styles = append(styles, serviceVersionStyles(svc))
-	}
-
+	rows, styles := p.versionRows(shown)
 	lines := []string{table.Table{
 		Cols: serviceVersionCols, Rows: rows, CellStyles: styles,
 	}.Render(w, min(tableH, len(rows)+1))}

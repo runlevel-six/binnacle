@@ -56,7 +56,7 @@ var (
 		{Header: "PHASE"},
 		{Header: "VERSION"},
 		{Header: "HOST"},
-		{Header: "HOST STATE", Stretch: true},
+		{Header: "HOST STATE", Stretch: true, Transient: true},
 		{Header: "AGE"},
 	}
 	machineColsMedium = []table.Column{
@@ -64,12 +64,12 @@ var (
 		{Header: "ROLE"},
 		{Header: "PHASE"},
 		{Header: "HOST"},
-		{Header: "HOST STATE", Stretch: true},
+		{Header: "HOST STATE", Stretch: true, Transient: true},
 	}
 	machineColsNarrow = []table.Column{
 		{Header: "MACHINE"},
 		{Header: "PHASE"},
-		{Header: "HOST STATE", Stretch: true},
+		{Header: "HOST STATE", Stretch: true, Transient: true},
 	}
 )
 
@@ -115,25 +115,56 @@ func selectStyles(rows [][]lipgloss.Style, keep []int) [][]lipgloss.Style {
 	return out
 }
 
-// Render implements tui.Pane.
-func (p *MachinesPane) Render(w, h int, _ bool) string {
-	machines, body, ok := snapshotOf[model.Machine](p.store, model.KeyMgmtMachines, w, h, "machines")
-	if !ok {
-		return body
+// fleet assembles the machine rows and the unclaimed-host summary from the store.
+//
+// Shared by Render and ContentWidth so that the width this pane asks the layout
+// for is derived from the cells it is about to draw. A second, independently
+// written estimate would be right the day it was written and wrong the first time
+// a column changed.
+func (p *MachinesPane) fleet() (cells [][]string, styles [][]lipgloss.Style, summary string) {
+	machines, ok := store.Get[model.Snapshot[model.Machine]](p.store, model.KeyMgmtMachines)
+	if !ok || len(machines.Items) == 0 {
+		return nil, nil, ""
 	}
 	// Metal3 may legitimately be absent; the Machine list is still worth showing
 	// with empty host columns, so these are read without failing the pane.
 	m3ms, _ := store.Get[model.Snapshot[model.Metal3Machine]](p.store, model.KeyMgmtMetal3Machines)
 	bmhs, _ := store.Get[model.Snapshot[model.BareMetalHost]](p.store, model.KeyMgmtBareMetalHosts)
 
+	cells, styles = machineRows(capi.Join(machines.Items, m3ms.Items, bmhs.Items, p.roleOf), p.roles)
+	return cells, styles, unclaimedSummary(capi.UnclaimedHosts(m3ms.Items, bmhs.Items))
+}
+
+// ContentWidth implements [tui.ContentWidthPane].
+//
+// Reported from the full column set, never from the reduced ones
+// [machineColumns] falls back to. The fallbacks exist because a tile was too
+// narrow to name a machine, so answering with one of their widths would tell the
+// layout that the tile it is about to hand out is wide enough.
+//
+// The unclaimed-host summary is not counted. It is a sentence about the current
+// situation rather than part of the schema, and a tile sized to it would resize
+// the dashboard whenever a host changed state — the same reason HOST STATE is
+// [table.Column.Transient].
+func (p *MachinesPane) ContentWidth() int {
+	cells, _, _ := p.fleet()
+	if len(cells) == 0 {
+		return 0
+	}
+	return table.AppetiteWidth(machineColsFull, cells)
+}
+
+// Render implements tui.Pane.
+func (p *MachinesPane) Render(w, h int, _ bool) string {
+	machines, body, ok := snapshotOf[model.Machine](p.store, model.KeyMgmtMachines, w, h, "machines")
+	if !ok {
+		return body
+	}
 	if len(machines.Items) == 0 {
 		return table.Placeholder(w, h, "no Cluster API machines")
 	}
 
-	rows := capi.Join(machines.Items, m3ms.Items, bmhs.Items, p.roleOf)
-	unclaimed := capi.UnclaimedHosts(m3ms.Items, bmhs.Items)
-
-	allCells, allStyles := machineRows(rows, p.roles)
+	allCells, allStyles, summary := p.fleet()
 	cols, keep := machineColumns(w)
 	cells := selectCells(allCells, keep)
 	main := table.Table{Cols: cols, Rows: cells, CellStyles: selectStyles(allStyles, keep)}
@@ -141,7 +172,6 @@ func (p *MachinesPane) Render(w, h int, _ bool) string {
 	// The unclaimed-host summary earns its line only when the main table is not
 	// already using every row: a machine hidden behind a footer is worse than an
 	// absent summary.
-	summary := unclaimedSummary(unclaimed)
 	if summary == "" || h < len(cells)+3 {
 		return main.Render(w, h)
 	}

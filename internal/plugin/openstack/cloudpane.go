@@ -61,6 +61,35 @@ func (p *cloudPane) Render(w, h int, _ bool) string {
 	return p.renderMigrations(w, h, time.Now())
 }
 
+// ContentWidth implements [tui.ContentWidthPane]: the migration table, which is a
+// status, a type, a short UUID and a pair of compute hostnames.
+func (p *cloudPane) ContentWidth() int {
+	rows, _, _ := p.migrationRows(time.Now())
+	if len(rows) == 0 {
+		return 0
+	}
+	return table.AppetiteWidth(migrationCols, rows)
+}
+
+// ContentHeight implements [tui.ContentHeightPane]: the active-count line, a
+// header, and one row per migration in flight.
+//
+// An idle cloud declares a single line, which is the case worth being exact
+// about: this pane spends most of its life saying "no migrations", and a whole
+// grid row spent centering those two words is a row the fleet tables wanted.
+func (p *cloudPane) ContentHeight(int) int {
+	rows, _, ok := p.migrationRows(time.Now())
+	switch {
+	case !ok:
+		// Still polling, or the poll failed. Both draw a body the reader may need
+		// to read at whatever size the row happens to be.
+		return 0
+	case len(rows) == 0:
+		return 1
+	}
+	return len(rows) + 2
+}
+
 // resourcesPane is the cloud's resource census, as a section of the Cloud frame.
 type resourcesPane struct {
 	store *store.Store
@@ -85,12 +114,69 @@ func (p *resourcesPane) Render(w, h int, _ bool) string {
 	return renderInventory(p.store, w, h)
 }
 
+// ContentWidth implements [tui.ContentWidthPane]: the widest census line with its
+// state breakdown written out in full.
+//
+// Measured unconstrained on purpose. The breakdown is fitted to the width it is
+// given and drops the rarest states to make room, so measuring it at some assumed
+// width would ask for exactly the space needed to keep dropping them.
+func (p *resourcesPane) ContentWidth() int {
+	lines, ok := inventoryLines(p.store, 0)
+	if !ok {
+		return 0
+	}
+	return tui.WidestLine(lines)
+}
+
+// ContentHeight implements [tui.ContentHeightPane]: one line per counted
+// resource kind, which is a property of the cloud's deployed services rather than
+// of anything running on it.
+func (p *resourcesPane) ContentHeight(int) int {
+	lines, ok := inventoryLines(p.store, 0)
+	if !ok {
+		return 0
+	}
+	return len(lines)
+}
+
 var migrationCols = []table.Column{
 	{Header: "STATUS"},
 	{Header: "TYPE"},
 	{Header: "SERVER"},
 	{Header: "SRC → DST", Stretch: true},
 	{Header: "AGE"},
+}
+
+// migrationRows builds the table rows and their styles for the migrations in
+// flight, and reports whether the poll has produced a usable answer at all.
+//
+// Shared by Render and the extent methods, so the size this pane asks for is
+// measured from the rows it is about to draw.
+func (p *cloudPane) migrationRows(now time.Time) (rows [][]string, styles []lipgloss.Style, ok bool) {
+	snap, have := store.Get[Migrations](p.store, KeyMigrations)
+	if !have || snap.Err != nil {
+		return nil, nil, false
+	}
+	items := Relevant(LatestPerServer(snap.Items), now)
+	rows = make([][]string, 0, len(items))
+	styles = make([]lipgloss.Style, 0, len(items))
+	for _, m := range items {
+		dst := ShortHost(m.DestCompute)
+		if dst == "" {
+			// Nova leaves the destination empty until the scheduler has picked one,
+			// which is a normal early state rather than missing data.
+			dst = "?"
+		}
+		rows = append(rows, []string{
+			ShortStatus(m.Status),
+			ShortType(m.Type),
+			shortUUID(m.InstanceUUID),
+			ShortHost(m.SourceCompute) + " → " + dst,
+			age(now, m.UpdatedAt),
+		})
+		styles = append(styles, migrationStyle(m.Status))
+	}
+	return rows, styles, true
 }
 
 func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
@@ -114,27 +200,12 @@ func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
 		return table.Placeholder(w, h, "no migrations")
 	}
 
-	rows := make([][]string, 0, len(items))
-	styles := make([]lipgloss.Style, 0, len(items))
+	rows, styles, _ := p.migrationRows(now)
 	failed := 0
 	for _, m := range items {
 		if Failed(m.Status) {
 			failed++
 		}
-		dst := ShortHost(m.DestCompute)
-		if dst == "" {
-			// Nova leaves the destination empty until the scheduler has picked
-			// one, which is a normal early state rather than missing data.
-			dst = "?"
-		}
-		rows = append(rows, []string{
-			ShortStatus(m.Status),
-			ShortType(m.Type),
-			shortUUID(m.InstanceUUID),
-			ShortHost(m.SourceCompute) + " → " + dst,
-			age(now, m.UpdatedAt),
-		})
-		styles = append(styles, migrationStyle(m.Status))
 	}
 
 	summary := tui.StyleAccent.Render(fmt.Sprintf("%d active", len(items)-failed))
@@ -162,16 +233,33 @@ func renderInventory(s *store.Store, w, h int) string {
 		return table.Placeholder(w, h, "no resources counted")
 	}
 
+	lines, _ := inventoryLines(s, w)
+	for i, ln := range lines {
+		lines[i] = table.PadOrTrunc(ln, w)
+	}
+	return table.ClipLines(strings.Join(lines, "\n"), h)
+}
+
+// inventoryLines composes the census, one line per counted resource kind, fitted
+// to width. A width of zero or less leaves the state breakdowns unconstrained; see
+// [breakdown]. ok is false when there is no census to draw.
+//
+// Shared by renderInventory and the resources pane's extent methods.
+func inventoryLines(s *store.Store, width int) (lines []string, ok bool) {
+	inv, have := store.Get[Inventory](s, KeyInventory)
+	if !have || inv.Err != nil || len(inv.Counts) == 0 {
+		return nil, false
+	}
+
 	labelW := 0
 	for _, c := range inv.Counts {
 		labelW = max(labelW, len(c.Label)+1)
 	}
-
-	lines := make([]string, 0, len(inv.Counts))
+	lines = make([]string, 0, len(inv.Counts))
 	for _, c := range inv.Counts {
-		lines = append(lines, table.PadOrTrunc(countLine(c, labelW, w), w))
+		lines = append(lines, countLine(c, labelW, width))
 	}
-	return table.ClipLines(strings.Join(lines, "\n"), h)
+	return lines, true
 }
 
 func countLine(c Count, labelW, width int) string {

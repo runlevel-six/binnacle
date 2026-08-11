@@ -46,6 +46,10 @@ type Model struct {
 	orderIndex map[string]int
 	focused    string
 
+	// settled is the geometry already on screen, kept so that a re-measured
+	// layout does not move tiles the reader is reading. See [Model.settle].
+	settled *settledGeometry
+
 	showHelp bool
 	// paused freezes the display by ignoring store notifications. The watchers
 	// keep running, so unfreezing shows current state rather than replaying a
@@ -219,7 +223,7 @@ func (m *Model) View() string {
 	if m.zoomed {
 		zoomedID = m.focused
 	}
-	lay := grid.Compute(grid.Options{
+	lay := m.settle(grid.Compute(grid.Options{
 		Width:        m.width,
 		Height:       m.height,
 		Panes:        m.panes,
@@ -227,13 +231,109 @@ func (m *Model) View() string {
 		HeaderH:      chromeRows,
 		OverrideCols: m.colsOverride,
 		ZoomedID:     zoomedID,
-	})
+	}))
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.renderHeader(m.width),
 		m.renderBody(lay),
 		m.footerLine(lay),
 	)
+}
+
+// stableSlack is how far a tile has to want to move before the screen is redrawn
+// at the new size.
+//
+// Sizing the grid from the panes' content means re-measuring it on every store
+// update, and a dashboard whose borders slide two cells every twenty seconds is
+// harder to read than one that is two cells wrong. Four cells is under a word:
+// below it, nothing a reader was looking at has become truncated, so the movement
+// buys nothing and costs them their place.
+const stableSlack = 4
+
+// settledGeometry is the arrangement currently on screen: the terminal and mode it
+// was decided for, and where each tile went.
+type settledGeometry struct {
+	width, height, cols int
+	zoomed              bool
+	tiles               map[string][4]int // pane key -> x, y, w, h
+}
+
+// settle keeps the geometry already on screen unless the new one is materially
+// different, and returns a layout carrying whichever won.
+//
+// The alternative the layout invites — recomputing freely, since Compute is cheap
+// and pure — is what makes the display twitch: the first frame is drawn before any
+// pane has data, informers land a second later, and each plugin's first poll lands
+// after that, so a dashboard that honored every measurement would resize three
+// times before it settled and again on every poll that changed a cell's length.
+//
+// So the first measurement of a given terminal wins, and later ones are adopted only
+// when the arrangement itself changed — a pane appeared, was hidden, or moved rows —
+// or when some tile wants to move by [stableSlack] or more. That is the difference
+// between a layout that adapts and one that fidgets; a fleet that genuinely grows
+// still gets the width for it, on the frame it grows.
+//
+// Only the geometry is retained. Focus, hidden panes and ordering come from the
+// fresh layout, so tabbing between panes still repaints immediately.
+func (m *Model) settle(next grid.Layout) grid.Layout {
+	key := settledGeometry{width: m.width, height: m.height, cols: m.effectiveCols(), zoomed: m.zoomed}
+	fresh := make(map[string][4]int, len(next.Tiles))
+	for _, t := range next.Tiles {
+		fresh[tileKey(t)] = [4]int{t.X, t.Y, t.W, t.H}
+	}
+
+	if m.adopt(key, fresh) {
+		key.tiles = fresh
+		m.settled = &key
+		return next
+	}
+	for i := range next.Tiles {
+		if geom, ok := m.settled.tiles[tileKey(next.Tiles[i])]; ok {
+			next.Tiles[i].X, next.Tiles[i].Y = geom[0], geom[1]
+			next.Tiles[i].W, next.Tiles[i].H = geom[2], geom[3]
+		}
+	}
+	return next
+}
+
+// adopt reports whether the new geometry should replace what is on screen.
+func (m *Model) adopt(key settledGeometry, fresh map[string][4]int) bool {
+	switch {
+	case m.settled == nil:
+		return true
+	// A resize, a column override or a zoom is the reader asking for a new
+	// arrangement, so there is nothing to preserve.
+	case m.settled.width != key.width, m.settled.height != key.height,
+		m.settled.cols != key.cols, m.settled.zoomed != key.zoomed:
+		return true
+	case len(m.settled.tiles) != len(fresh):
+		return true
+	}
+	for k, geom := range fresh {
+		was, ok := m.settled.tiles[k]
+		if !ok {
+			return true // this pane was not on screen, or is in a different stack
+		}
+		for i := range geom {
+			if geom[i]-was[i] >= stableSlack || was[i]-geom[i] >= stableSlack {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// tileKey identifies a tile across frames. A stacked tile has no pane of its own,
+// so it is keyed by the panes sharing it, in order.
+func tileKey(t grid.Tile) string {
+	if len(t.Stacked) == 0 {
+		return t.PaneID
+	}
+	ids := make([]string, 0, len(t.Stacked))
+	for _, s := range t.Stacked {
+		ids = append(ids, s.PaneID)
+	}
+	return "stack:" + strings.Join(ids, "+")
 }
 
 // renderBody composites the tiles at their positions, one output line at a time.

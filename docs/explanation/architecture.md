@@ -77,8 +77,34 @@ Panes say what they need and the packer places them:
 - **row span** — for tables whose *rows* do not fit. A fifty-node fleet shows
   twenty-five rows and `+ 25 more` no matter how wide the column is, because the
   limit is the row count.
+- **content width** — how much width the pane's *current data* can use.
+- **content height** — the height past which it can only add blank lines.
 - **grouping** — several panes under one frame.
 - **stacking** — sharing a column.
+
+The last two of those are why a row is not divided evenly. The panes in a row are
+never equally hungry: Machines & Hosts wants 128 columns for a fleet with long
+machine names, and the Cloud frame beside it wants 57. Four equal quarters of a
+395-column terminal gave the first 99 — every machine name truncated to
+`demo-workers-` — and left 42 blank in the second. Cells are divided in proportion to
+what the panes say they can use instead, and rows are trimmed to what their panes can
+fill, with the surplus going to the rows that never claim a ceiling because their row
+count is the cluster's size. Panes that declare neither divide their row evenly, as
+everything did before either existed.
+
+Width is settled per *band* — a run of rows joined by a row-spanning tile — rather
+than once for the whole grid. A tile spanning rows is one rectangle, so the rows it
+covers have to agree on the boundaries it sits between; rows that are not joined
+agree about nothing and are each sized for themselves.
+
+Sizing from content means re-measuring on every store update, so two rules keep the
+display still. A pane's appetite ignores its *transient* columns — a Metal3 error,
+the nodes still behind, a Kubernetes message — because what identifies a row changes
+when the fleet changes and commentary changes every poll; charging Machines & Hosts
+for its HOST STATE cell moved the pane by 37 cells on a twenty-second timer. And the
+first measurement of a given terminal is the one drawn: a later one is adopted only
+when the arrangement changed or a tile wants to move by four cells or more. A
+dashboard two cells from ideal reads better than one that fidgets.
 
 Declaring intent rather than a position is what keeps the arrangement correct as
 plugins come and go. A pane that exists only where one subsystem is installed cannot

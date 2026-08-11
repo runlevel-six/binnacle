@@ -798,3 +798,91 @@ func TestOverview_NoSupplierIsUnchanged(t *testing.T) {
 		t.Error("a nil supplier should render identically to no supplier")
 	}
 }
+
+// --- content extents ------------------------------------------------------
+
+// The complaint this answers: a fleet with long machine names, rendered in a
+// quarter of a wide terminal, truncates every MACHINE cell to a shared prefix like
+// "demo-workers-" — rows a reader cannot tell apart. The pane cannot fix that
+// alone; what it can do is say how much width would fix it, which is what the
+// layout divides its rows by.
+func TestMachines_ContentWidthShowsEveryName(t *testing.T) {
+	s := store.New()
+	long := "demo-workers-5d9c7-lm2vp"
+	putSnap(s, model.KeyMgmtMachines, model.Machine{
+		Name: long, Phase: "Running", Version: "v1.36.2", Age: time.Hour,
+	})
+	p := NewMachines(s, testRoles())
+
+	want := p.ContentWidth()
+	if want <= 0 {
+		t.Fatal("a pane with machines to show should declare a width")
+	}
+	// Rendered at the width it asked for, no cell is cut.
+	contains(t, p.Render(want, 10, false), long, "machine name at the declared width")
+
+	// And the number is honest about being about *this* fleet: a longer name asks
+	// for more.
+	s2 := store.New()
+	putSnap(s2, model.KeyMgmtMachines, model.Machine{
+		Name: long + "-with-a-longer-suffix", Phase: "Running", Age: time.Hour,
+	})
+	if got := NewMachines(s2, testRoles()).ContentWidth(); got <= want {
+		t.Errorf("a longer machine name should ask for more width: got %d, was %d", got, want)
+	}
+}
+
+// Nodes are identified by an FQDN, which is the cell a narrow tile takes away
+// first.
+func TestNodes_ContentWidthShowsEveryFQDN(t *testing.T) {
+	s := store.New()
+	fqdn := "compute-node-1.site-a.demo.example"
+	putSnap(s, model.KeyWorkloadNodes, model.Node{
+		Name: fqdn, Status: "Ready", Version: "v1.35.3", Age: time.Hour,
+	})
+	p := NewNodes(s, testRoles(), "")
+
+	want := p.ContentWidth()
+	if want <= 0 {
+		t.Fatal("a pane with nodes to show should declare a width")
+	}
+	contains(t, p.Render(want, 10, false), fqdn, "node FQDN at the declared width")
+}
+
+// An empty or unread store declares nothing rather than guessing, which the
+// layout reads as "no preference" and answers with an average share.
+func TestContentWidth_UnknownWhenThereIsNoData(t *testing.T) {
+	s := store.New()
+	for _, p := range []tui.ContentWidthPane{
+		NewMachines(s, testRoles()),
+		NewNodes(s, testRoles(), ""),
+		NewPodHealth(s, nil),
+		NewEvents(s, ""),
+	} {
+		if got := p.ContentWidth(); got != 0 {
+			t.Errorf("pane %q: got %d want 0 with an empty store", p.ID(), got)
+		}
+	}
+}
+
+// The regression that made the content-sized layout usable: a rolling fleet
+// changes HOST STATE on every poll — "provisioned", "deprovisioning powered off",
+// a Metal3 error — and none of it changes which machine a row is. Charging the
+// pane for that text moved its declared width by 37 cells, which slid every tile
+// boundary in its band sideways on a twenty-second timer.
+func TestMachines_ContentWidthHoldsStillWhileHostsChange(t *testing.T) {
+	settled := NewMachines(populatedStore(), testRoles()).ContentWidth()
+
+	churning := populatedStore()
+	putSnap(churning, model.KeyMgmtBareMetalHosts,
+		model.BareMetalHost{
+			Namespace: "bmh", Name: "host-1", State: "deprovisioning",
+			ConsumerName: "cp-1-m3m", PoweredOn: false,
+			ErrorMessage: "Introspection timed out after 30m0s",
+		},
+		model.BareMetalHost{Namespace: "bmh", Name: "host-2", State: "available", Online: true},
+	)
+	if got := NewMachines(churning, testRoles()).ContentWidth(); got != settled {
+		t.Errorf("declared width moved with the host state: %d then %d", settled, got)
+	}
+}

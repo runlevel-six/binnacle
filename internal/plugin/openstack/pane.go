@@ -34,7 +34,51 @@ var serviceCols = []table.Column{
 	{Header: "SERVICE"},
 	{Header: "AGENTS"},
 	{Header: "DISABLED"},
-	{Header: "NOTE", Stretch: true},
+	{Header: "NOTE", Stretch: true, Transient: true},
+}
+
+// ContentWidth implements [tui.ContentWidthPane]: the service table.
+//
+// Not the agent detail beneath it. That line names the down and disabled binaries,
+// so it is the most volatile string in the pane, and pinning a tile width to it
+// would move the row every time an agent recovered.
+func (p *pane) ContentWidth() int {
+	cells, _, _ := p.content()
+	if len(cells) == 0 {
+		return 0
+	}
+	return table.AppetiteWidth(serviceCols, cells)
+}
+
+// ContentHeight implements [tui.ContentHeightPane]: a header, one row per
+// OpenStack service, and the agent detail with its separator. The service list is
+// what the cloud has deployed, not what it is running.
+func (p *pane) ContentHeight(int) int {
+	cells, _, detail := p.content()
+	if len(cells) == 0 {
+		return 0
+	}
+	h := len(cells) + 1
+	if detail != "" {
+		h += 2
+	}
+	return h
+}
+
+// content builds the service rows and the agent detail, shared by Render and the
+// extent methods.
+func (p *pane) content() (cells [][]string, styles [][]lipgloss.Style, detail string) {
+	state, ok := store.Get[State](p.store, KeyState)
+	if !ok || state.Err != nil || len(state.Services) == 0 {
+		return nil, nil, ""
+	}
+	cells = make([][]string, 0, len(state.Services))
+	styles = make([][]lipgloss.Style, 0, len(state.Services))
+	for _, s := range state.Services {
+		cells = append(cells, serviceRow(s))
+		styles = append(styles, serviceStyles(s))
+	}
+	return cells, styles, agentDetail(state)
 }
 
 // Render implements tui.Pane.
@@ -50,15 +94,8 @@ func (p *pane) Render(w, h int, _ bool) string {
 		return table.Placeholder(w, h, "no services reported")
 	}
 
-	cells := make([][]string, 0, len(state.Services))
-	styles := make([][]lipgloss.Style, 0, len(state.Services))
-	for _, s := range state.Services {
-		cells = append(cells, serviceRow(s))
-		styles = append(styles, serviceStyles(s))
-	}
-
+	cells, styles, detail := p.content()
 	body := table.Table{Cols: serviceCols, Rows: cells, CellStyles: styles}
-	detail := agentDetail(state)
 	if detail == "" || h < len(cells)+3 {
 		return body.Render(w, h)
 	}

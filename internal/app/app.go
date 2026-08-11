@@ -334,10 +334,19 @@ func (s *Setup) runUI(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// No mouse tracking. Asking for it puts the terminal in a mode where clicks and
+	// drags are delivered to us instead of to the terminal, which takes away
+	// select-and-copy — and this dashboard's whole output is names an operator
+	// copies into the next command. Nothing here reads a mouse event, so the
+	// tracking was pure cost.
+	//
+	// Anything added later that wants the mouse — click a pane to focus it, say —
+	// has to be worth losing selection for, or has to keep it: a terminal only
+	// gives selection back on a modifier drag, and which modifier depends on the
+	// terminal.
 	program := tea.NewProgram(model,
 		tea.WithAltScreen(),
 		tea.WithContext(ctx),
-		tea.WithMouseCellMotion(),
 	)
 	_, err = program.Run()
 	return err

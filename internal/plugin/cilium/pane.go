@@ -31,6 +31,16 @@ func (p *pane) GroupID() string    { return "network" }
 func (p *pane) GroupTitle() string { return "Network" }
 func (p *pane) GroupOrder() int    { return 0 }
 
+// ContentWidth implements [tui.ContentWidthPane]: the longest status line.
+func (p *pane) ContentWidth() int {
+	return tui.WidestLine(p.lines())
+}
+
+// ContentHeight implements [tui.ContentHeightPane]. Cilium's status is a fixed
+// handful of label-and-value rows — a few more mid-rollout, a few less on a reduced
+// tier — and no height beyond them shows anything further.
+func (p *pane) ContentHeight(int) int { return len(p.lines()) }
+
 // Render implements tui.Pane.
 func (p *pane) Render(w, h int, _ bool) string {
 	state, ok := store.Get[State](p.store, KeyState)
@@ -40,7 +50,23 @@ func (p *pane) Render(w, h int, _ bool) string {
 	if state.Err != nil {
 		return table.ErrorBody(w, h, state.Err)
 	}
+	return clip(strings.Join(p.statusLines(state), "\n"), w, h)
+}
 
+// lines is [pane.statusLines] for the callers that only want to measure it, and
+// answers nothing at all while the state is missing or failed — those bodies are
+// placeholders sized to the tile, so they have no extent of their own to report.
+func (p *pane) lines() []string {
+	state, ok := store.Get[State](p.store, KeyState)
+	if !ok || state.Err != nil {
+		return nil
+	}
+	return p.statusLines(state)
+}
+
+// statusLines composes the pane's body, one label-and-value row at a time. Shared
+// with the extent methods so what the pane declares and what it draws cannot diverge.
+func (p *pane) statusLines(state State) []string {
 	lines := []string{
 		row("agents", agentText(state)),
 	}
@@ -74,7 +100,7 @@ func (p *pane) Render(w, h int, _ bool) string {
 		lines = append(lines, "", tui.StyleMuted.Render("detail unavailable — "+state.TierReason))
 	}
 
-	return clip(strings.Join(lines, "\n"), w, h)
+	return lines
 }
 
 // labelWidth aligns the pane's label column. A constant rather than a parameter:

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -762,5 +763,121 @@ func TestBanner_ExpectedCordonStillReportsNotReady(t *testing.T) {
 	cell, _ := m.cellNodes()
 	if cell.Status != tui.BannerErr {
 		t.Errorf("status = %v (%q), want Err", cell.Status, cell.Detail)
+	}
+}
+
+// --- settling -------------------------------------------------------------
+
+// paneWidths reads the tile widths out of a rendered frame by measuring the runs
+// between vertical borders on the row that holds the fleet tables.
+func borderColumns(frame string) []int {
+	var out []int
+	for _, ln := range strings.Split(frame, "\n") {
+		plain := testansi.StripANSI(ln)
+		if !strings.Contains(plain, "Machines & Hosts") {
+			continue
+		}
+		// Rune index, not byte offset: the box-drawing glyphs are three bytes
+		// each, so ranging over the string would report inflated columns.
+		for i, r := range []rune(plain) {
+			if r == '╭' || r == '╮' {
+				out = append(out, i)
+			}
+		}
+		return out
+	}
+	return out
+}
+
+// The layout is re-measured on every frame, so a pane whose content grew by a cell
+// must not be allowed to slide every border on screen. This is the twitch the
+// content-sized grid would otherwise produce on every poll.
+func TestSettle_SmallChangesDoNotMoveTheLayout(t *testing.T) {
+	s := populatedStore()
+	m := newModel(t, s, 240, 50)
+	before := borderColumns(m.View())
+	if len(before) == 0 {
+		t.Fatal("could not find the Machines & Hosts row in the frame")
+	}
+
+	// One cell more of machine name: a real change, far too small to be worth
+	// redrawing the screen for.
+	s.Put(model.KeyMgmtMachines, model.Snapshot[model.Machine]{
+		Items: []model.Machine{
+			{Namespace: "capi", Name: "cp-1x", Phase: "Running"},
+			{Namespace: "capi", Name: "cp-2", Phase: "Provisioning"},
+		},
+		UpdatedAt: time.Now(),
+	})
+	if after := borderColumns(m.View()); !slices.Equal(before, after) {
+		t.Errorf("borders moved for a one-cell content change: %v then %v", before, after)
+	}
+}
+
+// A change big enough to matter is adopted: a fleet whose names grew by thirty
+// cells needs the width, and holding the old layout would truncate it.
+func TestSettle_MaterialChangesAreAdopted(t *testing.T) {
+	s := populatedStore()
+	m := newModel(t, s, 240, 50)
+	before := borderColumns(m.View())
+
+	s.Put(model.KeyMgmtMachines, model.Snapshot[model.Machine]{
+		Items: []model.Machine{
+			{Namespace: "capi", Name: "demo-workers-5d9c7-lm2vp", Phase: "Running"},
+			{Namespace: "capi", Name: "demo-workers-5d9c7-qt6rk", Phase: "Provisioning"},
+		},
+		UpdatedAt: time.Now(),
+	})
+	if after := borderColumns(m.View()); slices.Equal(before, after) {
+		t.Errorf("a thirty-cell change should be adopted, but the borders stayed at %v", before)
+	}
+}
+
+// A resize is the reader asking for a new arrangement, so nothing is preserved
+// across it — including the case where the settled geometry would still fit.
+func TestSettle_ResizeReDecides(t *testing.T) {
+	s := populatedStore()
+	m := newModel(t, s, 240, 50)
+	before := borderColumns(m.View())
+
+	m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
+	after := borderColumns(m.View())
+	if slices.Equal(before, after) {
+		t.Errorf("a resize should re-decide the layout, but borders stayed at %v", before)
+	}
+	for _, c := range after {
+		if c >= 200 {
+			t.Errorf("a retained border at column %d is outside the new terminal", c)
+		}
+	}
+}
+
+// Zoom and the column overrides are deliberate requests for a different
+// arrangement, and must not be held back by what is on screen.
+func TestSettle_ZoomAndColumnsReDecide(t *testing.T) {
+	s := populatedStore()
+	m := newModel(t, s, 240, 50)
+	before := borderColumns(m.View())
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	if zoomed := borderColumns(m.View()); slices.Equal(before, zoomed) {
+		t.Error("zoom should re-decide the layout")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
+	if fewer := borderColumns(m.View()); slices.Equal(before, fewer) {
+		t.Error("a column override should re-decide the layout")
+	}
+}
+
+// Focus is not geometry: retaining the settled tiles must not retain which pane
+// was highlighted, or tab would stop repainting.
+func TestSettle_FocusStillFollowsTab(t *testing.T) {
+	m := newModel(t, populatedStore(), 240, 50)
+	first := m.View()
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if second := m.View(); first == second {
+		t.Error("tab should still change the frame while the geometry is held")
 	}
 }

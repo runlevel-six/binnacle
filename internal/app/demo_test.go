@@ -198,3 +198,56 @@ func TestDemoFixture_UsesReservedNamesOnly(t *testing.T) {
 		}
 	}
 }
+
+// A pane given the height it declared must not have to hide anything in it. This
+// is the direction of error that matters: a ceiling that overstates costs a blank
+// line, while one that understates makes the layout confidently hand back space
+// the pane needed, and the reader sees "+ 3 more" in a pane that asked to be
+// exactly this tall.
+//
+// Checked through the assembled demo — frames included, since a merged frame's
+// ceiling is composed from its members' and is the one the layout actually reads.
+func TestRenderDemo_DeclaredCeilingsHideNothing(t *testing.T) {
+	setup, err := PrepareDemo(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tui.ApplyTheme(setup.Resolved.Theme)
+	setup.Registry.Detect(context.Background())
+
+	model, err := setup.BuildModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hidden := regexp.MustCompile(`\+ \d+ more`)
+	declared := 0
+	for _, p := range model.Panes() {
+		ch, ok := p.(tui.ContentHeightPane)
+		if !ok {
+			continue
+		}
+		// At the width the pane asked for, since a ceiling is measured at one.
+		w := 80
+		if cw, sized := p.(tui.ContentWidthPane); sized && cw.ContentWidth() > 0 {
+			w = cw.ContentWidth()
+		}
+		h := ch.ContentHeight(w)
+		if h <= 0 {
+			continue // no ceiling declared for this data
+		}
+		declared++
+
+		body := testansi.StripANSI(p.Render(w, h, false))
+		if got := hidden.FindString(body); got != "" {
+			t.Errorf("pane %q declared a ceiling of %d lines at width %d, then hid rows "+
+				"behind %q:\n%s", p.ID(), h, w, got, body)
+		}
+		if lines := strings.Count(body, "\n") + 1; lines > h {
+			t.Errorf("pane %q overran its own ceiling: %d lines in %d", p.ID(), lines, h)
+		}
+	}
+	if declared == 0 {
+		t.Fatal("no pane declared a content ceiling; the demo should exercise several")
+	}
+}

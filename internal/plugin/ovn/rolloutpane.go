@@ -41,7 +41,48 @@ func (p *rolloutPane) GroupOrder() int    { return 3 }
 var rolloutCols = []table.Column{
 	{Header: "COMPONENT"},
 	{Header: "UP TO DATE"},
-	{Header: "PENDING", Stretch: true},
+	{Header: "PENDING", Stretch: true, Transient: true},
+}
+
+// ContentWidth implements [tui.ContentWidthPane]: the component table. The
+// rollout summary is not counted — it exists only while something is behind, so a
+// tile sized to it would grow when a rollout started and shrink when it finished.
+func (p *rolloutPane) ContentWidth() int {
+	state, ok := store.Get[State](p.store, KeyState)
+	if !ok || len(state.Components) == 0 {
+		return 0
+	}
+	rows, _ := p.componentRows(state.Components)
+	return table.AppetiteWidth(rolloutCols, rows)
+}
+
+// ContentHeight implements [tui.ContentHeightPane]: a header, one row per OVN
+// component, and the summary line when there is one.
+//
+// The full component list rather than the folded one Render falls back to. Folding
+// is what this pane does when it is not given the height it asked for, so
+// reporting the folded height would be asking for the shortfall.
+func (p *rolloutPane) ContentHeight(int) int {
+	state, ok := store.Get[State](p.store, KeyState)
+	if !ok || len(state.Components) == 0 {
+		return 0
+	}
+	h := len(state.Components) + 1
+	if rolloutSummary(state.Components) != "" {
+		h++
+	}
+	return h
+}
+
+// componentRows renders one row per component.
+func (p *rolloutPane) componentRows(cs []Component) (rows [][]string, styles [][]lipgloss.Style) {
+	rows = make([][]string, 0, len(cs))
+	styles = make([][]lipgloss.Style, 0, len(cs))
+	for _, c := range cs {
+		rows = append(rows, componentRow(c))
+		styles = append(styles, componentStyles(c))
+	}
+	return rows, styles
 }
 
 // Render implements tui.Pane.
@@ -79,13 +120,7 @@ func (p *rolloutPane) Render(w, h int, _ bool) string {
 		}
 	}
 
-	rows := make([][]string, 0, len(shown))
-	styles := make([][]lipgloss.Style, 0, len(shown))
-	for _, c := range shown {
-		rows = append(rows, componentRow(c))
-		styles = append(styles, componentStyles(c))
-	}
-
+	rows, styles := p.componentRows(shown)
 	lines := []string{table.Table{Cols: rolloutCols, Rows: rows, CellStyles: styles}.Render(w, min(h, len(rows)+1))}
 	if folded > 0 {
 		lines = append(lines, table.PadOrTrunc(

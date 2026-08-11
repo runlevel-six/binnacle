@@ -26,6 +26,26 @@ func (p *pane) MinWidth() int          { return 44 }
 func (p *pane) MinHeight() int         { return 7 }
 func (p *pane) HeightWeight() int      { return 2 }
 
+// ContentWidth implements [tui.ContentWidthPane]: the longest status line, which
+// is usually a named failing check and its message.
+func (p *pane) ContentWidth() int { return tui.WidestLine(p.lines()) }
+
+// ContentHeight implements [tui.ContentHeightPane]: seven fixed status rows, plus
+// a line per failing health check. A cluster with nothing wrong needs exactly
+// seven, however many OSDs it has.
+func (p *pane) ContentHeight(int) int { return len(p.lines()) }
+
+// lines composes the pane's body, and answers nothing while the state is missing,
+// failed, or too coarse to detail — those bodies are placeholders sized to the
+// tile, with no extent of their own.
+func (p *pane) lines() []string {
+	state, ok := store.Get[State](p.store, KeyState)
+	if !ok || state.Err != nil || state.Tier != kube.TierFull {
+		return nil
+	}
+	return statusLines(state.Status)
+}
+
 // Render implements tui.Pane.
 func (p *pane) Render(w, h int, _ bool) string {
 	state, ok := store.Get[State](p.store, KeyState)
@@ -38,8 +58,12 @@ func (p *pane) Render(w, h int, _ bool) string {
 	if state.Tier != kube.TierFull {
 		return table.Placeholder(w, h, "Ceph detail unavailable — "+state.TierReason)
 	}
+	return clip(strings.Join(statusLines(state.Status), "\n"), w, h)
+}
 
-	st := state.Status
+// statusLines is the body one line at a time, shared with the extent methods so
+// that what this pane declares and what it draws cannot diverge.
+func statusLines(st Status) []string {
 	labelW := 10
 	lines := []string{
 		row(labelW, "health", healthText(st)),
@@ -59,7 +83,7 @@ func (p *pane) Render(w, h int, _ bool) string {
 		lines = append(lines, "  "+checkStyle(c.Severity).Render(c.Name)+" "+
 			tui.StyleMuted.Render(c.Message))
 	}
-	return clip(strings.Join(lines, "\n"), w, h)
+	return lines
 }
 
 func row(labelW int, label, value string) string {
