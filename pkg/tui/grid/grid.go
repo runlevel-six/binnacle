@@ -8,7 +8,14 @@
 //	width 180-259    Wide       3 columns
 //	width 260+       Ultra      4 columns
 //
-// Three optional pane interfaces bend the arrangement.
+// The column count sets how many tiles a row holds, not how wide they are. Cells
+// are divided between the columns of a row in proportion to what the panes in them
+// say their content can use ([tui.ContentWidthPane]), and rows are trimmed to what
+// their panes say they can fill ([tui.ContentHeightPane]) with the surplus going to
+// the rows that never say. A grid of panes that declare neither divides evenly, as
+// this did before either existed.
+//
+// Three optional pane interfaces bend the arrangement itself.
 // A [tui.FixedHeightPane] is lifted to a dedicated row above the grid, sized to
 // exactly what it asks for. A [tui.FixedSizePane] additionally constrains its
 // width, and adjacent ones are packed onto a shared row. A
@@ -191,9 +198,11 @@ func rowSpanOf(p tui.Pane, rows, cols int) int {
 
 // placement is one pane's slot on the two-dimensional grid. col is -1 until a
 // column is assigned; a placement that never gets one is treated as hidden.
+// colEnd is one past the last column the tile occupies once it has grown into any
+// free columns to its right, so it is colSpan or more.
 type placement struct {
 	pane             tui.Pane
-	row, col         int
+	row, col, colEnd int
 	colSpan, rowSpan int
 }
 
@@ -507,6 +516,38 @@ func Compute(o Options) Layout {
 		}
 	}
 
+	// Grow tiles rightwards into any column that stays free across every row they
+	// cover, in (row, column) order so the result is deterministic.
+	//
+	// One rule doing three jobs: it absorbs a column no pane could be placed in, it
+	// makes a lone tile span the full grid width, and it closes the slack left when a
+	// wide pane did not fit — at three columns, two single-column tiles plus a
+	// two-column pane cannot tile evenly, and the alternative is a column-wide hole.
+	order2D := make([]int, 0, len(placements))
+	for i, pl := range placements {
+		if pl.col >= 0 {
+			order2D = append(order2D, i)
+		}
+	}
+	sort.SliceStable(order2D, func(a, b int) bool {
+		pa, pb := placements[order2D[a]], placements[order2D[b]]
+		if pa.row != pb.row {
+			return pa.row < pb.row
+		}
+		return pa.col < pb.col
+	})
+	for _, i := range order2D {
+		pl := &placements[i]
+		pl.colEnd = pl.col + pl.colSpan
+		for pl.colEnd < cols && cellsFree(occupied, pl.row, pl.rowSpan, pl.colEnd, 1) {
+			markCells(occupied, pl.row, pl.rowSpan, pl.colEnd, 1)
+			pl.colEnd++
+		}
+	}
+
+	// Column widths, per band, from what the panes say they can use.
+	colX, colW := bandWidths(placements, bandOf(placements, rowCount), rowCount, cols, width)
+
 	// Per-row weights: the heaviest pane covering the row. A pane spanning rows
 	// counts its share per row, so it neither dominates every row it touches nor
 	// disappears from the ones after its first.
@@ -536,6 +577,9 @@ func Compute(o Options) Layout {
 	if used < gridBodyH && len(rowHeights) > 0 {
 		rowHeights[len(rowHeights)-1] += gridBodyH - used
 	}
+
+	// Hand the height nobody can use to the rows that can.
+	capRowHeights(rowHeights, rowWeights, placements, colW, stackUnders)
 
 	// Emit tiles. Fixed-height panes claim the topmost rows.
 	var tiles []Tile
@@ -575,48 +619,14 @@ func Compute(o Options) Layout {
 		}
 	}
 
-	// Emit in (row, column) order, so growing a tile into a hole is deterministic.
-	order2D := make([]int, 0, len(placements))
-	for i, pl := range placements {
-		if pl.col >= 0 {
-			order2D = append(order2D, i)
-		}
-	}
-	sort.SliceStable(order2D, func(a, b int) bool {
-		pa, pb := placements[order2D[a]], placements[order2D[b]]
-		if pa.row != pb.row {
-			return pa.row < pb.row
-		}
-		return pa.col < pb.col
-	})
-
-	colW := width / cols
+	// Emit in the same (row, column) order the growth pass used.
 	for _, i := range order2D {
 		pl := placements[i]
-		x := pl.col * colW
-
-		// Grow rightwards into any column that stays free across every row this
-		// tile covers. One rule doing three jobs: it absorbs the integer-division
-		// remainder so rounding cannot leave a seam at the right edge, it makes a
-		// lone tile span the full grid width, and it closes the slack left when a
-		// wide pane did not fit — at three columns, two single-column tiles plus a
-		// two-column pane cannot tile evenly, and the alternative is a
-		// column-wide hole.
-		end := pl.col + pl.colSpan
-		for end < cols && cellsFree(occupied, pl.row, pl.rowSpan, end, 1) {
-			markCells(occupied, pl.row, pl.rowSpan, end, 1)
-			end++
-		}
-		w := (end - pl.col) * colW
-		if end == cols {
-			w = width - x
-		}
-
 		tiles = append(tiles, Tile{
 			PaneID:  pl.pane.ID(),
-			X:       x,
+			X:       colX[pl.row][pl.col],
 			Y:       rowY[pl.row],
-			W:       w,
+			W:       tileWidth(pl, colW),
 			H:       rowY[pl.row+pl.rowSpan] - rowY[pl.row],
 			Focused: pl.pane.ID() == o.FocusedID,
 		})
@@ -679,6 +689,291 @@ func Compute(o Options) Layout {
 		Hidden:     hidden,
 		Order:      order,
 	}
+}
+
+// appetiteOf is the tile width a pane says its content can use, chrome included.
+// Zero means the pane did not say — see [tui.ContentWidthPane].
+func appetiteOf(p tui.Pane) int {
+	cw, ok := p.(tui.ContentWidthPane)
+	if !ok {
+		return 0
+	}
+	if w := cw.ContentWidth(); w > 0 {
+		return w + tui.PaneChromeH
+	}
+	return 0
+}
+
+// bandOf groups rows into bands: maximal runs of rows joined by a tile spanning
+// them. The returned slice maps a row to its band.
+//
+// Widths are decided per band rather than once for the whole grid, because the
+// rows want different things and only one of them can be right. Machines & Hosts
+// beside Nodes is a row of tables that want 128 and 92 columns; the row beneath it
+// holds subsystem frames that want 150 and 57. Sizing both from one set of column
+// boundaries starves whichever row did not choose them — and choosing them evenly,
+// as this used to, starves both.
+//
+// Per row is not available either: a tile spanning rows has one width, so the rows
+// it covers must agree on the boundaries it sits between. A band is exactly the set
+// of rows that have to agree, and no more of them than that.
+func bandOf(placements []placement, rowCount int) []int {
+	band := make([]int, rowCount)
+	id := 0
+	for r := 1; r < rowCount; r++ {
+		joined := false
+		for _, pl := range placements {
+			if pl.col >= 0 && pl.row < r && pl.row+pl.rowSpan > r {
+				joined = true
+				break
+			}
+		}
+		if !joined {
+			id++
+		}
+		band[r] = id
+	}
+	return band
+}
+
+// bandWidths returns each row's column offsets and column widths, sized band by
+// band. Rows in the same band share one vector, which is what keeps a
+// row-spanning tile a single rectangle.
+func bandWidths(placements []placement, band []int, rowCount, cols, width int) (colX, colW [][]int) {
+	colX, colW = make([][]int, rowCount), make([][]int, rowCount)
+	if rowCount == 0 || cols <= 0 {
+		return colX, colW
+	}
+
+	for b := 0; b <= band[rowCount-1]; b++ {
+		appetite, floor := make([]int, cols), make([]int, cols)
+		covered := make([]bool, cols)
+		for _, pl := range placements {
+			if pl.col < 0 || band[pl.row] != b {
+				continue
+			}
+			// A tile spanning columns spreads its appetite across them, so a wide
+			// pane's want is compared against the others per column rather than
+			// counted whole in each.
+			span := max(pl.colEnd-pl.col, 1)
+			want := ceilDiv(appetiteOf(pl.pane), span)
+			least := ceilDiv(pl.pane.MinWidth(), span)
+			for c := pl.col; c < pl.colEnd && c < cols; c++ {
+				covered[c] = true
+				appetite[c] = max(appetite[c], want)
+				floor[c] = max(floor[c], least)
+			}
+		}
+
+		w := divideWidth(width, appetite, floor, covered)
+		x, run := make([]int, cols), 0
+		for c := range cols {
+			x[c] = run
+			run += w[c]
+		}
+		for r := range rowCount {
+			if band[r] == b {
+				colX[r], colW[r] = x, w
+			}
+		}
+	}
+	return colX, colW
+}
+
+// divideWidth splits a band's cells between its columns in proportion to what the
+// panes in them can use.
+//
+// A column whose panes did not declare an appetite is given the band's average.
+// That is what makes this degrade to the even division it replaced: a band where
+// nobody declares anything has one appetite repeated, and proportional shares of
+// equal appetites are equal shares.
+//
+// Slack is spread proportionally rather than capped at each column's appetite. A
+// table is not harmed by a wider tile — it centers in the padding it already
+// computes — and the alternative is a seam of dead screen between frames.
+func divideWidth(total int, appetite, floor []int, covered []bool) []int {
+	w := make([]int, len(appetite))
+
+	// The average is taken over declared columns only, so an undeclared column
+	// cannot drag down the mean it is about to be measured against.
+	sum, declared := 0, 0
+	for c := range appetite {
+		if covered[c] && appetite[c] > 0 {
+			sum += appetite[c]
+			declared++
+		}
+	}
+	fallback := 1
+	if declared > 0 {
+		fallback = max(sum/declared, 1)
+	}
+
+	wants, totalWant := make([]int, len(appetite)), 0
+	for c := range appetite {
+		switch {
+		case !covered[c]:
+			// A column no tile reaches is given nothing rather than a share to
+			// waste; the tiles beside it close over the gap.
+			continue
+		case appetite[c] > 0:
+			wants[c] = appetite[c]
+		default:
+			wants[c] = fallback
+		}
+		totalWant += wants[c]
+	}
+	if totalWant <= 0 {
+		return w
+	}
+
+	used, last := 0, -1
+	for c := range wants {
+		if wants[c] <= 0 {
+			continue
+		}
+		w[c] = total * wants[c] / totalWant
+		used += w[c]
+		last = c
+	}
+	// The rightmost occupied column absorbs the rounding remainder, so the band
+	// reaches the right edge exactly.
+	if last >= 0 && used < total {
+		w[last] += total - used
+	}
+	liftToFloors(w, floor, covered)
+	return w
+}
+
+// liftToFloors moves cells from the columns with the most to spare into any column
+// below the narrowest width its panes can render in.
+//
+// Best effort by construction: when a band cannot fit even the floors there is
+// nothing left to take, and the columns stay short — which the panes answer by
+// dropping columns of their own. Honoring a floor by overrunning the terminal is
+// not an improvement on that.
+func liftToFloors(w, floor []int, covered []bool) {
+	for {
+		need, from := -1, -1
+		for c := range w {
+			if covered[c] && w[c] < floor[c] && (need < 0 || floor[c]-w[c] > floor[need]-w[need]) {
+				need = c
+			}
+		}
+		if need < 0 {
+			return
+		}
+		for c := range w {
+			if w[c]-floor[c] > 0 && (from < 0 || w[c]-floor[c] > w[from]-floor[from]) {
+				from = c
+			}
+		}
+		if from < 0 {
+			return
+		}
+		w[from]--
+		w[need]++
+	}
+}
+
+// capRowHeights trims rows whose panes have all said how much height they can use
+// and gives what they gave up to the rows that never say.
+//
+// The weights decide proportions; this decides whether a proportion is worth
+// honoring. Measured on a 104-row terminal: the bottom row held 30 lines to show 13
+// lines of Cilium, MetalLB and OVN state, while Machines & Hosts two rows above it
+// hid three machines behind a "+ 3 more". No weight fixes that, because the right
+// proportion depends on how much each subsystem currently has to say — which the
+// panes know and the grid does not.
+//
+// A row is trimmed only when every tile covering it declares a ceiling: one pane
+// that can still use height is reason enough to leave the row alone. And nothing is
+// trimmed when no row would take the surplus, since shortening the grid to leave the
+// bottom of the terminal blank helps nobody.
+func capRowHeights(rowHeights, rowWeights []int, placements []placement,
+	colW [][]int, stackUnders map[string][]tui.Pane) {
+	ceiling := make([]int, len(rowHeights))
+	capped := make([]bool, len(rowHeights))
+	for r := range capped {
+		capped[r] = true
+	}
+
+	for _, pl := range placements {
+		if pl.col < 0 {
+			continue
+		}
+		h := 0
+		// A tile about to be shared with a stacked partner does not render at the
+		// size measured here, so its ceiling would describe the wrong rectangle.
+		if _, shared := stackUnders[pl.pane.ID()]; !shared {
+			if ch, ok := pl.pane.(tui.ContentHeightPane); ok {
+				bodyW := max(tileWidth(pl, colW)-tui.PaneChromeH, 1)
+				if v := ch.ContentHeight(bodyW); v > 0 {
+					// A tile spanning rows spends its ceiling across them, the same
+					// way its weight is shared out.
+					h = ceilDiv(v+tui.PaneChromeV, pl.rowSpan)
+				}
+			}
+		}
+		for rr := pl.row; rr < pl.row+pl.rowSpan && rr < len(rowHeights); rr++ {
+			if h <= 0 {
+				capped[rr] = false
+				continue
+			}
+			ceiling[rr] = max(ceiling[rr], h)
+		}
+	}
+
+	surplus, freeWeight := 0, 0
+	for r := range rowHeights {
+		if !capped[r] {
+			freeWeight += max(rowWeights[r], 1)
+			continue
+		}
+		if ceiling[r] > 0 && rowHeights[r] > ceiling[r] {
+			surplus += rowHeights[r] - ceiling[r]
+		}
+	}
+	if surplus <= 0 || freeWeight <= 0 {
+		return
+	}
+
+	for r := range rowHeights {
+		if capped[r] && ceiling[r] > 0 && rowHeights[r] > ceiling[r] {
+			rowHeights[r] = ceiling[r]
+		}
+	}
+	given, last := 0, -1
+	for r := range rowHeights {
+		if capped[r] {
+			continue
+		}
+		add := surplus * max(rowWeights[r], 1) / freeWeight
+		rowHeights[r] += add
+		given += add
+		last = r
+	}
+	if last >= 0 && given < surplus {
+		rowHeights[last] += surplus - given
+	}
+}
+
+// tileWidth sums the widths of the columns a tile occupies.
+func tileWidth(pl placement, colW [][]int) int {
+	if pl.row < 0 || pl.row >= len(colW) {
+		return 0
+	}
+	total := 0
+	for c := pl.col; c < pl.colEnd && c < len(colW[pl.row]); c++ {
+		total += colW[pl.row][c]
+	}
+	return total
+}
+
+func ceilDiv(n, d int) int {
+	if n <= 0 || d <= 0 {
+		return 0
+	}
+	return (n + d - 1) / d
 }
 
 func containsID(ids []string, target string) bool {

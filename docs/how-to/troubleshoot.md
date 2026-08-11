@@ -51,7 +51,8 @@ do not run that" and "it did not answer".
 
 The pane has more rows than the terminal gave it. Press `z` to zoom the focused pane
 to the whole screen — that is what zoom is for, and on a large fleet it is the
-difference between 25 machines and all of them.
+difference between 25 machines and all of them. A zoomed table wide enough to fit
+twice over flows its rows into columns rather than hiding them.
 
 `[` and `]` change the column count, which trades width for height. `\` returns to
 automatic.

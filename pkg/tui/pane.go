@@ -6,10 +6,18 @@
 // whenever the store reports an update, so a pane is a pure function of
 // (snapshot, size, focus).
 //
-// Three optional interfaces let a pane influence where the layout puts it —
-// [FixedHeightPane], [FixedSizePane] and [StackedUnderPane]. A pane that
-// implements none of them is placed in the ordinary grid.
+// Optional interfaces let a pane influence where the layout puts it —
+// [FixedHeightPane], [FixedSizePane] and [StackedUnderPane] — and how much of
+// the space it is given it can use: [ContentWidthPane] and [ContentHeightPane].
+// A pane that implements none of them is placed in the ordinary grid and given
+// an average share of it.
 package tui
+
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Chrome dimensions a pane's outer tile loses to the surrounding frame.
 //
@@ -22,6 +30,20 @@ const (
 	PaneChromeH = 4
 	PaneChromeV = 2
 )
+
+// WidestLine measures the widest of a set of composed body lines, in display
+// cells and ignoring trailing padding.
+//
+// The measurement a hand-composed pane needs for [ContentWidthPane], as
+// [table.AppetiteWidth] is the one a table-driven pane needs. Styling is measured
+// through lipgloss, so escape sequences do not count toward the width.
+func WidestLine(lines []string) int {
+	out := 0
+	for _, ln := range lines {
+		out = max(out, lipgloss.Width(strings.TrimRight(ln, " ")))
+	}
+	return out
+}
 
 // Priority controls which panes stay visible as the terminal narrows. Lower
 // numeric values are higher priority and are placed first.
@@ -97,7 +119,7 @@ type Pane interface {
 // in twenty columns. A table of pods or events does not: at a quarter of a wide
 // terminal, Pod Health renders three different `rook-ceph/rook-…` rows that a
 // reader cannot tell apart, and Events truncates every object name to
-// `KubeadmControlPlane/underclou`. Dividing the width equally gives the status
+// `KubeadmControlPlane/demo-contr`. Dividing the width equally gives the status
 // blocks room they cannot use and starves the tables that need it.
 //
 // A pane declares how many columns it wants and the packer places it; the count
@@ -157,6 +179,64 @@ type TallPane interface {
 	// RowSpan is how many grid rows this pane wants. Values below 1 are treated
 	// as 1, and anything above the available rows is clamped.
 	RowSpan() int
+}
+
+// ContentWidthPane is implemented by panes that can say how wide their content
+// wants to be, so the grid can divide width by appetite instead of evenly.
+//
+// An even division is the wrong answer whenever the panes in a row are not
+// equally hungry, which is always. Measured on a 395-column terminal: four
+// quarters of 99 columns gave Machines & Hosts 33 fewer than its rows needed, so
+// every MACHINE cell truncated to `demo-workers-` and the fleet became
+// unreadable — while the Cloud frame beside it, whose content is 57 columns wide,
+// sat in the same 99 and left 42 of them blank. Neither pane can fix that alone;
+// only the layout sees both.
+//
+// This is the horizontal half of [ContentHeightPane], and the two say different
+// things on purpose. Width is a want: a table asks for the space its widest cells
+// need and reads correctly with more or with less. Height is a ceiling: a pane
+// with eight lines of content cannot use a ninth.
+//
+// The return value is a body width, net of [PaneChromeH], as [Pane.Render]
+// receives it; the layout adds the chrome back. Report what showing *everything*
+// would take — the full column set rather than the reduced one a narrow tile
+// would fall back to — since that is the number the layout needs in order to
+// decide whether the fallback is necessary at all. Zero or less means "no
+// preference", and such a pane is given an average share of its row.
+type ContentWidthPane interface {
+	Pane
+	ContentWidth() int
+}
+
+// ContentHeightPane is implemented by grid panes whose content has a ceiling:
+// a height past which the pane can only add blank lines.
+//
+// [Pane.HeightWeight] cannot express this. Weights are relative and
+// content-blind, so they divide a terminal in fixed proportions however much
+// each row actually has to say. Measured on a 104-row terminal: the bottom row
+// took 30 lines to show 13 lines of Cilium, MetalLB and OVN state, while
+// Machines & Hosts hid three machines behind a `+ 3 more` two rows above it. No
+// weight fixes that, because the right proportion depends on data neither the
+// weights nor the grid can see.
+//
+// Implement it where the content is defined by the subsystem — a Raft quorum has
+// three members, a Cilium status has eight lines — and leave it off where the
+// content scales with the cluster, which is every pane whose rows are machines,
+// nodes, pods or events. Those are exactly the panes a trimmed row should hand
+// its surplus to, and a pane claiming a ceiling it does not have would be
+// donating space it needed.
+//
+// bodyWidth is the width the pane will be rendered at, since content that wraps
+// or flows is taller in a narrower tile. The return value is a body height, net
+// of [PaneChromeV]. Zero or less means "no ceiling", the same as not
+// implementing this at all.
+//
+// Overstating the ceiling by a line is harmless — the pane keeps a blank line it
+// could have given away. Understating it clips content, so a pane whose height is
+// awkward to predict should round up.
+type ContentHeightPane interface {
+	Pane
+	ContentHeight(bodyWidth int) int
 }
 
 // FixedHeightPane is implemented by panes that want a dedicated row above the

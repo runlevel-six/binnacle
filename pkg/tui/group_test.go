@@ -147,3 +147,86 @@ func ids(ps []Pane) []string {
 	}
 	return out
 }
+
+// --- frame extents --------------------------------------------------------
+
+// measured is a pane that declares both content extents.
+type measured struct {
+	fake
+	width, height int
+}
+
+func (m measured) ContentWidth() int     { return m.width }
+func (m measured) ContentHeight(int) int { return m.height }
+
+// A frame that stacks its sections is as tall as all of them, plus a label each
+// and a separator between neighbors.
+func TestGroupPane_ContentHeightStacked(t *testing.T) {
+	g := NewGroupPane("cloud", "Cloud", []Pane{
+		measured{fake: fake{id: "a", title: "A"}, width: 40, height: 6},
+		measured{fake: fake{id: "b", title: "B"}, width: 30, height: 3},
+	})
+	// 1 label + 6, a separator, then 1 label + 3.
+	if got := g.ContentHeight(80); got != 12 {
+		t.Errorf("ContentHeight: got %d want 12", got)
+	}
+	if got := g.ContentWidth(); got != 40 {
+		t.Errorf("ContentWidth: got %d want 40 (the widest section)", got)
+	}
+}
+
+// A frame wide enough to flow is as tall as its taller column, not as tall as all
+// of its sections — and it asks for both columns at once.
+func TestGroupPane_ContentExtentsFlowed(t *testing.T) {
+	members := []Pane{
+		measured{fake: fake{id: "a", title: "A", weight: 1}, width: 40, height: 8},
+		measured{fake: fake{id: "b", title: "B", weight: 1}, width: 30, height: 2},
+		measured{fake: fake{id: "c", title: "C", weight: 1}, width: 20, height: 3},
+		measured{fake: fake{id: "d", title: "D", weight: 1}, width: 25, height: 3},
+	}
+	g := NewGroupPane("network", "Network", members)
+
+	// Equal weights split the four sections down the middle: [a b] and [c d].
+	// Left: 1+8, separator, 1+2 = 13. Right: 1+3, separator, 1+3 = 9.
+	if got := g.ContentHeight(200); got != 13 {
+		t.Errorf("flowed ContentHeight: got %d want 13 (the taller column)", got)
+	}
+	// Left column wants 40, right wants 25, plus the gutter between them.
+	if got := g.ContentWidth(); got != 40+innerGutter+25 {
+		t.Errorf("flowed ContentWidth: got %d want %d", got, 40+innerGutter+25)
+	}
+	// Too narrow to flow, so the sections stack and the frame is as tall as all
+	// four of them: four labels, four sections, three separators.
+	if got := g.ContentHeight(20); got != 23 {
+		t.Errorf("stacked ContentHeight: got %d want 23", got)
+	}
+}
+
+// A group of one renders its member bare, so it has the member's extents and no
+// label row of its own.
+func TestGroupPane_ContentExtentsOfOne(t *testing.T) {
+	g := NewGroupPane("cloud", "Cloud", []Pane{
+		measured{fake: fake{id: "a", title: "A"}, width: 40, height: 6},
+	})
+	if got := g.ContentHeight(80); got != 6 {
+		t.Errorf("ContentHeight: got %d want 6", got)
+	}
+	if got := g.ContentWidth(); got != 40 {
+		t.Errorf("ContentWidth: got %d want 40", got)
+	}
+}
+
+// One member that cannot say makes the frame's answer a guess, and the layout
+// handles "no answer" better than it handles a wrong one.
+func TestGroupPane_ContentExtentsNeedEveryMember(t *testing.T) {
+	g := NewGroupPane("cloud", "Cloud", []Pane{
+		measured{fake: fake{id: "a", title: "A"}, width: 40, height: 6},
+		fake{id: "b", title: "B"},
+	})
+	if got := g.ContentHeight(80); got != 0 {
+		t.Errorf("ContentHeight: got %d want 0", got)
+	}
+	if got := g.ContentWidth(); got != 0 {
+		t.Errorf("ContentWidth: got %d want 0", got)
+	}
+}

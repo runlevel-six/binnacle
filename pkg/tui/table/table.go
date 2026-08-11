@@ -9,6 +9,11 @@
 // past that the leftover becomes edge padding, so a table in a very wide pane
 // stays readable instead of spreading one column across the screen.
 //
+// Height is negotiated too, but only in one direction: rows that do not fit are
+// cut and counted. The exception is a pane wide enough to hold the table twice
+// over, where the rows are dealt into side-by-side groups instead of being
+// discarded — see [FlowGroups].
+//
 // Panes that draw several tables and want them visually aligned should compute
 // a single left pad with [PaneLeftPad] over each table's [NaturalRowWidth],
 // then call [LayoutInner] per table rather than [Layout]. [Table.Render] does
@@ -44,6 +49,11 @@ const (
 	// than drifting toward the middle of a very wide pane.
 	EdgePadCap = 4
 
+	// FlowGutter is the blank channel between two side-by-side row groups. Wider
+	// than [MinGap], because the boundary between two groups has to read more
+	// strongly than the boundary between two columns of one.
+	FlowGutter = 4
+
 	// FixedPaneVPad is the number of body lines a fixed-height pane reserves
 	// for vertical padding, one above its content and one below. Panes in the
 	// ordinary grid get the same effect for free whenever the layout hands
@@ -66,6 +76,11 @@ type Column struct {
 	Width int
 	// Stretch marks this column as the one that absorbs horizontal slack.
 	Stretch bool
+	// Transient marks a column whose content is written by the situation rather
+	// than by the schema: a Metal3 error, the list of nodes still behind, a
+	// Kubernetes message. It is excluded from [AppetiteWidth] — see there — and
+	// has no effect on rendering.
+	Transient bool
 	// Style is an optional default style for the column's cells. It is
 	// overridden by a row style, which is in turn overridden by a cell style.
 	Style lipgloss.Style
@@ -92,16 +107,52 @@ type Table struct {
 // Render draws the table clipped to width x height, including a header row.
 //
 // Rows that do not fit are replaced by a trailing "+ N more" line, so a
-// truncated table always says so rather than silently ending early. Returns
-// the empty string when either dimension is non-positive.
+// truncated table always says so rather than silently ending early. When the
+// rows overflow the height and the pane is wide enough to hold the table more
+// than once, they are flowed into side-by-side groups instead — see [FlowGroups].
+// Returns the empty string when either dimension is non-positive.
 func (t Table) Render(width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
 
+	groups := FlowGroups(t.Cols, t.Rows, width, height)
+	if groups > 1 {
+		return t.renderFlowed(width, height, groups)
+	}
+	return t.renderGroup(t.Rows, 0, t.layoutFor(width), width, height, 0)
+}
+
+// rowLayout is one table's settled horizontal geometry: per-column widths, the
+// gaps between them, and the indent every line carries.
+type rowLayout struct {
+	widths, gaps []int
+	leftPad      int
+}
+
+// layoutFor sizes the columns from the whole table's rows at the given width, so
+// that a group drawing a slice of the rows still places its columns where the
+// other groups place theirs.
+func (t Table) layoutFor(width int) rowLayout {
 	widths, gaps, leftPad := Layout(t.Cols, t.Rows, width)
+	return rowLayout{widths: widths, gaps: gaps, leftPad: leftPad}
+}
+
+// renderGroup draws rows into one column group of the given size.
+//
+// at is the index the first row has in the whole table, so a flowed group's
+// styles line up with the rows it is actually drawing. extra is the number of rows
+// no group will reach at all, which only the last group can know and only it
+// reports: a "+ N more" that counted just this group's leftovers would understate
+// what the reader is missing.
+func (t Table) renderGroup(rows [][]string, at int, lay rowLayout, width, height, extra int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+
+	widths, gaps := lay.widths, lay.gaps
 	var sb strings.Builder
-	pad := strings.Repeat(" ", leftPad)
+	pad := strings.Repeat(" ", lay.leftPad)
 
 	sb.WriteString(pad)
 	sb.WriteString(RenderRow(t.Cols, widths, gaps, Headers(t.Cols), tui.StyleHeader, true))
@@ -112,32 +163,28 @@ func (t Table) Render(width, height int) string {
 		return clip(sb.String(), width, height)
 	}
 
-	maxRows := dataLines
-	overflow := false
-	if len(t.Rows) > maxRows {
-		maxRows-- // reserve a line for the "+ N more" footer
-		if maxRows < 0 {
-			maxRows = 0
-		}
-		overflow = true
+	maxRows, hidden := dataLines, 0
+	if len(rows) > maxRows || extra > 0 {
+		maxRows = max(dataLines-1, 0) // the footer costs a line of its own
+		hidden = extra + max(len(rows)-maxRows, 0)
 	}
 
-	for i := 0; i < maxRows && i < len(t.Rows); i++ {
+	for i := 0; i < maxRows && i < len(rows); i++ {
 		var rs lipgloss.Style
-		if t.RowStyles != nil && i < len(t.RowStyles) {
-			rs = t.RowStyles[i]
+		if t.RowStyles != nil && at+i < len(t.RowStyles) {
+			rs = t.RowStyles[at+i]
 		}
 		var cs []lipgloss.Style
-		if t.CellStyles != nil && i < len(t.CellStyles) {
-			cs = t.CellStyles[i]
+		if t.CellStyles != nil && at+i < len(t.CellStyles) {
+			cs = t.CellStyles[at+i]
 		}
 		sb.WriteString(pad)
-		sb.WriteString(RenderRowCells(t.Cols, widths, gaps, t.Rows[i], rs, cs, false))
+		sb.WriteString(RenderRowCells(t.Cols, widths, gaps, rows[i], rs, cs, false))
 		sb.WriteByte('\n')
 	}
-	if overflow {
+	if hidden > 0 {
 		sb.WriteString(pad)
-		sb.WriteString(tui.StyleMuted.Render(fmt.Sprintf("+ %d more", len(t.Rows)-maxRows)))
+		sb.WriteString(tui.StyleMuted.Render(fmt.Sprintf("+ %d more", hidden)))
 		sb.WriteByte('\n')
 	}
 
@@ -147,6 +194,106 @@ func (t Table) Render(width, height int) string {
 	// overrun. Callers size their layout from this promise, so it has to hold for
 	// every input rather than only reasonable ones.
 	return clip(strings.TrimRight(sb.String(), "\n"), width, height)
+}
+
+// renderFlowed lays the rows out in groups side by side, filling each group top to
+// bottom before starting the next.
+//
+// Column-major rather than row-major because the rows arrive in an order that
+// means something — machines in flight are floated to the top of the fleet — and
+// dealing them across the groups like cards would scatter the first ten rows over
+// the whole pane. Filling downwards keeps "the top of the list" in the top left,
+// where it was when the table had one column.
+func (t Table) renderFlowed(width, height, groups int) string {
+	groupW := (width - FlowGutter*(groups-1)) / groups
+	perGroup := max(height-1, 1) // every group repeats the header
+
+	// One geometry, sized to the narrowest group, shared by all of them. Letting
+	// each group size its own columns would let the last one — which absorbs the
+	// rounding remainder and so is a cell or two wider — grow its stretch column
+	// past its neighbors', and the cells that should read as one table would no
+	// longer line up.
+	lay := t.layoutFor(groupW)
+
+	// Rows past the last group are nobody's to draw, so the last group reports
+	// them.
+	beyond := max(len(t.Rows)-groups*perGroup, 0)
+
+	blocks := make([][]string, 0, groups)
+	widest := make([]int, 0, groups)
+	for g := range groups {
+		at := g * perGroup
+		if at >= len(t.Rows) {
+			break
+		}
+		end := min(at+perGroup, len(t.Rows))
+		extra, w := 0, groupW
+		if g == groups-1 {
+			extra = beyond
+			// The final group absorbs the rounding remainder, so the flowed table
+			// occupies exactly the width it was given.
+			w = width - g*(groupW+FlowGutter)
+		}
+		blocks = append(blocks, strings.Split(t.renderGroup(t.Rows[at:end], at, lay, w, height, extra), "\n"))
+		widest = append(widest, w)
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+
+	lines := make([]string, height)
+	for y := range height {
+		var sb strings.Builder
+		for g, b := range blocks {
+			if g > 0 {
+				sb.WriteString(strings.Repeat(" ", FlowGutter))
+			}
+			var ln string
+			if y < len(b) {
+				ln = b[y]
+			}
+			// Pad to the group's own width: a short line in one group must not pull
+			// the next group's columns leftwards.
+			sb.WriteString(PadOrTrunc(ln, widest[g]))
+		}
+		lines[y] = sb.String()
+	}
+	return clip(strings.Join(lines, "\n"), width, height)
+}
+
+// FlowGroups reports how many side-by-side groups the rows should be dealt into at
+// this size. One means an ordinary single-column table.
+//
+// Two conditions, and both are necessary. The rows have to overflow the height,
+// because splitting a table that already fits buys nothing and costs the reader a
+// second place to look. And the pane has to be wide enough for another whole
+// table — [NaturalRowWidth] plus a gutter — because a group narrower than the
+// content shrinks columns, which is how a wide pane full of truncated cells gets
+// made in the first place.
+//
+// This is what a zoomed pane spends its width on. A pane at natural width has
+// nothing left to reveal horizontally: every cell is already whole, and the
+// remaining space can only buy rows.
+func FlowGroups(cols []Column, rows [][]string, width, height int) int {
+	natural := NaturalRowWidth(cols, rows)
+	if natural <= 0 || height < 2 {
+		return 1
+	}
+	perGroup := height - 1 // the header costs each group a line
+	if len(rows) <= perGroup {
+		return 1
+	}
+
+	byWidth := (width + FlowGutter) / (natural + FlowGutter)
+	byRows := ceilDiv(len(rows), perGroup)
+	return max(min(byWidth, byRows), 1)
+}
+
+func ceilDiv(n, d int) int {
+	if n <= 0 || d <= 0 {
+		return 0
+	}
+	return (n + d - 1) / d
 }
 
 // clip trims a rendered block to exactly width x height.
@@ -270,23 +417,73 @@ func LayoutInner(cols []Column, rows [][]string, innerWidth int) (widths, gaps [
 //
 // Use it to size a pane-wide left pad before committing to a layout.
 func NaturalRowWidth(cols []Column, rows [][]string) int {
-	total := 0
-	for i, c := range cols {
-		w := c.Width
-		if w <= 0 {
-			w = lipgloss.Width(c.Header)
-			for _, row := range rows {
-				if i < len(row) && lipgloss.Width(row[i]) > w {
-					w = lipgloss.Width(row[i])
-				}
-			}
-		}
-		total += w
-	}
+	total := sum(naturalColWidths(cols, rows))
 	if len(cols) > 1 {
 		total += MinGap * (len(cols) - 1)
 	}
 	return total
+}
+
+// naturalColWidths is each column's pinned width, or the width of its widest cell.
+func naturalColWidths(cols []Column, rows [][]string) []int {
+	out := make([]int, len(cols))
+	for i, c := range cols {
+		if c.Width > 0 {
+			out[i] = c.Width
+			continue
+		}
+		out[i] = lipgloss.Width(c.Header)
+		for _, row := range rows {
+			if i < len(row) && lipgloss.Width(row[i]) > out[i] {
+				out[i] = lipgloss.Width(row[i])
+			}
+		}
+	}
+	return out
+}
+
+// StretchAppetiteCap is the most a stretch column contributes to
+// [AppetiteWidth], however long its content is.
+//
+// A stretch column is the one a table gives up width on first, so its content is
+// by declaration the content that tolerates truncation. Charging it in full would
+// let one pane's appetite swallow its row. Sixty is about a readable clause, and a
+// wider tile still spends its slack on the column, so nothing is lost by asking
+// for less of it.
+const StretchAppetiteCap = 60
+
+// AppetiteWidth is the width at which this table shows everything a reader
+// identifies a row by.
+//
+// Each column's natural width, except that a [Column.Transient] one is charged
+// only its header and no column is charged more than [StretchAppetiteCap]. This is
+// the number a pane reports to [tui.ContentWidthPane], as distinct from
+// [NaturalRowWidth], which is what the table would occupy if nothing were ever
+// truncated.
+//
+// Excluding transient content is what makes a layout sized from this hold still.
+// Measured on a rolling fleet: charging Machines & Hosts for its HOST STATE cell
+// moved the pane's appetite by 37 cells the moment a host reported "deprovisioning
+// powered off" or a Metal3 error, so every tile boundary in that band slid sideways
+// on a twenty-second timer while the reader was trying to read a row. What a row is
+// *identified* by — its machine, its host, its node — has a length that changes when
+// the fleet changes and not otherwise, which is the only thing worth resizing a
+// screen for.
+//
+// It is the pane, not this function, that knows which of its columns is which: a
+// stretch column holds a disposable message in Machines & Hosts and the node's FQDN
+// in Nodes, and only one of those is worth width.
+func AppetiteWidth(cols []Column, rows [][]string) int {
+	widths := naturalColWidths(cols, rows)
+	for i, c := range cols {
+		header := max(lipgloss.Width(c.Header), 1)
+		if c.Transient {
+			widths[i] = header
+			continue
+		}
+		widths[i] = max(min(widths[i], StretchAppetiteCap), header)
+	}
+	return sum(widths) + MinGap*max(len(cols)-1, 0)
 }
 
 // PaneLeftPad returns a left pad shared by every table in one pane, so tables

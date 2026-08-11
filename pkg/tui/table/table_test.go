@@ -226,14 +226,126 @@ func TestTableRender_OverflowShowsMoreFooter(t *testing.T) {
 		rows[i] = []string{"node", "Ready"}
 	}
 	tbl := Table{Cols: cols("NAME", "STATUS"), Rows: rows}
-	// height 5 = header + 3 data rows + footer, so 7 rows are elided.
-	out := lines(tbl.Render(40, 5))
+	// Width 18 holds the table once and not twice, so the rows cannot flow and
+	// height 5 = header + 3 data rows + footer, eliding 7.
+	out := lines(tbl.Render(18, 5))
 	if len(out) != 5 {
 		t.Fatalf("lines: got %d want 5\n%q", len(out), out)
 	}
 	last := out[len(out)-1]
 	if !strings.Contains(last, "+ 7 more") {
 		t.Errorf("footer: got %q want to contain %q", last, "+ 7 more")
+	}
+}
+
+// --- row flow -------------------------------------------------------------
+
+func TestFlowGroups(t *testing.T) {
+	c := cols("NAME", "STATUS") // natural width 12: 4 + 2 + 6
+	rows := func(n int) [][]string {
+		out := make([][]string, n)
+		for i := range out {
+			out[i] = []string{"node", "Ready"}
+		}
+		return out
+	}
+
+	tests := []struct {
+		name          string
+		rows          int
+		width, height int
+		want          int
+	}{
+		{"rows fit, width to spare", 3, 200, 5, 1},
+		{"rows overflow, no width", 20, 18, 5, 1},
+		{"rows overflow, room for two", 20, 40, 5, 2},
+		{"rows overflow, room for four", 40, 64, 5, 4},
+		{"width for five, rows need two", 7, 80, 5, 2},
+		{"no rows", 0, 200, 20, 1},
+		{"no room for a header", 20, 200, 1, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FlowGroups(c, rows(tc.rows), tc.width, tc.height); got != tc.want {
+				t.Errorf("FlowGroups(%d rows, %dx%d): got %d want %d",
+					tc.rows, tc.width, tc.height, got, tc.want)
+			}
+		})
+	}
+}
+
+// Flowed groups fill downwards and then across, so the head of the list stays in
+// the top left where an unflowed table had it.
+func TestTableRender_FlowFillsColumnMajor(t *testing.T) {
+	rows := [][]string{{"n1", "Ready"}, {"n2", "Ready"}, {"n3", "Ready"}, {"n4", "Ready"}}
+	tbl := Table{Cols: cols("NAME", "STATUS"), Rows: rows}
+	// Height 3 = header + 2 rows per group; width 40 holds two groups.
+	out := lines(tbl.Render(40, 3))
+	if len(out) != 3 {
+		t.Fatalf("lines: got %d want 3\n%q", len(out), out)
+	}
+	if !strings.Contains(out[1], "n1") || !strings.Contains(out[1], "n3") {
+		t.Errorf("first data line should hold n1 and n3: %q", out[1])
+	}
+	if !strings.Contains(out[2], "n2") || !strings.Contains(out[2], "n4") {
+		t.Errorf("second data line should hold n2 and n4: %q", out[2])
+	}
+	if strings.Count(out[0], "NAME") != 2 {
+		t.Errorf("each group repeats the header: %q", out[0])
+	}
+}
+
+// Every group puts its columns at the same offsets, including the last one, which
+// is a cell or two wider because it absorbs the rounding remainder.
+func TestTableRender_FlowAlignsGroupColumns(t *testing.T) {
+	rows := make([][]string, 6)
+	for i := range rows {
+		rows[i] = []string{"node", "Ready"}
+	}
+	tbl := Table{Cols: cols("NAME", "STATUS"), Rows: rows}
+	out := lines(tbl.Render(41, 4)) // odd width, so the groups cannot be equal
+	header := out[0]
+	first := strings.Index(header, "STATUS")
+	second := strings.Index(header[first+1:], "STATUS") + first + 1
+	third := strings.Index(header, "NAME")
+	fourth := strings.Index(header[third+1:], "NAME") + third + 1
+	if second-first != fourth-third {
+		t.Errorf("group column offsets differ: NAME %d apart, STATUS %d apart\n%q",
+			fourth-third, second-first, header)
+	}
+}
+
+// The footer counts every row no group reached, not just the last group's
+// leftovers.
+func TestTableRender_FlowFooterCountsAllHiddenRows(t *testing.T) {
+	rows := make([][]string, 10)
+	for i := range rows {
+		rows[i] = []string{"node", "Ready"}
+	}
+	tbl := Table{Cols: cols("NAME", "STATUS"), Rows: rows}
+	// Two groups of 4 lines: 4 rows in the first, 3 plus a footer in the second.
+	out := lines(tbl.Render(40, 5))
+	last := out[len(out)-1]
+	if !strings.Contains(last, "+ 3 more") {
+		t.Errorf("footer: got %q want to contain %q", last, "+ 3 more")
+	}
+}
+
+// A flowed table still honors its rectangle exactly: same width on every line, no
+// trailing group left half-drawn.
+func TestTableRender_FlowFillsWidthExactly(t *testing.T) {
+	rows := make([][]string, 30)
+	for i := range rows {
+		rows[i] = []string{"node", "Ready"}
+	}
+	tbl := Table{Cols: cols("NAME", "STATUS"), Rows: rows}
+	for _, w := range []int{37, 40, 41, 63, 200} {
+		out := lines(tbl.Render(w, 6))
+		for i, ln := range out {
+			if got := lipgloss.Width(ln); got != w {
+				t.Errorf("render(%d,6) line %d: width %d want %d", w, i, got, w)
+			}
+		}
 	}
 }
 
@@ -443,5 +555,54 @@ func TestShortAge(t *testing.T) {
 		if got := ShortAge(tc.seconds); got != tc.want {
 			t.Errorf("ShortAge(%v): got %q want %q", tc.seconds, got, tc.want)
 		}
+	}
+}
+
+// --- appetite -------------------------------------------------------------
+
+func TestAppetiteWidth(t *testing.T) {
+	// A column whose content is written by the situation is charged its header, so
+	// a table's declared width does not move when the situation does.
+	cols := []Column{
+		{Header: "MACHINE"},
+		{Header: "HOST STATE", Stretch: true, Transient: true},
+	}
+	machine := "demo-workers-5d9c7-lm2vp"
+	settled := [][]string{{machine, "provisioned"}}
+	moving := [][]string{{machine,
+		"deprovisioning powered off Introspection timed out after 30m0s"}}
+
+	want := len(machine) + MinGap + len("HOST STATE")
+	if got := AppetiteWidth(cols, settled); got != want {
+		t.Errorf("settled: got %d want %d", got, want)
+	}
+	if got := AppetiteWidth(cols, moving); got != want {
+		t.Errorf("mid-rollout: got %d want %d — a transient cell moved the appetite", got, want)
+	}
+	// The full natural width still reports the truth, for the layout decisions that
+	// want it.
+	if NaturalRowWidth(cols, moving) <= NaturalRowWidth(cols, settled) {
+		t.Error("NaturalRowWidth should still grow with the content")
+	}
+}
+
+// A column carrying identity rather than commentary is charged in full, up to the
+// cap: a node's FQDN is what a reader picks the row out by.
+func TestAppetiteWidth_IdentityColumnsChargedInFull(t *testing.T) {
+	cols := []Column{{Header: "NODE", Stretch: true}, {Header: "STATUS"}}
+	fqdn := "compute-node-1.site-a.demo.example"
+	rows := [][]string{{fqdn, "Ready"}}
+	want := len(fqdn) + MinGap + len("STATUS")
+	if got := AppetiteWidth(cols, rows); got != want {
+		t.Errorf("got %d want %d", got, want)
+	}
+}
+
+// No column is charged more than the cap, however long its content.
+func TestAppetiteWidth_CapsAnyOneColumn(t *testing.T) {
+	cols := []Column{{Header: "POD", Stretch: true}}
+	rows := [][]string{{strings.Repeat("x", 400)}}
+	if got := AppetiteWidth(cols, rows); got != StretchAppetiteCap {
+		t.Errorf("got %d want %d", got, StretchAppetiteCap)
 	}
 }

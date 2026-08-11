@@ -39,7 +39,7 @@ func NewEvents(s *store.Store, targetVersion string) *EventsPane {
 			id: "events", title: "Events",
 			priority: tui.P1Important, minW: 46, minH: 6, weight: 7,
 			// Two columns: LATEST OBJECT is a Kind/name pair and truncates to
-			// "KubeadmControlPlane/underclou" at a quarter width, which names the
+			// "KubeadmControlPlane/demo-contr" at a quarter width, which names the
 			// kind and hides which object it was.
 			span: 2,
 		},
@@ -76,18 +76,40 @@ var (
 		{Header: "TYPE"},
 		{Header: "REASON"},
 		{Header: "OBJECT"},
-		{Header: "MESSAGE", Stretch: true},
+		{Header: "MESSAGE", Stretch: true, Transient: true},
 		{Header: "AGE"},
 	}
 )
 
+// sourceKey names the event stream this pane is reading: the management
+// cluster's during a rollout, the workload cluster's otherwise.
+func (p *EventsPane) sourceKey() (key, what string) {
+	if rollout.Active(p.store, p.targetVersion) {
+		return model.KeyMgmtEvents, "management events"
+	}
+	return model.KeyWorkloadEvents, "workload events"
+}
+
+// ContentWidth implements [tui.ContentWidthPane], measured in whichever mode the
+// pane is currently in — the two have different schemas, and the one being drawn
+// is the one whose columns have to fit.
+func (p *EventsPane) ContentWidth() int {
+	key, _ := p.sourceKey()
+	snap, ok := store.Get[model.Snapshot[model.Event]](p.store, key)
+	if !ok || len(snap.Items) == 0 {
+		return 0
+	}
+	if p.expanded {
+		cells, _ := eventRows(snap.Items)
+		return table.AppetiteWidth(eventCols, cells)
+	}
+	cells, _ := rollupRows(rollups(snap.Items))
+	return table.AppetiteWidth(rollupCols, cells)
+}
+
 // Render implements tui.Pane.
 func (p *EventsPane) Render(w, h int, _ bool) string {
-	key := model.KeyWorkloadEvents
-	what := "workload events"
-	if rollout.Active(p.store, p.targetVersion) {
-		key, what = model.KeyMgmtEvents, "management events"
-	}
+	key, what := p.sourceKey()
 
 	snap, body, ok := snapshotOf[model.Event](p.store, key, w, h, what)
 	if !ok {

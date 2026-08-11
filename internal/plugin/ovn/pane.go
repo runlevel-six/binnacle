@@ -45,7 +45,65 @@ var raftCols = []table.Column{
 	{Header: "TERM"},
 	{Header: "LEADER"},
 	{Header: "MEMBERS"},
-	{Header: "NOTE", Stretch: true},
+	{Header: "NOTE", Stretch: true, Transient: true},
+}
+
+// ContentWidth implements [tui.ContentWidthPane]: the Raft table, and not the
+// stale-member detail below it, which names whichever members are behind at the
+// moment and would resize the row as they came and went.
+func (p *pane) ContentWidth() int {
+	cells, _, _ := p.content()
+	if len(cells) == 0 {
+		return 0
+	}
+	return table.AppetiteWidth(raftCols, cells)
+}
+
+// ContentHeight implements [tui.ContentHeightPane]: a header, one row per OVN
+// database, and the detail line with its separator. Three databases is what OVN
+// has, whatever size the cluster underneath it is.
+//
+// Measured at the compact width too, since below the table's natural width this
+// pane draws the summary instead — a different shape, and a shorter one.
+func (p *pane) ContentHeight(bodyWidth int) int {
+	cells, _, detail := p.content()
+	if len(cells) == 0 {
+		return 0
+	}
+	if bodyWidth < compactWidth {
+		return len(Summary(p.state()))
+	}
+	h := len(cells) + 1
+	if detail != "" {
+		h += 2
+	}
+	return h
+}
+
+// compactWidth is the width below which the Raft table is replaced by the compact
+// summary: a mangled table carries less than a terse paragraph.
+const compactWidth = 64
+
+// state reads the OVN state, or a zero state when there is nothing to read.
+func (p *pane) state() State {
+	state, _ := store.Get[State](p.store, KeyState)
+	return state
+}
+
+// content builds the Raft rows and the stale-member detail, shared by Render and
+// the extent methods.
+func (p *pane) content() (cells [][]string, styles [][]lipgloss.Style, detail string) {
+	state, ok := store.Get[State](p.store, KeyState)
+	if !ok || state.Err != nil || state.Tier != kube.TierFull || len(state.Statuses) == 0 {
+		return nil, nil, ""
+	}
+	cells = make([][]string, 0, len(state.Statuses))
+	styles = make([][]lipgloss.Style, 0, len(state.Statuses))
+	for _, st := range state.Statuses {
+		cells = append(cells, rowFor(st))
+		styles = append(styles, stylesFor(st))
+	}
+	return cells, styles, staleDetail(state)
 }
 
 // Render implements tui.Pane.
@@ -66,19 +124,12 @@ func (p *pane) Render(w, h int, _ bool) string {
 
 	// Below the table's natural width the compact summary carries more than a
 	// mangled table would.
-	if w < 64 {
+	if w < compactWidth {
 		return clip(strings.Join(Summary(state), "\n"), w, h)
 	}
 
-	cells := make([][]string, 0, len(state.Statuses))
-	styles := make([][]lipgloss.Style, 0, len(state.Statuses))
-	for _, st := range state.Statuses {
-		cells = append(cells, rowFor(st))
-		styles = append(styles, stylesFor(st))
-	}
-
+	cells, styles, detail := p.content()
 	body := table.Table{Cols: raftCols, Rows: cells, CellStyles: styles}
-	detail := staleDetail(state)
 	if detail == "" || h < len(cells)+3 {
 		return body.Render(w, h)
 	}

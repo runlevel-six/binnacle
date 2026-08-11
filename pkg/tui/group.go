@@ -106,6 +106,104 @@ func (g *GroupPane) HeightWeight() int {
 	return max(out, 1) + max(len(g.members)-1, 0)
 }
 
+// ContentWidth implements [ContentWidthPane]: the width this frame's sections
+// want, laid out the way Render will lay them out.
+//
+// A flowing frame wants both of its inner columns at once, so its appetite is the
+// two columns' widths plus the gutter — asking for one column's worth would win it
+// a tile it then has to stack in. A frame whose sections stack wants the widest of
+// them, since they all render at the frame's full width.
+//
+// Unanimity is required: one member that cannot say how wide it wants to be makes
+// the whole frame's answer a guess, and a guess here is worse than no answer,
+// which the layout knows how to handle.
+func (g *GroupPane) ContentWidth() int {
+	widths := make([]int, len(g.members))
+	for i, m := range g.members {
+		cw, ok := m.(ContentWidthPane)
+		if !ok || cw.ContentWidth() <= 0 {
+			return 0
+		}
+		widths[i] = cw.ContentWidth()
+	}
+	if len(widths) == 0 {
+		return 0
+	}
+	if g.ColSpan() == 1 {
+		return maxOf(widths)
+	}
+	half := g.splitAt()
+	return maxOf(widths[:half]) + innerGutter + maxOf(widths[half:])
+}
+
+// ContentHeight implements [ContentHeightPane]: the height at which every section
+// has shown everything it has.
+//
+// It mirrors [GroupPane.Render] rather than approximating it — the same flow
+// decision at the same width, the same label row per section, the same separator
+// between them — because a ceiling derived from a different arrangement than the
+// one drawn is a ceiling that clips. A flowing frame is as tall as its taller
+// column, not as tall as all of its sections.
+//
+// The separator rows are counted even though Render drops them in a frame too
+// short to spare them. This is a ceiling: it describes the frame with room, and
+// the version without separators is shorter, which is a height it also fits in.
+func (g *GroupPane) ContentHeight(bodyWidth int) int {
+	if len(g.members) == 0 {
+		return 0
+	}
+	if len(g.members) == 1 {
+		// A group of one renders its member bare, with no label of its own.
+		ch, ok := g.members[0].(ContentHeightPane)
+		if !ok {
+			return 0
+		}
+		return ch.ContentHeight(bodyWidth)
+	}
+
+	if cols := g.flowCols(bodyWidth); cols == 2 {
+		half := g.splitAt()
+		leftW := (bodyWidth - innerGutter) / 2
+		left := g.stackHeight(g.members[:half], leftW)
+		right := g.stackHeight(g.members[half:], bodyWidth-innerGutter-leftW)
+		if left <= 0 || right <= 0 {
+			return 0
+		}
+		return max(left, right)
+	}
+	return g.stackHeight(g.members, bodyWidth)
+}
+
+// stackHeight is the height one column of stacked sections needs: a label row and
+// its member's content each, with a separator row between neighbors. Zero when any
+// member declines to declare a ceiling.
+func (g *GroupPane) stackHeight(members []Pane, w int) int {
+	total := 0
+	for i, m := range members {
+		ch, ok := m.(ContentHeightPane)
+		if !ok {
+			return 0
+		}
+		h := ch.ContentHeight(w)
+		if h <= 0 {
+			return 0
+		}
+		if i > 0 {
+			total++ // the separator row between sections
+		}
+		total += 1 + h // the section's label, then the section
+	}
+	return total
+}
+
+func maxOf(xs []int) int {
+	out := 0
+	for _, x := range xs {
+		out = max(out, x)
+	}
+	return out
+}
+
 // innerGutter is the blank column between a frame's flowed columns. One column,
 // because the sections already carry their own labels and a wider channel would
 // read as two frames that forgot their borders.

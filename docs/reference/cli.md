@@ -78,4 +78,7 @@ switching between clouds has already exported it.
 | `T` | Cycle themes. |
 
 `z` is the answer to "this table is truncating". On a large cluster a pane may show
-`+ 38 more`; zooming gives it every row the terminal has.
+`+ 38 more`; zooming gives it every row the terminal has, and its full width — so any
+cell the grid had to cut is whole again. If the rows still outrun the screen and the
+table is narrow enough for the pane to hold it twice, they flow into side-by-side
+columns, filling downwards and then across.

@@ -81,19 +81,14 @@ func nodeColumns(w int) ([]table.Column, []int) {
 	}
 }
 
-// Render implements tui.Pane.
-func (p *NodesPane) Render(w, h int, _ bool) string {
-	snap, body, ok := snapshotOf[model.Node](p.store, model.KeyWorkloadNodes, w, h, "nodes")
-	if !ok {
-		return body
-	}
-	if len(snap.Items) == 0 {
-		return table.Placeholder(w, h, "no nodes")
-	}
-
-	cells := make([][]string, 0, len(snap.Items))
-	styles := make([][]lipgloss.Style, 0, len(snap.Items))
-	for _, n := range snap.Items {
+// rows builds the node cells and their styles.
+//
+// Shared by Render and ContentWidth, so the pane's declared appetite comes from
+// the same cells it draws — see [MachinesPane.fleet].
+func (p *NodesPane) rows(items []model.Node) (cells [][]string, styles [][]lipgloss.Style) {
+	cells = make([][]string, 0, len(items))
+	styles = make([][]lipgloss.Style, 0, len(items))
+	for _, n := range items {
 		cells = append(cells, []string{
 			n.Name,
 			orDash(p.roles.DisplayName(n.Role)),
@@ -112,7 +107,32 @@ func (p *NodesPane) Render(w, h int, _ bool) string {
 			tui.StyleMuted,
 		})
 	}
+	return cells, styles
+}
 
+// ContentWidth implements [tui.ContentWidthPane], from the full column set: a
+// node's FQDN is the cell a reader identifies the row by, and it is the first
+// thing a narrow tile takes away.
+func (p *NodesPane) ContentWidth() int {
+	snap, ok := store.Get[model.Snapshot[model.Node]](p.store, model.KeyWorkloadNodes)
+	if !ok || len(snap.Items) == 0 {
+		return 0
+	}
+	cells, _ := p.rows(snap.Items)
+	return table.AppetiteWidth(nodeColsFull, cells)
+}
+
+// Render implements tui.Pane.
+func (p *NodesPane) Render(w, h int, _ bool) string {
+	snap, body, ok := snapshotOf[model.Node](p.store, model.KeyWorkloadNodes, w, h, "nodes")
+	if !ok {
+		return body
+	}
+	if len(snap.Items) == 0 {
+		return table.Placeholder(w, h, "no nodes")
+	}
+
+	cells, styles := p.rows(snap.Items)
 	cols, keep := nodeColumns(w)
 	t := table.Table{
 		Cols:       cols,

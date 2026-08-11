@@ -672,3 +672,230 @@ func TestRowSpan_ClampedOnAShortTerminal(t *testing.T) {
 		}
 	}
 }
+
+// --- content extents ------------------------------------------------------
+
+// hungry is a pane that says how wide its content wants to be.
+type hungry struct {
+	tui.Pane
+	want int
+}
+
+func (h hungry) ContentWidth() int { return h.want }
+
+// capped is a pane that says how much height it can use.
+type capped struct {
+	tui.Pane
+	ceiling int
+}
+
+func (c capped) ContentHeight(int) int { return c.ceiling }
+
+// spanning asks for rows, columns and a content width all on one type — the shape
+// a real pane has. A stub that wrapped another pane in an embedded tui.Pane would
+// hide its extents from the layout's type assertions, since embedding an interface
+// promotes only that interface's methods.
+type spanning struct {
+	stubPane
+	rows, cols, want int
+}
+
+func (s spanning) RowSpan() int      { return max(s.rows, 1) }
+func (s spanning) ColSpan() int      { return max(s.cols, 1) }
+func (s spanning) ContentWidth() int { return s.want }
+
+func tileByID(l Layout, id string) (Tile, bool) {
+	for _, t := range l.Tiles {
+		if t.PaneID == id {
+			return t, true
+		}
+	}
+	return Tile{}, false
+}
+
+// The fix this exists for: a row of unequally hungry panes is divided unequally.
+// Machines & Hosts wants 128 columns for its machine names; the Cloud frame beside
+// it wants 57. An even split truncated the first while padding the second.
+func TestContentWidth_ColumnsSizedByAppetite(t *testing.T) {
+	panes := []tui.Pane{
+		hungry{Pane: stubPane{id: "machines", prio: tui.P0Critical, weight: 1}, want: 124},
+		hungry{Pane: stubPane{id: "cloud", prio: tui.P1Important, weight: 1}, want: 56},
+	}
+	l := Compute(Options{Width: 240, Height: 40, Panes: panes, HeaderH: 3, OverrideCols: 2})
+
+	machines, ok := tileByID(l, "machines")
+	if !ok {
+		t.Fatal("machines was not placed")
+	}
+	cloud, ok := tileByID(l, "cloud")
+	if !ok {
+		t.Fatal("cloud was not placed")
+	}
+	if machines.W <= cloud.W {
+		t.Errorf("the hungrier pane should be wider: machines %d, cloud %d", machines.W, cloud.W)
+	}
+	if machines.W < 124 {
+		t.Errorf("machines got %d, less than the %d its content asked for", machines.W, 124)
+	}
+	if got := machines.W + cloud.W; got != 240 {
+		t.Errorf("tiles should fill the row: %d+%d = %d want 240", machines.W, cloud.W, got)
+	}
+	if machines.X != 0 || cloud.X != machines.W {
+		t.Errorf("tiles should be edge to edge: machines x=%d w=%d, cloud x=%d",
+			machines.X, machines.W, cloud.X)
+	}
+}
+
+// A pane that declares nothing is given the average of those that did, so it is
+// neither starved nor allowed to take a share it cannot use.
+func TestContentWidth_UndeclaredGetsTheAverage(t *testing.T) {
+	panes := []tui.Pane{
+		hungry{Pane: stubPane{id: "wide", prio: tui.P0Critical, weight: 1}, want: 140},
+		hungry{Pane: stubPane{id: "narrow", prio: tui.P1Important, weight: 1}, want: 60},
+		stubPane{id: "quiet", prio: tui.P2Useful, weight: 1},
+	}
+	l := Compute(Options{Width: 300, Height: 40, Panes: panes, HeaderH: 3, OverrideCols: 3})
+
+	wide, _ := tileByID(l, "wide")
+	narrow, _ := tileByID(l, "narrow")
+	quiet, _ := tileByID(l, "quiet")
+	if !(wide.W > quiet.W && quiet.W > narrow.W) {
+		t.Errorf("undeclared pane should land between the two declared: wide %d, quiet %d, narrow %d",
+			wide.W, quiet.W, narrow.W)
+	}
+}
+
+// A grid where nobody declares an appetite divides evenly, exactly as it did
+// before appetites existed.
+func TestContentWidth_NoDeclarationsDivideEvenly(t *testing.T) {
+	l := Compute(Options{Width: 240, Height: 40, Panes: ps(), HeaderH: 3, OverrideCols: 3})
+	for _, tile := range l.Tiles {
+		// A tile spanning columns, or one that grew into the free ones beside it,
+		// is a multiple of the even column width rather than one of them.
+		if tile.W%80 != 0 {
+			t.Errorf("%s: got width %d, not a multiple of an even third", tile.PaneID, tile.W)
+		}
+	}
+}
+
+// Rows joined by a row-spanning tile share their column boundaries, because the
+// spanning tile is one rectangle. Rows that are not joined do not, so the bottom
+// row of subsystem frames is sized for itself rather than for the fleet tables
+// above it.
+func TestContentWidth_BandsSizeIndependently(t *testing.T) {
+	panes := []tui.Pane{
+		spanning{stubPane{id: "machines", prio: tui.P0Critical, weight: 1}, 2, 1, 120},
+		spanning{stubPane{id: "nodes", prio: tui.P0Critical, weight: 1}, 2, 1, 60},
+		spanning{stubPane{id: "pods", prio: tui.P0Critical, weight: 1}, 1, 2, 100},
+		spanning{stubPane{id: "events", prio: tui.P1Important, weight: 1}, 1, 2, 100},
+		spanning{stubPane{id: "network", prio: tui.P2Useful, weight: 1}, 1, 2, 150},
+		spanning{stubPane{id: "cloud", prio: tui.P3Optional, weight: 1}, 1, 1, 50},
+	}
+	l := Compute(Options{Width: 300, Height: 60, Panes: panes, HeaderH: 3, OverrideCols: 4})
+
+	machines, ok := tileByID(l, "machines")
+	if !ok {
+		t.Fatal("machines was not placed")
+	}
+	network, ok := tileByID(l, "network")
+	if !ok {
+		t.Fatal("network was not placed")
+	}
+	if network.Y <= machines.Y {
+		t.Fatalf("expected network on a row below machines: machines y=%d, network y=%d",
+			machines.Y, network.Y)
+	}
+	// Two columns each, but different appetites in each band, so the boundary
+	// between the left and right halves lands in a different place.
+	if network.W == 2*machines.W {
+		t.Errorf("bands should size independently, but network (%d) is exactly "+
+			"two machines columns (%d)", network.W, machines.W)
+	}
+	nodes, _ := tileByID(l, "nodes")
+	if machines.X+machines.W != nodes.X {
+		t.Errorf("a spanning tile's band must stay edge to edge: machines x=%d w=%d, nodes x=%d",
+			machines.X, machines.W, nodes.X)
+	}
+}
+
+// MinWidth is a floor the division cannot cross, however modest a pane's appetite.
+func TestContentWidth_MinWidthIsAFloor(t *testing.T) {
+	panes := []tui.Pane{
+		hungry{Pane: stubPane{id: "greedy", prio: tui.P0Critical, weight: 1}, want: 400},
+		hungry{Pane: stubPane{id: "modest", prio: tui.P1Important, weight: 1}, want: 5},
+	}
+	l := Compute(Options{Width: 200, Height: 40, Panes: panes, HeaderH: 3, OverrideCols: 2})
+	modest, _ := tileByID(l, "modest")
+	if modest.W < 30 {
+		t.Errorf("modest got %d, below its pane's MinWidth of 30", modest.W)
+	}
+}
+
+// The other fix this exists for: a row whose panes have all said how much height
+// they can use gives the rest to the rows that never say.
+func TestContentHeight_SurplusMovesToTheRowsThatCanUseIt(t *testing.T) {
+	panes := []tui.Pane{
+		stubPane{id: "machines", prio: tui.P0Critical, weight: 1},
+		stubPane{id: "nodes", prio: tui.P0Critical, weight: 1},
+		capped{Pane: stubPane{id: "cilium", prio: tui.P2Useful, weight: 1}, ceiling: 5},
+		capped{Pane: stubPane{id: "ceph", prio: tui.P2Useful, weight: 1}, ceiling: 5},
+	}
+	l := Compute(Options{Width: 200, Height: 43, Panes: panes, HeaderH: 3, OverrideCols: 2})
+
+	cilium, ok := tileByID(l, "cilium")
+	if !ok {
+		t.Fatal("cilium was not placed")
+	}
+	machines, ok := tileByID(l, "machines")
+	if !ok {
+		t.Fatal("machines was not placed")
+	}
+	if cilium.H != 7 {
+		t.Errorf("capped row height: got %d want 7 (a ceiling of 5 plus chrome)", cilium.H)
+	}
+	if machines.H != 33 {
+		t.Errorf("uncapped row height: got %d want 33 (40 body less the capped row)", machines.H)
+	}
+	if bottom := cilium.Y + cilium.H; bottom != 43 {
+		t.Errorf("the grid should still reach the bottom of the terminal: got %d want 43", bottom)
+	}
+}
+
+// One pane in a row that can still use height is reason enough to leave the row
+// alone: it is sharing that height with the panes beside it.
+func TestContentHeight_OneUndeclaredPaneKeepsItsRow(t *testing.T) {
+	panes := []tui.Pane{
+		stubPane{id: "machines", prio: tui.P0Critical, weight: 1},
+		stubPane{id: "nodes", prio: tui.P0Critical, weight: 1},
+		capped{Pane: stubPane{id: "cilium", prio: tui.P2Useful, weight: 1}, ceiling: 5},
+		stubPane{id: "events", prio: tui.P2Useful, weight: 1},
+	}
+	l := Compute(Options{Width: 200, Height: 43, Panes: panes, HeaderH: 3, OverrideCols: 2})
+	cilium, _ := tileByID(l, "cilium")
+	if cilium.H != 20 {
+		t.Errorf("row height: got %d want 20 (untrimmed, since Events declared no ceiling)", cilium.H)
+	}
+}
+
+// When every row has a ceiling there is nowhere for a surplus to go, and
+// shortening the grid to leave the bottom of the terminal blank helps nobody.
+func TestContentHeight_NothingTrimmedWhenEveryRowDeclares(t *testing.T) {
+	panes := []tui.Pane{
+		capped{Pane: stubPane{id: "a", prio: tui.P0Critical, weight: 1}, ceiling: 5},
+		capped{Pane: stubPane{id: "b", prio: tui.P0Critical, weight: 1}, ceiling: 5},
+		capped{Pane: stubPane{id: "c", prio: tui.P2Useful, weight: 1}, ceiling: 5},
+		capped{Pane: stubPane{id: "d", prio: tui.P2Useful, weight: 1}, ceiling: 5},
+	}
+	l := Compute(Options{Width: 200, Height: 43, Panes: panes, HeaderH: 3, OverrideCols: 2})
+	total := 0
+	seen := map[int]bool{}
+	for _, tile := range l.Tiles {
+		if !seen[tile.Y] {
+			seen[tile.Y] = true
+			total += tile.H
+		}
+	}
+	if total != 40 {
+		t.Errorf("rows should still fill the body: got %d want 40", total)
+	}
+}

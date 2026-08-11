@@ -37,6 +37,46 @@ var poolCols = []table.Column{
 	{Header: "IN USE"},
 }
 
+// ContentWidth implements [tui.ContentWidthPane]: the pool table.
+//
+// Not the speaker summary under it. That line grows a clause whenever a Service is
+// waiting for an address, and a tile that resized when it did would move every
+// boundary in its row for a sentence that truncates harmlessly.
+func (p *pane) ContentWidth() int {
+	cells, _, _ := p.content()
+	if len(cells) == 0 {
+		return 0
+	}
+	return table.AppetiteWidth(poolCols, cells)
+}
+
+// ContentHeight implements [tui.ContentHeightPane]: a header, one row per address
+// pool, and the summary line with its blank separator. A cluster's pools are
+// configuration rather than fleet, so this is a number that changes when someone
+// changes it and not otherwise.
+func (p *pane) ContentHeight(int) int {
+	cells, _, summary := p.content()
+	if len(cells) == 0 {
+		return 0
+	}
+	h := len(cells) + 1
+	if summary != "" {
+		h += 2
+	}
+	return h
+}
+
+// content builds the pool rows and the summary line, shared by Render and the
+// extent methods so the pane cannot declare one shape and draw another.
+func (p *pane) content() (cells [][]string, styles [][]lipgloss.Style, summary string) {
+	state, ok := store.Get[State](p.store, KeyState)
+	if !ok || len(state.Pools) == 0 {
+		return nil, nil, ""
+	}
+	cells, styles = p.poolRows(state)
+	return cells, styles, p.summary(state)
+}
+
 // Render implements tui.Pane.
 func (p *pane) Render(w, h int, _ bool) string {
 	state, ok := store.Get[State](p.store, KeyState)
@@ -50,8 +90,19 @@ func (p *pane) Render(w, h int, _ bool) string {
 		return table.Placeholder(w, h, "no address pools")
 	}
 
-	cells := make([][]string, 0, len(state.Pools))
-	styles := make([][]lipgloss.Style, 0, len(state.Pools))
+	cells, styles := p.poolRows(state)
+	body := table.Table{Cols: poolCols, Rows: cells, CellStyles: styles}
+	summary := p.summary(state)
+	if summary == "" || h < len(cells)+3 {
+		return body.Render(w, h)
+	}
+	return clip(body.Render(w, h-2)+"\n\n"+summary, w, h)
+}
+
+// poolRows renders one row per address pool.
+func (p *pane) poolRows(state State) (cells [][]string, styles [][]lipgloss.Style) {
+	cells = make([][]string, 0, len(state.Pools))
+	styles = make([][]lipgloss.Style, 0, len(state.Pools))
 	for _, pool := range state.Pools {
 		advertised, advStyle := "none", tui.StyleErr
 		if len(pool.Advertised) > 0 {
@@ -71,13 +122,7 @@ func (p *pane) Render(w, h int, _ bool) string {
 		})
 		styles = append(styles, []lipgloss.Style{{}, tui.StyleMuted, advStyle, {}})
 	}
-
-	body := table.Table{Cols: poolCols, Rows: cells, CellStyles: styles}
-	summary := p.summary(state)
-	if summary == "" || h < len(cells)+3 {
-		return body.Render(w, h)
-	}
-	return clip(body.Render(w, h-2)+"\n\n"+summary, w, h)
+	return cells, styles
 }
 
 // summary reports the speaker and any pending Services — the two things that
