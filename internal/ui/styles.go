@@ -138,10 +138,10 @@ func paneFrame(b paneBox) string {
 	innerH := b.Height - tui.PaneChromeV
 
 	// One blank line above the content when there is slack, mirroring the
-	// one-cell horizontal gutter. A pane already filling innerH keeps its flush
-	// top.
+	// one-cell horizontal gutter. A pane whose content really does reach the
+	// bottom of the frame keeps its flush top.
 	body := b.Body
-	if lipgloss.Height(body) < innerH {
+	if contentHeight(body) < innerH {
 		body = "\n" + body
 	}
 
@@ -181,6 +181,26 @@ func borderFrame(b paneBox, th tui.Theme, color lipgloss.Color, body string, bod
 		lines[0] = topBorderWithTitle(b.Width, b.Title, color, border, b.Focused, th)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// contentHeight is how far down the frame a body's content actually reaches:
+// its line count, less the blank lines at its foot.
+//
+// Not [lipgloss.Height], because half the panes on screen pad their own body out
+// to the rectangle they were handed — every merged frame does, since a section
+// that came up short must not let the next one slide up — and a body of ten lines
+// and twenty blanks has the same height as one that fills the tile. Measuring the
+// content instead is what tells the two apart, and the difference is exactly the
+// slack the top gutter is spent from.
+//
+// Blankness is judged after the escape sequences are stripped: on a grounded theme
+// an empty line is a run of painted spaces and a reset, not an empty string.
+func contentHeight(body string) int {
+	lines := strings.Split(body, "\n")
+	for len(lines) > 0 && strings.TrimSpace(ansi.Strip(lines[len(lines)-1])) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return len(lines)
 }
 
 // groundBlock grounds a body block: every line laid on exactly width cells,

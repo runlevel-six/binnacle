@@ -31,6 +31,18 @@ const (
 	PaneChromeV = 2
 )
 
+// PaneVPad is the number of body lines a pane's content is kept clear of the
+// frame by: one above it and one below, the vertical answer to the one-cell
+// gutter each side of it.
+//
+// It is not part of PaneChromeV, because it is spent rather than lost. A pane
+// with more height than content gets the effect for free — the renderer moves
+// the content down a line and the leftover lands at the foot — so the only
+// place the number has to be reserved is where the layout sizes a rectangle to
+// exactly what a pane said it could fill, which is [FixedHeightPane] and a row
+// trimmed to its panes' [ContentHeightPane] ceilings. Both add it themselves.
+const PaneVPad = 2
+
 // WidestLine measures the widest of a set of composed body lines, in display
 // cells and ignoring trailing padding.
 //

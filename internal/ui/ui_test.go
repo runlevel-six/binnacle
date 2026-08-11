@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -510,6 +511,57 @@ func TestPaneFrame_ExactSize(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The blank line above a body is the vertical half of the one-cell gutter, and a
+// pane that pads its own body out to the frame is entitled to it like any other.
+//
+// Every merged frame does pad — a section that came up short must not let the next
+// one slide up — so measuring the body by its line count said "this pane fills the
+// tile" for a body that was mostly blank, and the whole bottom row of the dashboard
+// drew its first line hard against the border while the tables above it breathed.
+func TestPaneFrame_GutterAboveASelfPaddedBody(t *testing.T) {
+	for _, th := range tui.Themes() {
+		withTheme(t, th)
+		// Two lines of content in a body padded to the seven the frame holds.
+		body := "Cilium\nagents 4/5 ready" + strings.Repeat("\n", 5)
+		out := testansi.StripANSI(paneFrame(paneBox{
+			Title: "Network", Width: 40, Height: 9, Body: body,
+		}))
+		lines := strings.Split(out, "\n")
+		if len(lines) < 3 {
+			t.Fatalf("%s: frame is too short to have a body:\n%s", th.Name, out)
+		}
+		if hasText(lines[1]) {
+			t.Errorf("%s: first body row should be the gutter, got %q:\n%s", th.Name, lines[1], out)
+		}
+		if !strings.Contains(lines[2], "Cilium") {
+			t.Errorf("%s: content should start on the second body row:\n%s", th.Name, out)
+		}
+	}
+}
+
+// A body whose content really does reach the bottom of the frame keeps its flush
+// top: the gutter is spent from slack, and there is none to spend.
+func TestPaneFrame_NoGutterWhenTheBodyIsFull(t *testing.T) {
+	for _, th := range tui.Themes() {
+		withTheme(t, th)
+		out := testansi.StripANSI(paneFrame(paneBox{
+			Title: "Network", Width: 40, Height: 5, Body: "one\ntwo\nthree",
+		}))
+		if !strings.Contains(strings.Split(out, "\n")[1], "one") {
+			t.Errorf("%s: a full body should start on the first body row:\n%s", th.Name, out)
+		}
+	}
+}
+
+// hasText reports whether a stripped row carries anything a reader would call
+// content. Asking that rather than naming the frame's glyphs keeps this from
+// having to know each theme's rails and bars.
+func hasText(row string) bool {
+	return strings.ContainsFunc(row, func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r)
+	})
 }
 
 func TestPaneFrame_TitleInBorder(t *testing.T) {

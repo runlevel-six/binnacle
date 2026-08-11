@@ -850,11 +850,11 @@ func TestContentHeight_SurplusMovesToTheRowsThatCanUseIt(t *testing.T) {
 	if !ok {
 		t.Fatal("machines was not placed")
 	}
-	if cilium.H != 7 {
-		t.Errorf("capped row height: got %d want 7 (a ceiling of 5 plus chrome)", cilium.H)
+	if cilium.H != 9 {
+		t.Errorf("capped row height: got %d want 9 (a ceiling of 5, plus chrome, plus the gutter above and below it)", cilium.H)
 	}
-	if machines.H != 33 {
-		t.Errorf("uncapped row height: got %d want 33 (40 body less the capped row)", machines.H)
+	if machines.H != 31 {
+		t.Errorf("uncapped row height: got %d want 31 (40 body less the capped row)", machines.H)
 	}
 	if bottom := cilium.Y + cilium.H; bottom != 43 {
 		t.Errorf("the grid should still reach the bottom of the terminal: got %d want 43", bottom)
@@ -874,6 +874,33 @@ func TestContentHeight_OneUndeclaredPaneKeepsItsRow(t *testing.T) {
 	cilium, _ := tileByID(l, "cilium")
 	if cilium.H != 20 {
 		t.Errorf("row height: got %d want 20 (untrimmed, since Events declared no ceiling)", cilium.H)
+	}
+}
+
+// A trimmed row is trimmed to its content plus room to breathe, not to its
+// content exactly.
+//
+// The renderer takes the blank line above a pane's content out of whatever height
+// the pane did not use, so a tile cut to the last line its pane declared has
+// nothing to take it from and comes out with its first and last rows against the
+// border — the one row of the dashboard that looked different from every other.
+// Two rows is [tui.PaneVPad]: one above the content and one below.
+func TestContentHeight_TrimmedRowsKeepTheirGutter(t *testing.T) {
+	panes := []tui.Pane{
+		stubPane{id: "machines", prio: tui.P0Critical, weight: 1},
+		stubPane{id: "nodes", prio: tui.P0Critical, weight: 1},
+		capped{Pane: stubPane{id: "cilium", prio: tui.P2Useful, weight: 1}, ceiling: 6},
+		capped{Pane: stubPane{id: "ceph", prio: tui.P2Useful, weight: 1}, ceiling: 4},
+	}
+	l := Compute(Options{Width: 200, Height: 60, Panes: panes, HeaderH: 3, OverrideCols: 2})
+	cilium, ok := tileByID(l, "cilium")
+	if !ok {
+		t.Fatal("cilium was not placed")
+	}
+	want := 6 + tui.PaneChromeV + tui.PaneVPad
+	if cilium.H != want {
+		t.Errorf("trimmed row height: got %d want %d (the widest ceiling of 6, chrome, and the gutter)",
+			cilium.H, want)
 	}
 }
 

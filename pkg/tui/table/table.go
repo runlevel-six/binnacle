@@ -57,8 +57,9 @@ const (
 	// FixedPaneVPad is the number of body lines a fixed-height pane reserves
 	// for vertical padding, one above its content and one below. Panes in the
 	// ordinary grid get the same effect for free whenever the layout hands
-	// them more height than they need.
-	FixedPaneVPad = 2
+	// them more height than they need, and the grid reserves it explicitly for
+	// the rows it trims to their content.
+	FixedPaneVPad = tui.PaneVPad
 
 	// minColWidth is the narrowest a column may be squeezed to. Below about
 	// four cells a column shows nothing but truncation.
