@@ -63,31 +63,54 @@ func (p *cloudPane) Render(w, h int, _ bool) string {
 
 // ContentWidth implements [tui.ContentWidthPane]: the migration table, which is a
 // status, a type, a short UUID and a pair of compute hostnames.
+//
+// The drain block is measured too, and takes the wider of the two. It is a
+// short line, so it usually loses; a cloud draining several hosts at once with
+// nothing yet in flight is the case where it does not, and letting the table's
+// appetite speak for a pane whose only content is the block would ask for a
+// width nothing is drawn at.
 func (p *cloudPane) ContentWidth() int {
 	rows, _ := p.migrationRows(time.Now())
-	if len(rows) == 0 {
-		return 0
+	want := 0
+	if len(rows) > 0 {
+		want = table.AppetiteWidth(migrationCols, rows)
 	}
-	return table.AppetiteWidth(migrationCols, rows)
+	return max(want, tui.WidestLine(p.drainBlock()))
 }
 
-// ContentHeight implements [tui.ContentHeightPane]: the active-count line, a
-// header, and one row per migration in flight.
+// ContentHeight implements [tui.ContentHeightPane]: the drain block, the
+// active-count line, a header, and one row per migration in flight.
 //
 // An idle cloud declares a single line, which is the case worth being exact
 // about: this pane spends most of its life saying "no migrations", and a whole
 // grid row spent centering those two words is a row the fleet tables wanted.
+//
+// The unresolved backlog is deliberately not counted here; see [migrationRows].
 func (p *cloudPane) ContentHeight(int) int {
 	rows, ok := p.migrationRows(time.Now())
+	drains := len(p.drainBlock())
 	switch {
 	case !ok:
 		// Still polling, or the poll failed. Both draw a body the reader may need
 		// to read at whatever size the row happens to be.
 		return 0
-	case len(rows) == 0:
+	case len(rows) == 0 && drains == 0:
 		return 1
+	case len(rows) == 0:
+		// The block, plus the line saying nothing is in flight — which during a
+		// stalled drain is the reading that matters.
+		return drains + 1
 	}
-	return len(rows) + 2
+	return drains + len(rows) + 2
+}
+
+// drainBlock is the progress lines for the current snapshot, or nil.
+func (p *cloudPane) drainBlock() []string {
+	snap, ok := store.Get[Migrations](p.store, KeyMigrations)
+	if !ok || snap.Err != nil {
+		return nil
+	}
+	return drainLines(snap)
 }
 
 // resourcesPane is the cloud's resource census, as a section of the Cloud frame.
@@ -157,6 +180,58 @@ var unresolvedCols = []table.Column{
 	{Header: "ON HOST"},
 	{Header: "AGE"},
 	{Header: "FAULT", Stretch: true},
+}
+
+// drainLines is the progress block: one line per host being emptied.
+//
+// It leads the pane because it is the frame the table is read inside. A row
+// saying a server is moving off some host means one thing when that host is the
+// one you are waiting on and another when it is not, and the complaint that
+// started this work — migrations showing that had nothing to do with the drain
+// — was in large part that the pane never said which host that was.
+//
+// An empty host is called out rather than left as "0 left", because it is the
+// line the operator is waiting for: the drain is finished and the maintenance
+// can start. A stalled one is the same shape with nothing moving, which a
+// migration table alone cannot distinguish from a finished one.
+func drainLines(snap Migrations) []string {
+	if len(snap.Drains) == 0 {
+		return nil
+	}
+
+	lines := make([]string, 0, len(snap.Drains)+1)
+	for _, d := range snap.Drains {
+		host := tui.StyleAccent.Render(ShortHost(d.Host))
+		switch {
+		case d.Err != nil:
+			lines = append(lines, "draining "+host+": "+
+				tui.StyleWarn.Render("server count unavailable"))
+			continue
+		case d.Remaining == 0:
+			lines = append(lines, "draining "+host+": "+tui.StyleOK.Render("empty"))
+			continue
+		}
+
+		parts := []string{fmt.Sprintf("%d left", d.Remaining)}
+		if d.Moving > 0 {
+			parts = append(parts, fmt.Sprintf("%d moving", d.Moving))
+		} else {
+			// Servers left and none of them moving. Said plainly, because an
+			// empty migration table looks exactly like a finished drain.
+			parts = append(parts, tui.StyleWarn.Render("none moving"))
+		}
+		if d.Stuck > 0 {
+			parts = append(parts, tui.StyleErr.Render(fmt.Sprintf("%d stuck", d.Stuck)))
+		}
+		lines = append(lines, "draining "+host+": "+strings.Join(parts, ", "))
+	}
+
+	// Hosts past the probe cap. Named as a count rather than omitted, so the
+	// block cannot imply the cloud has fewer drains running than it has.
+	if rest := len(snap.Draining) - len(snap.Drains); rest > 0 {
+		lines = append(lines, tui.StyleMuted.Render(fmt.Sprintf("+ %d more draining", rest)))
+	}
+	return lines
 }
 
 // migrationRows builds the table rows for the migrations worth listing, and
@@ -245,7 +320,8 @@ func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
 	}
 
 	shown := snap.Relevant(now)
-	if len(shown.Rows) == 0 && len(shown.Unresolved) == 0 {
+	drains := drainLines(snap)
+	if len(shown.Rows) == 0 && len(shown.Unresolved) == 0 && len(drains) == 0 {
 		// An idle list during a rollout is good news — it means the drain is not
 		// stuck — so it is worth saying rather than leaving an empty table. Outside
 		// one there is no drain to be reassured about, and the same words would
@@ -254,6 +330,18 @@ func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
 			return table.Placeholder(w, h, "no active migrations")
 		}
 		return table.Placeholder(w, h, "no migrations")
+	}
+
+	// A drain with nothing moving publishes no migration rows at all, and that
+	// is exactly when its progress line is the whole point of the pane.
+	lead := ""
+	if len(drains) > 0 {
+		lead = strings.Join(drains, "\n") + "\n"
+	}
+	// Height left for the migration content once the block has taken its lines.
+	mh := max(h-len(drains), 0)
+	if len(shown.Rows) == 0 && len(shown.Unresolved) == 0 {
+		return table.ClipLines(lead+tui.StyleMuted.Render("no migrations in flight"), h)
 	}
 
 	failed := shown.Failures()
@@ -268,7 +356,7 @@ func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
 	}
 
 	// One line for the summary, one for the table's header.
-	body := max(h-2, 0)
+	body := max(mh-2, 0)
 	listed := shown.Rows
 	if keep := failureBudget(failed, body); keep < failed {
 		listed = append(append([]Migration{}, shown.Rows[:keep]...), shown.Rows[failed:]...)
@@ -276,13 +364,13 @@ func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
 
 	rows, styles := migrationTable(snap, listed, now)
 	main := table.Table{Cols: migrationCols, Rows: rows, RowStyles: styles}
-	out := summary + "\n" + main.Render(w, h-1)
+	out := lead + summary + "\n" + main.Render(w, mh-1)
 
 	// Spend anything left over on the detail behind the unresolved count. This
 	// is what zoom buys: the grid caps this pane at ContentHeight, which asks
 	// only for the compact form, while a zoomed pane is handed the whole body
 	// and lands here with rows to spare.
-	if spare := h - 1 - len(rows) - 1; spare >= 3 && len(shown.Unresolved) > 0 {
+	if spare := mh - 1 - len(rows) - 1; spare >= 3 && len(shown.Unresolved) > 0 {
 		detail := table.Table{
 			Cols: unresolvedCols,
 			Rows: unresolvedRows(snap, shown.Unresolved, now),

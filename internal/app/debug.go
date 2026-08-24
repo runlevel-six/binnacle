@@ -353,6 +353,18 @@ func pluginRows(s *store.Store) []reportRow {
 			if !snap.BrokenKnown {
 				row.summary += "; ERROR probe unavailable"
 			}
+			// Drains are named rather than counted: which host is being emptied
+			// is the one fact that makes the rest of this line readable.
+			for _, d := range snap.Drains {
+				switch {
+				case d.Err != nil:
+					row.summary += fmt.Sprintf("; draining %s: %v",
+						openstack.ShortHost(d.Host), d.Err)
+				default:
+					row.summary += fmt.Sprintf("; draining %s: %d left, %d moving, %d stuck",
+						openstack.ShortHost(d.Host), d.Remaining, d.Moving, d.Stuck)
+				}
+			}
 			if len(shown.Rows) > 0 {
 				m := shown.Rows[0]
 				row.sample = fmt.Sprintf("%s %s %s: %s -> %s", m.Status, m.Type, m.InstanceUUID,
