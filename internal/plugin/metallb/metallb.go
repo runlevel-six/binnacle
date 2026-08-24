@@ -66,8 +66,43 @@ type Pool struct {
 	// when nothing advertises it. An unadvertised pool hands out addresses that
 	// nothing announces, which is a real and otherwise silent misconfiguration.
 	Advertised []string
-	// Assigned counts the LoadBalancer Services holding an address from it.
-	Assigned int
+	// Assigned is how many of the pool's addresses are handed out, and Available
+	// how many remain. Available is meaningful only when Usage is [UsageStatus];
+	// nothing else can say how large a pool is without parsing its addresses.
+	Assigned  int
+	Available int
+	// Usage records where those numbers came from, so the pane can tell an empty
+	// pool from one it could not measure.
+	Usage UsageSource
+}
+
+// UsageSource says how a pool's address usage was determined.
+type UsageSource int
+
+const (
+	// UsageUnknown means nothing could attribute addresses to this pool. It is
+	// not the same as a pool with nothing in it, and must not render as zero.
+	UsageUnknown UsageSource = iota
+	// UsageStatus means MetalLB published the counts on the IPAddressPool
+	// itself. Both numbers are real, and they count addresses rather than
+	// Services — which is the honest unit, since one Service can hold two
+	// addresses on a dual-stack cluster and two can share one.
+	UsageStatus
+	// UsageAnnotations means the count was assembled from the pool each Service
+	// records having been allocated from. Assigned is a count of Services and
+	// Available is unknown.
+	UsageAnnotations
+)
+
+// Total is the pool's size, when that is known.
+func (p Pool) Total() int { return p.Assigned + p.Available }
+
+// Exhausted reports whether a pool has published capacity and none of it left.
+//
+// The next LoadBalancer Service to ask this pool for an address will sit
+// Pending forever, which is the failure this plugin exists to see coming.
+func (p Pool) Exhausted() bool {
+	return p.Usage == UsageStatus && p.Available == 0 && p.Assigned > 0
 }
 
 // Service is one LoadBalancer Service.
@@ -107,6 +142,17 @@ func (s State) PendingServices() int {
 		}
 	}
 	return n
+}
+
+// ExhaustedPools names pools that have handed out every address they have.
+func (s State) ExhaustedPools() []string {
+	var out []string
+	for _, p := range s.Pools {
+		if p.Exhausted() {
+			out = append(out, p.Name)
+		}
+	}
+	return out
 }
 
 // UnadvertisedPools names pools that nothing advertises.
@@ -281,15 +327,70 @@ func (p *Plugin) listPools(ctx context.Context) ([]Pool, error) {
 			autoAssign = v
 		}
 		addrs, _, _ := unstructured.NestedStringSlice(o.Object, "spec", "addresses")
-		out = append(out, Pool{
+		pool := Pool{
 			Namespace:  o.GetNamespace(),
 			Name:       o.GetName(),
 			Addresses:  addrs,
 			AutoAssign: autoAssign,
-		})
+		}
+		pool.Assigned, pool.Available, pool.Usage = poolUsage(o)
+		out = append(out, pool)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// poolUsage reads the address counts MetalLB publishes on an IPAddressPool.
+//
+// MetalLB does this arithmetic itself and puts the answer in the object's
+// status, which is worth far more than anything this program could work out.
+// Counting Services cannot see two Services sharing one address, or one Service
+// holding both an IPv4 and an IPv6; and deriving a pool's size means parsing an
+// address list that may be a CIDR, a dashed range or a bare address, which is
+// the parsing this package has always declined to do. Reading the status skips
+// all of it, and answers "how much is left" — a question no amount of Service
+// counting can reach.
+//
+// The status subresource is not in every MetalLB release, so its absence is
+// reported rather than read as an empty pool; see [UsageSource].
+func poolUsage(o unstructured.Unstructured) (assigned, available int, source UsageSource) {
+	var found bool
+	read := func(field string) int {
+		n, ok := nestedCount(o.Object, "status", field)
+		found = found || ok
+		return n
+	}
+	// Both families are summed. A dual-stack pool's addresses are one budget as
+	// far as "is this pool nearly full" is concerned, and splitting them out
+	// would spend a column on a distinction most clusters do not have.
+	assigned = read("assignedIPv4") + read("assignedIPv6")
+	available = read("availableIPv4") + read("availableIPv6")
+	if !found {
+		return 0, 0, UsageUnknown
+	}
+	return assigned, available, UsageStatus
+}
+
+// nestedCount reads a non-negative integer, tolerating either JSON number shape.
+//
+// Kubernetes' own decoder yields int64 for whole numbers, but an unstructured
+// object that has been through a plain encoding/json round trip carries float64,
+// and a count silently read as zero would be indistinguishable from a pool with
+// nothing in it.
+func nestedCount(obj map[string]any, fields ...string) (int, bool) {
+	v, found, err := unstructured.NestedFieldNoCopy(obj, fields...)
+	if err != nil || !found {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	}
+	return 0, false
 }
 
 // advertisement is an L2 or BGP advertisement.
@@ -356,7 +457,7 @@ func (p *Plugin) listServices(ctx context.Context) ([]Service, error) {
 		s := Service{
 			Namespace: svc.Namespace,
 			Name:      svc.Name,
-			Pool:      svc.Annotations["metallb.universe.tf/address-pool"],
+			Pool:      poolOf(svc.Annotations),
 		}
 		for _, ing := range svc.Status.LoadBalancer.Ingress {
 			if ing.IP != "" {
@@ -375,14 +476,56 @@ func (p *Plugin) listServices(ctx context.Context) ([]Service, error) {
 	return out, nil
 }
 
-// attributeServices counts services per pool.
+// poolAnnotations are the Service annotations naming a pool, best first.
 //
-// Only an explicit pool annotation attributes a service, because matching an
-// address back to a pool would mean parsing MetalLB's heterogeneous address
-// syntax and would be wrong for a range expressed a way we did not anticipate.
+// The first two are written by MetalLB itself when it allocates an address, and
+// are what makes this work at all: the last two are *requests*, set only by an
+// operator pinning a Service to a particular pool, and on a cluster using
+// autoAssign — which is the ordinary case — nobody sets them. Reading only the
+// request annotation is why every pool reported nothing in use however many
+// LoadBalancers were working.
+//
+// Order matters, and not only for tidiness. MetalLB is migrating from the
+// metallb.universe.tf prefix to metallb.io, and mid-migration the two disagree:
+// on a v0.15 cluster, eight of nine Services carried both keys and the ninth —
+// reallocated after the upgrade — carried only the metallb.io one. Preferring
+// the older prefix would have lost that Service.
+var poolAnnotations = []string{
+	"metallb.io/ip-allocated-from-pool",
+	"metallb.universe.tf/ip-allocated-from-pool",
+	"metallb.io/address-pool",
+	"metallb.universe.tf/address-pool",
+}
+
+// poolOf returns the pool a Service's annotations name, or "".
+func poolOf(annotations map[string]string) string {
+	for _, key := range poolAnnotations {
+		if v := annotations[key]; v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// attributeServices counts Services per pool, for pools whose own status did not
+// already say.
+//
+// This is the fallback, not the answer: see [poolUsage] for why MetalLB's
+// published counts are better wherever they exist. It counts Services rather
+// than addresses, so it is an undercount on a cluster where Services share an
+// address or hold one of each family — which is why it records itself as
+// [UsageAnnotations] rather than passing for the real thing.
+//
+// A pool no annotation names is left [UsageUnknown] rather than set to zero. On
+// a MetalLB too old to publish either, "nothing is using this pool" and "this
+// build cannot tell" are very different things to show an operator deciding
+// whether a pool is safe to remove.
 func attributeServices(pools []Pool, services []Service) {
 	index := map[string]int{}
 	for i, p := range pools {
+		if pools[i].Usage == UsageStatus {
+			continue
+		}
 		index[p.Name] = i
 	}
 	for _, s := range services {
@@ -391,6 +534,7 @@ func attributeServices(pools []Pool, services []Service) {
 		}
 		if i, ok := index[s.Pool]; ok {
 			pools[i].Assigned++
+			pools[i].Usage = UsageAnnotations
 		}
 	}
 }
@@ -506,6 +650,13 @@ func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
 		// the failure this plugin exists to make visible.
 		cell.Status = tui.BannerWarn
 		cell.Detail = fmt.Sprintf("%d pending", state.PendingServices())
+	case len(state.ExhaustedPools()) > 0:
+		// Ahead of the pending Service rather than after it. A full pool is a
+		// LoadBalancer that will not come up the next time anyone asks for one,
+		// and the whole value of MetalLB publishing its own counts is that this
+		// can be said before the failure rather than during it.
+		cell.Status = tui.BannerWarn
+		cell.Detail = fmt.Sprintf("%s full", strings.Join(state.ExhaustedPools(), ", "))
 	case len(state.UnadvertisedPools()) > 0:
 		cell.Status = tui.BannerWarn
 		cell.Detail = fmt.Sprintf("%d pool(s) unadvertised", len(state.UnadvertisedPools()))
