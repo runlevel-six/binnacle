@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack"
+	"github.com/gophercloud/gophercloud/v2/openstack/utils"
 )
 
 // KeyMigrations holds a Migrations.
@@ -79,8 +82,29 @@ func Failed(status string) bool {
 // A single server's retry sequence — queued, running, failed, queued again —
 // is one story, and showing four rows for it pushes the other servers off the
 // pane during exactly the upgrade where every server is moving. Failures sort
-// first, then most-recently-updated, so the rows needing attention are at the
-// top whatever the pane's height.
+// first, then newest, so the rows needing attention are at the top whatever the
+// pane's height.
+//
+// # Which record is the latest
+//
+// The ID, not updated_at. This is not a stylistic preference; ordering on
+// updated_at is wrong and produced the bug this function exists to avoid.
+//
+// updated_at is when Nova last *wrote the row*, not when the migration ended,
+// and Nova writes rows well out of order. On a live cloud mid-drain, record
+// 70551 was created at 17:22:22 and stamped updated_at 17:37:47 — after the
+// eight subsequent migrations of that same server had already finished. Ordering
+// its history by updated_at picks a fifteen-minute-old record as current and
+// renders that record's source and destination, so the pane names a pair of
+// hosts the server is not moving between. Measured on that cloud: 112 ordering
+// inversions in 500 consecutive IDs, and six servers whose history resolved to
+// the wrong record. Ordering the same data by ID reproduced every server's true
+// location as reported by `openstack server show`.
+//
+// The ID is a per-cell autoincrement, so it is monotonic exactly where this
+// needs it to be: within one server's history, since an instance does not change
+// cell. Across servers it means nothing, which is why the display sort below
+// leads with created_at and uses the ID only to break ties.
 //
 // Records with no instance UUID are kept individually, keyed by ID. That should
 // not happen, but dropping data over a schema surprise is worse than an extra
@@ -92,15 +116,7 @@ func LatestPerServer(items []Migration) []Migration {
 		if key == "" {
 			key = fmt.Sprintf("id:%d", m.ID)
 		}
-		cur, seen := latest[key]
-		switch {
-		case !seen:
-			latest[key] = m
-		case m.UpdatedAt.After(cur.UpdatedAt):
-			latest[key] = m
-		case m.UpdatedAt.Equal(cur.UpdatedAt) && m.ID > cur.ID:
-			// Same timestamp is common — Nova's resolution is coarser than a
-			// retry loop — so the higher ID breaks the tie deterministically.
+		if cur, seen := latest[key]; !seen || m.ID > cur.ID {
 			latest[key] = m
 		}
 	}
@@ -114,8 +130,12 @@ func LatestPerServer(items []Migration) []Migration {
 		if fi != fj {
 			return fi
 		}
-		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
-			return out[i].UpdatedAt.After(out[j].UpdatedAt)
+		// created_at rather than updated_at, for the reason above, and rather
+		// than the ID, which is not comparable between two servers that may sit
+		// in different cells. Nova writes created_at once, when conductor
+		// records the attempt, so it is the honest "when did this start".
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
 		}
 		return out[i].ID > out[j].ID
 	})
@@ -185,9 +205,10 @@ type migrationsResponse struct {
 //
 // instance_uuid has been the canonical field on /os-migrations since the
 // endpoint shipped; later microversions also expose server_uuid as a duplicate,
-// which is deliberately not depended on. migration_type arrived at microversion
-// 2.23 — a cloud older than that sends "type" instead, and its rows will show an
-// empty kind rather than failing to parse.
+// which is deliberately not depended on. migration_type is present only when the
+// request negotiated microversion 2.23 or better — see
+// [migrationMicroversions] — and a cloud that cannot offer that sends rows with
+// an empty kind rather than failing to parse.
 type migrationEntry struct {
 	ID            int64  `json:"id"`
 	Status        string `json:"status"`
@@ -199,28 +220,58 @@ type migrationEntry struct {
 	UpdatedAt     string `json:"updated_at"`
 }
 
+// migrationMicroversions are the Nova microversions this poll can use, best
+// first. The first one the cloud supports is the one it asks for.
+//
+// A microversion has to be asked for. Nothing is negotiated by default: with no
+// X-OpenStack-Nova-API-Version header gophercloud gets Nova's *minimum*, 2.1,
+// whatever the cloud is capable of. That default cost this pane two things.
+//
+// 2.23 is where /os-migrations starts returning migration_type. Below it Nova
+// strips the field from the response entirely, so the pane's type column was
+// blank on every cloud — not, as the code here used to claim, only on clouds too
+// old to send it.
+//
+// 2.59 is where the endpoint becomes sorted (created_at desc, id desc) and
+// paginated. Below it there is neither: Nova returns the entire migrations table
+// in one response, every poll, forever. A two-year-old cloud answered the 2.1
+// request with 7113 records and the 2.59 request with 1000, to render at most a
+// dozen rows.
+var migrationMicroversions = []string{"2.59", "2.23"}
+
+// migrationLimit bounds one page of /os-migrations.
+//
+// Truncation is safe for [LatestPerServer] because of how 2.59 sorts: newest
+// first, globally. A server's most recent record therefore always appears before
+// its older ones, so a cut can only discard history the pane had already decided
+// not to show — never the record that decides which row a server gets.
+//
+// The number is Nova's own default api.max_limit. Asking for it explicitly means
+// the request is bounded by this program rather than by whatever the cloud's
+// operator set, which is the point of asking at all.
+const migrationLimit = 1000
+
 // pollMigrations fetches the migration history.
 //
-// The whole list is requested rather than a status-filtered slice. Nova has no
+// The whole page is requested rather than a status-filtered slice. Nova has no
 // server-side filter narrow enough for what the pane wants — in flight, or
-// failed within two hours — and the result set is a few hundred records even on
-// a busy cloud, so the filtering happens here.
+// failed within two hours — so the filtering happens here.
 func (p *Plugin) pollMigrations(ctx context.Context) Migrations {
 	snap := Migrations{UpdatedAt: time.Now()}
 
-	provider, eo, err := p.connect(ctx)
-	if err != nil {
-		snap.Err = err
-		return snap
-	}
-	client, err := openstack.NewComputeV2(provider, eo)
+	client, err := p.migrationsClient(ctx)
 	if err != nil {
 		snap.Err = err
 		return snap
 	}
 
+	url := client.ServiceURL("os-migrations")
+	if supportsMigrationPaging(client.Microversion) {
+		url += "?limit=" + strconv.Itoa(migrationLimit)
+	}
+
 	var resp migrationsResponse
-	if _, err := client.Get(ctx, client.ServiceURL("os-migrations"), &resp, nil); err != nil {
+	if _, err := client.Get(ctx, url, &resp, nil); err != nil {
 		snap.Err = err
 		return snap
 	}
@@ -238,10 +289,79 @@ func (p *Plugin) pollMigrations(ctx context.Context) Migrations {
 			UpdatedAt:     parseNovaTime(m.UpdatedAt),
 		})
 	}
+	// created_at, not updated_at: Nova stamps updated_at whenever it happens to
+	// write the row, which is not the order things happened in. See
+	// [LatestPerServer].
 	sort.Slice(snap.Items, func(i, j int) bool {
-		return snap.Items[i].UpdatedAt.After(snap.Items[j].UpdatedAt)
+		if !snap.Items[i].CreatedAt.Equal(snap.Items[j].CreatedAt) {
+			return snap.Items[i].CreatedAt.After(snap.Items[j].CreatedAt)
+		}
+		return snap.Items[i].ID > snap.Items[j].ID
 	})
 	return snap
+}
+
+// migrationsClient builds the compute client for the migration poll, with the
+// best microversion this cloud offers.
+func (p *Plugin) migrationsClient(ctx context.Context) (*gophercloud.ServiceClient, error) {
+	provider, eo, err := p.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	client, err := openstack.NewComputeV2(provider, eo)
+	if err != nil {
+		return nil, err
+	}
+	client.Microversion = p.migrationsMicroversion(ctx, client)
+	return client, nil
+}
+
+// migrationsMicroversion picks the first supported entry of
+// [migrationMicroversions], and caches the verdict.
+//
+// Negotiating costs a GET of the compute endpoint's version document, which is
+// worth paying once and not once every thirty seconds. A cloud that answers and
+// offers nothing usable is cached as the empty string — a settled answer, since
+// a running cloud does not gain microversions.
+//
+// A negotiation that *fails* is not cached, and that asymmetry is the point.
+// This dashboard is watched during control-plane rollouts, so the likeliest
+// moment for the version document to be unreachable is the first poll of the
+// session. Caching that would silently pin the whole run to 2.1 — blank type
+// column, unbounded fetch — over one bad request. Leaving it unresolved costs
+// one cheap GET per poll until the cloud answers, and then it settles.
+func (p *Plugin) migrationsMicroversion(ctx context.Context, client *gophercloud.ServiceClient) string {
+	if p.migrationsMVKnown {
+		return p.migrationsMV
+	}
+
+	supported, err := utils.GetSupportedMicroversions(ctx, client)
+	if err != nil {
+		return ""
+	}
+
+	p.migrationsMVKnown = true
+	for _, want := range migrationMicroversions {
+		if ok, err := supported.IsSupported(want); err == nil && ok {
+			p.migrationsMV = want
+			break
+		}
+	}
+	return p.migrationsMV
+}
+
+// supportsMigrationPaging reports whether a negotiated microversion takes the
+// limit parameter on /os-migrations.
+//
+// Before 2.59 the endpoint has no pagination and validates no query parameters,
+// so the parameter would be silently ignored rather than refused — which is
+// worse than not sending it, because the code would look like it had asked.
+func supportsMigrationPaging(microversion string) bool {
+	major, minor, err := utils.ParseMicroversion(microversion)
+	if err != nil {
+		return false
+	}
+	return major > 2 || (major == 2 && minor >= 59)
 }
 
 // parseNovaTime accepts the timestamp formats /os-migrations returns.

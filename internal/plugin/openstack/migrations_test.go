@@ -1,8 +1,11 @@
 package openstack
 
 import (
+	"fmt"
 	"testing"
 	"time"
+
+	"github.com/gophercloud/gophercloud/v2/openstack/utils"
 )
 
 func at(t *testing.T, s string) time.Time {
@@ -89,12 +92,56 @@ func TestLatestPerServerBreaksTiesOnID(t *testing.T) {
 	}
 }
 
+// Nova stamps updated_at when it happens to write the row, not when the
+// migration ended, so a server's history does not arrive in updated_at order.
+//
+// This is the shape observed on a live cloud mid-drain: the first attempt's row
+// was written fifteen minutes late, after every later attempt for that server
+// had already finished. Ordering on updated_at picked it as current and rendered
+// its source and destination, naming a pair of hosts the server had long since
+// left — which is what the pane was reported as doing. The IDs and timestamps
+// are the real ones; only the hostnames are substituted.
+func TestLatestPerServerIgnoresOutOfOrderUpdatedAt(t *testing.T) {
+	const server = "6f1c2b8e-4a3d-4f19-9c7e-2b8a5d1e0f34"
+	host := func(n int) string { return fmt.Sprintf("compute-node-%d.site-a.example.com", n) }
+
+	items := []Migration{
+		// Created first, written last.
+		{ID: 70551, InstanceUUID: server, Status: "completed",
+			SourceCompute: host(1), DestCompute: host(2),
+			CreatedAt: at(t, "2026-08-24T17:22:22Z"), UpdatedAt: at(t, "2026-08-24T17:37:47Z")},
+		{ID: 70557, InstanceUUID: server, Status: "completed",
+			SourceCompute: host(2), DestCompute: host(3),
+			CreatedAt: at(t, "2026-08-24T17:23:52Z"), UpdatedAt: at(t, "2026-08-24T17:25:30Z")},
+		{ID: 70602, InstanceUUID: server, Status: "completed",
+			SourceCompute: host(3), DestCompute: host(4),
+			CreatedAt: at(t, "2026-08-24T17:29:10Z"), UpdatedAt: at(t, "2026-08-24T17:30:03Z")},
+		// Created last, and where the server actually ended up.
+		{ID: 70608, InstanceUUID: server, Status: "completed",
+			SourceCompute: host(4), DestCompute: host(5),
+			CreatedAt: at(t, "2026-08-24T17:30:04Z"), UpdatedAt: at(t, "2026-08-24T17:31:03Z")},
+	}
+
+	got := LatestPerServer(items)
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want 1: %v", len(got), ids(got))
+	}
+	if got[0].ID != 70608 {
+		t.Errorf("kept id %d, want 70608 (the highest ID, not the latest updated_at)", got[0].ID)
+	}
+	// The symptom was the host pair, so assert on it and not only on the ID.
+	if got[0].SourceCompute != host(4) || got[0].DestCompute != host(5) {
+		t.Errorf("row names %s -> %s, want %s -> %s",
+			got[0].SourceCompute, got[0].DestCompute, host(4), host(5))
+	}
+}
+
 func TestLatestPerServerSortsFailedFirstThenNewest(t *testing.T) {
 	items := []Migration{
-		{ID: 1, InstanceUUID: "a", Status: "running", UpdatedAt: at(t, "2026-07-28T10:05:00Z")},
-		{ID: 2, InstanceUUID: "b", Status: "failed", UpdatedAt: at(t, "2026-07-28T10:01:00Z")},
-		{ID: 3, InstanceUUID: "c", Status: "running", UpdatedAt: at(t, "2026-07-28T10:09:00Z")},
-		{ID: 4, InstanceUUID: "d", Status: "error", UpdatedAt: at(t, "2026-07-28T10:02:00Z")},
+		{ID: 1, InstanceUUID: "a", Status: "running", CreatedAt: at(t, "2026-07-28T10:05:00Z")},
+		{ID: 2, InstanceUUID: "b", Status: "failed", CreatedAt: at(t, "2026-07-28T10:01:00Z")},
+		{ID: 3, InstanceUUID: "c", Status: "running", CreatedAt: at(t, "2026-07-28T10:09:00Z")},
+		{ID: 4, InstanceUUID: "d", Status: "error", CreatedAt: at(t, "2026-07-28T10:02:00Z")},
 	}
 
 	got := LatestPerServer(items)
@@ -179,6 +226,54 @@ func TestParseNovaTime(t *testing.T) {
 		if got := parseNovaTime(in); !got.IsZero() {
 			t.Errorf("parseNovaTime(%q) = %v, want the zero time", in, got)
 		}
+	}
+}
+
+// The limit parameter must go out only where Nova honors it. Below 2.59 the
+// endpoint validates no query parameters, so an unsupported limit is silently
+// ignored — the request would look bounded and would not be.
+func TestSupportsMigrationPaging(t *testing.T) {
+	tests := map[string]bool{
+		"2.59": true,
+		"2.60": true,
+		"2.80": true,
+		"3.0":  true,
+		"2.23": false,
+		"2.1":  false,
+		// No microversion negotiated: the request goes out at Nova's minimum.
+		"":        false,
+		"garbage": false,
+	}
+	for in, want := range tests {
+		if got := supportsMigrationPaging(in); got != want {
+			t.Errorf("supportsMigrationPaging(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// Every version this poll is willing to ask for must be one Nova actually
+// changed /os-migrations at, and they must be ordered best-first.
+func TestMigrationMicroversionsAreOrderedBestFirst(t *testing.T) {
+	if len(migrationMicroversions) == 0 {
+		t.Fatal("no microversion is requested, so Nova serves 2.1 and strips migration_type")
+	}
+	prevMajor, prevMinor := 0, 0
+	for i, v := range migrationMicroversions {
+		major, minor, err := utils.ParseMicroversion(v)
+		if err != nil {
+			t.Fatalf("migrationMicroversions[%d] = %q: %v", i, v, err)
+		}
+		if i > 0 && (major > prevMajor || (major == prevMajor && minor >= prevMinor)) {
+			t.Errorf("migrationMicroversions[%d] = %q does not descend from the previous entry", i, v)
+		}
+		prevMajor, prevMinor = major, minor
+	}
+	// 2.23 is where migration_type appears; asking for anything below it would
+	// leave the type column blank, which is the bug this list exists to fix.
+	last := migrationMicroversions[len(migrationMicroversions)-1]
+	major, minor, _ := utils.ParseMicroversion(last)
+	if major < 2 || (major == 2 && minor < 23) {
+		t.Errorf("lowest requested microversion %q is below 2.23, so migration_type is stripped", last)
 	}
 }
 

@@ -174,6 +174,16 @@ type Plugin struct {
 
 	provider *gophercloud.ProviderClient
 	endpoint gophercloud.EndpointOpts
+
+	// migrationsMV is the Nova microversion negotiated for /os-migrations, and
+	// migrationsMVKnown records that the negotiation reached a verdict — an
+	// empty string is a real answer, meaning the cloud offers nothing this poll
+	// can use. See [Plugin.migrationsMicroversion].
+	//
+	// Written from the poll goroutine only, as with provider and endpoint above:
+	// Detect runs before Run starts, and Run polls sequentially.
+	migrationsMV      string
+	migrationsMVKnown bool
 }
 
 // New builds the plugin.
