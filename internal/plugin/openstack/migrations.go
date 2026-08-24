@@ -59,6 +59,31 @@ type BrokenServer struct {
 	Fault string
 }
 
+// Drain is one compute host being emptied, and how far along it is.
+//
+// This is the question the migration table only answers sideways. A list of
+// moves in flight says what is happening; it does not say whether the host is
+// nearly empty, whether anything is moving at all, or whether what is left
+// cannot be moved. Those are the three things an operator waiting on a drain is
+// actually watching for, and the last two look identical on a migration table:
+// an empty table means "finished" and "stalled" alike.
+type Drain struct {
+	Host string
+	// Remaining is how many servers Nova still places on this host. Zero is the
+	// signal the operator is waiting for — the drain is done and the
+	// maintenance can start.
+	Remaining int
+	// Moving is how many of those have a migration in flight right now. Zero
+	// with a non-zero Remaining is a stalled drain.
+	Moving int
+	// Stuck is how many are in ERROR, and so cannot be live-migrated at all.
+	// These are what a drain ends up blocked on.
+	Stuck int
+	// Err records a per-host failure, so one unreadable host costs its own line
+	// rather than the whole block.
+	Err error
+}
+
 // Migrations is what the migration poll publishes: the cloud's full recent
 // migration history, newest first, plus the context needed to judge which of it
 // still matters.
@@ -80,7 +105,11 @@ type Migrations struct {
 	// Draining is the set of compute hosts an operator has disabled, captured
 	// at the same instant. A disabled host is how a drain looks; see the
 	// package comment.
-	Draining  map[string]bool
+	Draining map[string]bool
+	// Drains is the progress of each host in Draining, host-sorted, and capped
+	// at [maxDrains]. Shorter than Draining means the rest went unprobed; the
+	// pane says so rather than implying the cloud has fewer drains than it has.
+	Drains    []Drain
 	UpdatedAt time.Time
 	Err       error
 }
@@ -407,6 +436,10 @@ func (p *Plugin) pollMigrations(ctx context.Context, draining map[string]bool) M
 		}
 		return snap.Items[i].ID > snap.Items[j].ID
 	})
+
+	// Last, because it reads the two things above it: which servers are broken,
+	// and which migrations are in flight.
+	snap.Drains = pollDrains(ctx, client, draining, snap.Items, snap.Broken)
 	return snap
 }
 
@@ -447,6 +480,86 @@ func brokenServers(ctx context.Context, client *gophercloud.ServiceClient) (map[
 		}
 	}
 	return out, true
+}
+
+// maxDrains bounds how many hosts the drain probe will count servers for.
+//
+// One call per draining host is affordable because draining is normally one
+// host at a time, and a cloud with nothing disabled pays nothing at all. What
+// this guards is the other shape: a cloud carrying a dozen hosts disabled for
+// decommissioning would otherwise spend a dozen calls every thirty seconds
+// counting servers on hardware nobody is waiting for.
+const maxDrains = 8
+
+// pollDrains measures how far each drain has got.
+//
+// Only Remaining costs a call. Stuck comes from the ERROR probe that already
+// ran, and Moving from the migration records already fetched, so a host's whole
+// line is one request — and the non-detail listing is used for it, because the
+// question is how many rather than which.
+func pollDrains(
+	ctx context.Context,
+	client *gophercloud.ServiceClient,
+	draining map[string]bool,
+	items []Migration,
+	broken map[string]BrokenServer,
+) []Drain {
+	if len(draining) == 0 {
+		return nil
+	}
+
+	hosts := make([]string, 0, len(draining))
+	for h := range draining {
+		hosts = append(hosts, h)
+	}
+	// Sorted before truncating, so which hosts get probed does not change from
+	// poll to poll with Go's map ordering and make the block flicker.
+	sort.Strings(hosts)
+	if len(hosts) > maxDrains {
+		hosts = hosts[:maxDrains]
+	}
+
+	// Deduped, so a server retrying its migration counts once toward Moving.
+	latest := LatestPerServer(items)
+	moving := map[string]int{}
+	for _, m := range latest {
+		if Active(m.Status) {
+			moving[m.SourceCompute]++
+		}
+	}
+	stuck := map[string]int{}
+	for _, b := range broken {
+		stuck[b.Host]++
+	}
+
+	out := make([]Drain, 0, len(hosts))
+	for _, h := range hosts {
+		d := Drain{Host: h, Moving: moving[h], Stuck: stuck[h]}
+		n, err := countServersOn(ctx, client, h)
+		if err != nil {
+			d.Err = err
+		} else {
+			d.Remaining = n
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// countServersOn counts the servers Nova still places on one compute host.
+func countServersOn(ctx context.Context, client *gophercloud.ServiceClient, host string) (int, error) {
+	page, err := servers.ListSimple(client, servers.ListOpts{
+		AllTenants: true,
+		Host:       host,
+	}).AllPages(ctx)
+	if err != nil {
+		return 0, err
+	}
+	items, err := servers.ExtractServers(page)
+	if err != nil {
+		return 0, err
+	}
+	return len(items), nil
 }
 
 // migrationsClient builds the compute client for the migration poll, with the

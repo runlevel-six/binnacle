@@ -269,7 +269,11 @@ func putOpenStackWork(s *store.Store, now time.Time) {
 					"instance is not running on destination",
 			},
 		},
-		Draining:  map[string]bool{"compute-node-3": true},
+		Draining: map[string]bool{"compute-node-3": true},
+		// Nine servers still on the host, two of them moving, and one that
+		// cannot move at all — the shape of a drain most of the way through
+		// with something in its way.
+		Drains:    []openstack.Drain{{Host: "compute-node-3", Remaining: 9, Moving: 2, Stuck: 1}},
 		UpdatedAt: now,
 	})
 

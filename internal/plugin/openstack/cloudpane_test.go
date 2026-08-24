@@ -2,6 +2,7 @@ package openstack
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -508,5 +509,134 @@ func TestMigrationStyleSeparatesBrokenFromRecovered(t *testing.T) {
 	}
 	if plain := migrationStyle("completed", false).Render("x"); plain == broken {
 		t.Error("a still-broken failure renders like an unremarkable row")
+	}
+}
+
+// The drain block is the frame the migration table is read inside: which host
+// is being emptied, how far it has got, and whether anything is moving.
+func TestCloudPaneShowsDrainProgress(t *testing.T) {
+	now := at(t, "2026-07-28T12:00:00Z")
+	const host = "compute-node-3.site-a.example.com"
+	s := store.New()
+	s.Put(KeyMigrations, Migrations{
+		Items: []Migration{{ID: 1, InstanceUUID: "aaaaaaaa", Status: "migrating",
+			SourceCompute: host, DestCompute: "compute-node-1.site-a.example.com",
+			CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute)}},
+		Draining: map[string]bool{host: true},
+		Drains:   []Drain{{Host: host, Remaining: 12, Moving: 3, Stuck: 1}},
+	})
+
+	pane := newCloudPane(s, "v1.31.4")
+
+	// Given room, the section is headed and its hosts are indented under it,
+	// with a blank line before the migrations.
+	headed := stripANSI(pane.renderMigrations(90, 12, now))
+	for _, want := range []string{"Draining", "compute-node-3", "12 left", "3 moving", "1 stuck"} {
+		if !strings.Contains(headed, want) {
+			t.Errorf("drain block missing %q:\n%s", want, headed)
+		}
+	}
+	lines := strings.Split(headed, "\n")
+	if len(lines) < 3 || strings.TrimSpace(lines[2]) != "" {
+		t.Errorf("no blank line between the drain block and the migrations:\n%s", headed)
+	}
+	if !strings.HasPrefix(lines[1], "    ") {
+		t.Errorf("host line is not indented under the heading: %q", lines[1])
+	}
+
+	// Too short for the heading: the label folds back into the line and the
+	// separator is what survives, because it is the part carrying the meaning.
+	compact := stripANSI(pane.renderMigrations(90, 5, now))
+	if !strings.Contains(compact, "draining compute-node-3") {
+		t.Errorf("compact form lost its label:\n%s", compact)
+	}
+	if strings.Contains(compact, "Draining\n") {
+		t.Errorf("compact form spent a line on the heading:\n%s", compact)
+	}
+	if cl := strings.Split(compact, "\n"); len(cl) < 2 || strings.TrimSpace(cl[1]) != "" {
+		t.Errorf("compact form dropped the separator:\n%s", compact)
+	}
+}
+
+// The two states a migration table cannot tell apart. An empty table means
+// "finished" and "stalled" alike, so the block has to say which.
+func TestCloudPaneDistinguishesFinishedFromStalledDrain(t *testing.T) {
+	now := at(t, "2026-07-28T12:00:00Z")
+	const host = "compute-node-3.site-a.example.com"
+
+	for _, tc := range []struct {
+		name  string
+		drain Drain
+		want  string
+		notW  string
+	}{
+		{"finished", Drain{Host: host, Remaining: 0}, "empty", "left"},
+		{"stalled", Drain{Host: host, Remaining: 7}, "none moving", "empty"},
+		{"unreadable", Drain{Host: host, Err: errors.New("nope")}, "unavailable", "left"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := store.New()
+			s.Put(KeyMigrations, Migrations{
+				Draining: map[string]bool{host: true},
+				Drains:   []Drain{tc.drain},
+			})
+			body := stripANSI(newCloudPane(s, "v1.31.4").renderMigrations(90, 8, now))
+			if !strings.Contains(body, tc.want) {
+				t.Errorf("want %q in:\n%s", tc.want, body)
+			}
+			if strings.Contains(body, tc.notW) {
+				t.Errorf("did not want %q in:\n%s", tc.notW, body)
+			}
+		})
+	}
+}
+
+// A drain with nothing in flight publishes no migration rows, and that is
+// exactly when the block is the only thing worth drawing. The pane must not
+// fall through to its idle placeholder and hide it.
+func TestCloudPaneKeepsDrainBlockWithNoMigrations(t *testing.T) {
+	now := at(t, "2026-07-28T12:00:00Z")
+	const host = "compute-node-3.site-a.example.com"
+	s := store.New()
+	s.Put(KeyMigrations, Migrations{
+		Draining: map[string]bool{host: true},
+		Drains:   []Drain{{Host: host, Remaining: 7}},
+	})
+
+	pane := newCloudPane(s, "v1.31.4")
+	body := stripANSI(pane.renderMigrations(90, 8, now))
+	if strings.Contains(body, "no migrations") && !strings.Contains(body, "in flight") {
+		t.Errorf("idle placeholder hid the drain block:\n%s", body)
+	}
+	if !strings.Contains(body, "7 left") {
+		t.Errorf("drain progress missing:\n%s", body)
+	}
+	// And the pane must ask for the height it needs to draw it.
+	if got := pane.ContentHeight(90); got < 2 {
+		t.Errorf("ContentHeight = %d, too short for the block plus its note", got)
+	}
+}
+
+// Hosts past the probe cap are counted, never silently dropped — the block must
+// not imply the cloud has fewer drains running than it has.
+func TestCloudPaneCountsUnprobedDrains(t *testing.T) {
+	now := at(t, "2026-07-28T12:00:00Z")
+	draining := map[string]bool{}
+	for i := range 11 {
+		draining[fmt.Sprintf("compute-node-%d.site-a.example.com", i)] = true
+	}
+	drains := make([]Drain, 0, maxDrains)
+	for i := range maxDrains {
+		drains = append(drains, Drain{
+			Host:      fmt.Sprintf("compute-node-%d.site-a.example.com", i),
+			Remaining: 2, Moving: 1,
+		})
+	}
+	s := store.New()
+	s.Put(KeyMigrations, Migrations{Draining: draining, Drains: drains})
+
+	body := stripANSI(newCloudPane(s, "v1.31.4").renderMigrations(90, 30, now))
+	if !strings.Contains(body, "+ 3 more draining") {
+		t.Errorf("unprobed drains not accounted for:\n%s", body)
 	}
 }
