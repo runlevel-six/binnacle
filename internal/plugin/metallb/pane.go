@@ -115,15 +115,50 @@ func (p *pane) poolRows(state State) (cells [][]string, styles [][]lipgloss.Styl
 			// for it by name, which explains an otherwise baffling Pending.
 			name += " (manual)"
 		}
+		used, usedStyle := usage(pool)
 		cells = append(cells, []string{
 			name,
 			strings.Join(pool.Addresses, ", "),
 			advertised,
-			fmt.Sprintf("%d", pool.Assigned),
+			used,
 		})
-		styles = append(styles, []lipgloss.Style{{}, tui.StyleMuted, advStyle, {}})
+		styles = append(styles, []lipgloss.Style{{}, tui.StyleMuted, advStyle, usedStyle})
 	}
 	return cells, styles
+}
+
+// nearlyFull is the fraction of a pool left at which its remaining addresses are
+// worth a color.
+//
+// A tenth is late enough not to cry wolf on a pool that is merely being used,
+// and early enough to be a warning rather than a postmortem: a /24 flags with
+// twenty-five addresses to go, which is a few days of ordinary churn.
+const nearlyFull = 0.1
+
+// usage renders the IN USE cell.
+//
+// Where MetalLB publishes a pool's counts the cell is used-of-total, because the
+// number an operator wants is not how many addresses are out but how many are
+// left — this pane's stated reason for existing. Where only Services could be
+// attributed there is no honest total, so the bare count stands alone. Where
+// nothing could attribute them the cell says so: a zero would read as an idle
+// pool, and an idle pool is a pool somebody deletes.
+func usage(pool Pool) (string, lipgloss.Style) {
+	switch pool.Usage {
+	case UsageUnknown:
+		return "?", tui.StyleMuted
+	case UsageAnnotations:
+		return fmt.Sprintf("%d", pool.Assigned), lipgloss.Style{}
+	}
+
+	cell := fmt.Sprintf("%d/%d", pool.Assigned, pool.Total())
+	switch {
+	case pool.Exhausted():
+		return cell, tui.StyleErr
+	case pool.Total() > 0 && float64(pool.Available)/float64(pool.Total()) <= nearlyFull:
+		return cell, tui.StyleWarn
+	}
+	return cell, lipgloss.Style{}
 }
 
 // summary reports the speaker and any pending Services — the two things that

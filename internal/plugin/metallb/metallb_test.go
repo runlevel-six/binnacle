@@ -2,6 +2,7 @@ package metallb
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/muesli/termenv"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -596,5 +598,303 @@ func TestPoll_LocatesMetalLBInKubeSystem(t *testing.T) {
 	}
 	if ns != "kube-system" {
 		t.Errorf("got %q want kube-system", ns)
+	}
+}
+
+// --- pool usage -----------------------------------------------------------
+
+// The counts MetalLB publishes on the pool are the answer; reading them is what
+// replaced a Service tally that could not see shared or dual-stack addresses.
+//
+// The numbers are a real v0.15 pool: 10.4.192.12-10.4.192.99 is 88 addresses,
+// nine of them out.
+func TestPoolUsage_FromStatus(t *testing.T) {
+	o := unstructured.Unstructured{Object: map[string]any{
+		"status": map[string]any{
+			"assignedIPv4":  int64(9),
+			"availableIPv4": int64(79),
+			"assignedIPv6":  int64(0),
+			"availableIPv6": int64(0),
+		},
+	}}
+
+	assigned, available, source := poolUsage(o)
+	if source != UsageStatus {
+		t.Fatalf("source = %v, want UsageStatus", source)
+	}
+	if assigned != 9 || available != 79 {
+		t.Errorf("got %d assigned / %d available, want 9 / 79", assigned, available)
+	}
+	if total := (Pool{Assigned: assigned, Available: available}).Total(); total != 88 {
+		t.Errorf("total = %d, want 88", total)
+	}
+}
+
+// A dual-stack pool is one budget as far as "nearly full" goes.
+func TestPoolUsage_SumsBothFamilies(t *testing.T) {
+	o := unstructured.Unstructured{Object: map[string]any{
+		"status": map[string]any{
+			"assignedIPv4": int64(2), "availableIPv4": int64(8),
+			"assignedIPv6": int64(3), "availableIPv6": int64(7),
+		},
+	}}
+	if assigned, available, _ := poolUsage(o); assigned != 5 || available != 15 {
+		t.Errorf("got %d / %d, want 5 / 15", assigned, available)
+	}
+}
+
+// A MetalLB too old to publish the status must not be read as an empty pool:
+// "nothing is using this" and "cannot tell" are different things to show someone
+// deciding whether a pool is safe to delete.
+func TestPoolUsage_AbsentStatusIsUnknown(t *testing.T) {
+	o := unstructured.Unstructured{Object: map[string]any{
+		"spec": map[string]any{"addresses": []any{"10.0.0.1-10.0.0.9"}},
+	}}
+	if _, _, source := poolUsage(o); source != UsageUnknown {
+		t.Errorf("source = %v, want UsageUnknown", source)
+	}
+}
+
+// An empty pool does publish a status, and it is not the same as no status.
+func TestPoolUsage_ZeroAssignedIsStillKnown(t *testing.T) {
+	o := unstructured.Unstructured{Object: map[string]any{
+		"status": map[string]any{"assignedIPv4": int64(0), "availableIPv4": int64(10)},
+	}}
+	assigned, available, source := poolUsage(o)
+	if source != UsageStatus || assigned != 0 || available != 10 {
+		t.Errorf("got %d / %d (%v), want 0 / 10 (UsageStatus)", assigned, available, source)
+	}
+}
+
+// An unstructured object that has been through a plain JSON round trip carries
+// float64, and a count silently read as zero would look like an idle pool.
+func TestPoolUsage_ToleratesFloatCounts(t *testing.T) {
+	o := unstructured.Unstructured{Object: map[string]any{
+		"status": map[string]any{"assignedIPv4": float64(9), "availableIPv4": float64(79)},
+	}}
+	if assigned, available, source := poolUsage(o); source != UsageStatus || assigned != 9 || available != 79 {
+		t.Errorf("got %d / %d (%v), want 9 / 79 (UsageStatus)", assigned, available, source)
+	}
+}
+
+// --- service annotations --------------------------------------------------
+
+// The bug: sextant read only the request annotation, which nobody sets on a
+// cluster using autoAssign, so every pool reported nothing in use.
+func TestPoolOf_PrefersWhatMetalLBWrote(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        string
+	}{
+		{
+			// The whole population of a real v0.15 cluster looked like this: an
+			// allocation annotation and a pinned address, and no request for a
+			// pool anywhere.
+			name: "allocation annotation only",
+			annotations: map[string]string{
+				"metallb.io/ip-allocated-from-pool":          "default",
+				"metallb.universe.tf/ip-allocated-from-pool": "default",
+				"metallb.universe.tf/loadBalancerIPs":        "10.4.192.99",
+			},
+			want: "default",
+		},
+		{
+			// One Service on that cluster had only the newer prefix, having been
+			// reallocated after the upgrade. Preferring the legacy key loses it.
+			name:        "only the metallb.io prefix",
+			annotations: map[string]string{"metallb.io/ip-allocated-from-pool": "default"},
+			want:        "default",
+		},
+		{
+			name:        "legacy prefix alone still works",
+			annotations: map[string]string{"metallb.universe.tf/ip-allocated-from-pool": "old"},
+			want:        "old",
+		},
+		{
+			// A pinned Service before MetalLB has allocated: the request is all
+			// there is, and it is still worth attributing.
+			name:        "request annotation",
+			annotations: map[string]string{"metallb.universe.tf/address-pool": "manual"},
+			want:        "manual",
+		},
+		{
+			// Allocation wins over request: where they disagree, what happened
+			// beats what was asked for.
+			name: "allocation beats request",
+			annotations: map[string]string{
+				"metallb.io/ip-allocated-from-pool": "actual",
+				"metallb.io/address-pool":           "wanted",
+			},
+			want: "actual",
+		},
+		{name: "nothing", annotations: map[string]string{}, want: ""},
+		{
+			name:        "unrelated metallb annotations do not count",
+			annotations: map[string]string{"metallb.universe.tf/allow-shared-ip": "yes"},
+			want:        "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := poolOf(tc.annotations); got != tc.want {
+				t.Errorf("poolOf = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The published counts are better than anything a Service tally can produce, so
+// the fallback must not overwrite them.
+func TestAttributeServices_LeavesPublishedCountsAlone(t *testing.T) {
+	pools := []Pool{
+		{Name: "measured", Assigned: 9, Available: 79, Usage: UsageStatus},
+		{Name: "unmeasured"},
+	}
+	attributeServices(pools, []Service{
+		{Name: "a", ExternalIP: "10.0.0.1", Pool: "measured"},
+		{Name: "b", ExternalIP: "10.0.0.2", Pool: "unmeasured"},
+	})
+
+	if pools[0].Assigned != 9 || pools[0].Usage != UsageStatus {
+		t.Errorf("published count was overwritten: %d (%v)", pools[0].Assigned, pools[0].Usage)
+	}
+	if pools[1].Assigned != 1 || pools[1].Usage != UsageAnnotations {
+		t.Errorf("fallback did not count: %d (%v)", pools[1].Assigned, pools[1].Usage)
+	}
+}
+
+// A pool nothing names keeps UsageUnknown, so the pane can say so rather than
+// showing a zero that reads as an idle pool.
+func TestAttributeServices_UnnamedPoolStaysUnknown(t *testing.T) {
+	pools := []Pool{{Name: "lonely"}}
+	attributeServices(pools, []Service{{Name: "a", ExternalIP: "10.0.0.1"}})
+	if pools[0].Usage != UsageUnknown {
+		t.Errorf("usage = %v, want UsageUnknown", pools[0].Usage)
+	}
+}
+
+func TestExhaustedPools(t *testing.T) {
+	state := State{Pools: []Pool{
+		{Name: "full", Assigned: 10, Available: 0, Usage: UsageStatus},
+		{Name: "roomy", Assigned: 1, Available: 9, Usage: UsageStatus},
+		// Never allocated from, so not "exhausted" — an empty pool with no
+		// capacity is a misconfiguration, not a pool that filled up.
+		{Name: "empty", Usage: UsageStatus},
+		// No published counts, so nothing can be claimed about it.
+		{Name: "unknown", Usage: UsageUnknown},
+	}}
+	got := state.ExhaustedPools()
+	if len(got) != 1 || got[0] != "full" {
+		t.Errorf("got %v, want [full]", got)
+	}
+}
+
+// --- the IN USE cell ------------------------------------------------------
+
+func TestUsageCell(t *testing.T) {
+	tests := []struct {
+		name string
+		pool Pool
+		want string
+	}{
+		// The number an operator wants is not how many are out but how many are
+		// left, so the cell carries both.
+		{"published", Pool{Assigned: 9, Available: 79, Usage: UsageStatus}, "9/88"},
+		{"empty pool", Pool{Assigned: 0, Available: 88, Usage: UsageStatus}, "0/88"},
+		{"full pool", Pool{Assigned: 88, Available: 0, Usage: UsageStatus}, "88/88"},
+		// No honest total exists, so the bare count stands alone rather than
+		// inventing a denominator.
+		{"counted from annotations", Pool{Assigned: 3, Usage: UsageAnnotations}, "3"},
+		// Not zero: a zero reads as an idle pool, and an idle pool gets deleted.
+		{"unmeasurable", Pool{Usage: UsageUnknown}, "?"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, _ := usage(tc.pool); got != tc.want {
+				t.Errorf("usage = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Running out of addresses is the failure this pane exists to see coming, so a
+// pool near its limit must not look like any other row.
+func TestUsageCell_ColorsAPoolRunningOut(t *testing.T) {
+	plain := func(p Pool) string { _, st := usage(p); return st.Render("x") }
+
+	roomy := plain(Pool{Assigned: 10, Available: 90, Usage: UsageStatus})
+	nearly := plain(Pool{Assigned: 95, Available: 5, Usage: UsageStatus})
+	full := plain(Pool{Assigned: 100, Available: 0, Usage: UsageStatus})
+
+	if roomy == nearly {
+		t.Error("a pool with a tenth left looks like one that is barely used")
+	}
+	if nearly == full {
+		t.Error("an exhausted pool looks like one that is merely close")
+	}
+}
+
+// End to end on the shape that produced the bug report: a v0.15 cluster where
+// every LoadBalancer carries an allocation annotation and none carries a
+// request. The pane used to render 0 for each pool.
+func TestPane_ShowsUsageOnAnAutoAssignCluster(t *testing.T) {
+	pools := []Pool{
+		{Namespace: "kube-system", Name: "default",
+			Addresses: []string{"10.4.192.12-10.4.192.99"}, AutoAssign: true,
+			Advertised: []string{"L2"}, Assigned: 9, Available: 79, Usage: UsageStatus},
+		{Namespace: "kube-system", Name: "rook-rgw-replication",
+			Addresses: []string{"10.252.4.20-10.252.4.20"}, AutoAssign: true,
+			Advertised: []string{"L2"}, Assigned: 0, Available: 1, Usage: UsageStatus},
+	}
+	services := make([]Service, 0, 9)
+	for i := range 9 {
+		services = append(services, Service{
+			Namespace: "mgd-rabbitmq", Name: fmt.Sprintf("svc-%d", i),
+			ExternalIP: fmt.Sprintf("10.4.192.%d", 15+i),
+			// Only what MetalLB wrote; no request annotation anywhere.
+			Pool: "default",
+		})
+	}
+
+	s := store.New()
+	s.Put(KeyState, State{
+		Pools: pools, Services: services, Namespace: "kube-system",
+		SpeakerReady: 3, SpeakerDesired: 3, UpdatedAt: time.Now(),
+	})
+	body := stripANSI(newPane(s).Render(100, 12, false))
+
+	if !strings.Contains(body, "9/88") {
+		t.Errorf("the default pool does not report its usage:\n%s", body)
+	}
+	if !strings.Contains(body, "0/1") {
+		t.Errorf("the unused pool does not report its capacity:\n%s", body)
+	}
+	if strings.Contains(body, "Service(s) pending") {
+		t.Errorf("nothing is pending, but the summary says otherwise:\n%s", body)
+	}
+}
+
+// A full pool is a LoadBalancer that will not come up next time anyone asks, and
+// the point of MetalLB publishing counts is to say so before that happens.
+func TestCells_WarnsBeforeAPoolRunsOut(t *testing.T) {
+	s := store.New()
+	s.Put(KeyState, State{
+		Pools: []Pool{{Name: "default", Advertised: []string{"L2"},
+			Assigned: 88, Available: 0, Usage: UsageStatus}},
+		Services:       []Service{{Name: "ok", ExternalIP: "10.0.0.1"}},
+		SpeakerReady:   3,
+		SpeakerDesired: 3,
+	})
+
+	cells := (&Plugin{}).Cells(s)
+	if len(cells) != 1 {
+		t.Fatalf("got %d cells, want 1", len(cells))
+	}
+	if cells[0].Status != tui.BannerWarn {
+		t.Errorf("status = %v, want a warning", cells[0].Status)
+	}
+	if !strings.Contains(cells[0].Detail, "default") {
+		t.Errorf("detail %q does not name the full pool", cells[0].Detail)
 	}
 }

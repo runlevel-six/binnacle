@@ -89,7 +89,10 @@ func putPlugins(s *store.Store, now time.Time) {
 			{
 				Namespace: "metallb-system", Name: "default",
 				Addresses:  []string{"192.0.2.200-192.0.2.249"},
-				AutoAssign: true, Advertised: []string{"L2"}, Assigned: 3,
+				AutoAssign: true, Advertised: []string{"L2"},
+				// Fifty addresses, three out. The counts are MetalLB's own, as
+				// they are on any release that publishes a pool status.
+				Assigned: 3, Available: 47, Usage: metallb.UsageStatus,
 			},
 			{
 				// Deliberately unadvertised: a pool that hands out addresses
@@ -97,7 +100,8 @@ func putPlugins(s *store.Store, now time.Time) {
 				// pane exists to surface.
 				Namespace: "metallb-system", Name: "reserved",
 				Addresses:  []string{"192.0.2.250-192.0.2.254"},
-				AutoAssign: false, Assigned: 0,
+				AutoAssign: false,
+				Assigned:   0, Available: 5, Usage: metallb.UsageStatus,
 			},
 		},
 		Services: []metallb.Service{
