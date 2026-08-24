@@ -526,11 +526,35 @@ func TestCloudPaneShowsDrainProgress(t *testing.T) {
 		Drains:   []Drain{{Host: host, Remaining: 12, Moving: 3, Stuck: 1}},
 	})
 
-	body := stripANSI(newCloudPane(s, "v1.31.4").renderMigrations(90, 10, now))
-	for _, want := range []string{"draining", "compute-node-3", "12 left", "3 moving", "1 stuck"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("drain block missing %q:\n%s", want, body)
+	pane := newCloudPane(s, "v1.31.4")
+
+	// Given room, the section is headed and its hosts are indented under it,
+	// with a blank line before the migrations.
+	headed := stripANSI(pane.renderMigrations(90, 12, now))
+	for _, want := range []string{"Draining", "compute-node-3", "12 left", "3 moving", "1 stuck"} {
+		if !strings.Contains(headed, want) {
+			t.Errorf("drain block missing %q:\n%s", want, headed)
 		}
+	}
+	lines := strings.Split(headed, "\n")
+	if len(lines) < 3 || strings.TrimSpace(lines[2]) != "" {
+		t.Errorf("no blank line between the drain block and the migrations:\n%s", headed)
+	}
+	if !strings.HasPrefix(lines[1], "    ") {
+		t.Errorf("host line is not indented under the heading: %q", lines[1])
+	}
+
+	// Too short for the heading: the label folds back into the line and the
+	// separator is what survives, because it is the part carrying the meaning.
+	compact := stripANSI(pane.renderMigrations(90, 5, now))
+	if !strings.Contains(compact, "draining compute-node-3") {
+		t.Errorf("compact form lost its label:\n%s", compact)
+	}
+	if strings.Contains(compact, "Draining\n") {
+		t.Errorf("compact form spent a line on the heading:\n%s", compact)
+	}
+	if cl := strings.Split(compact, "\n"); len(cl) < 2 || strings.TrimSpace(cl[1]) != "" {
+		t.Errorf("compact form dropped the separator:\n%s", compact)
 	}
 }
 

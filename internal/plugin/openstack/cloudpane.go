@@ -75,7 +75,13 @@ func (p *cloudPane) ContentWidth() int {
 	if len(rows) > 0 {
 		want = table.AppetiteWidth(migrationCols, rows)
 	}
-	return max(want, tui.WidestLine(p.drainBlock()))
+	if hosts := p.drainHosts(); len(hosts) > 0 {
+		// The same allowance AppetiteWidth makes: these lines are indented to
+		// the tables' left edge, so a pane given exactly the bare text width
+		// would truncate them by the pad.
+		want = max(want, tui.WidestLine(hosts)+table.EdgePadCap)
+	}
+	return want
 }
 
 // ContentHeight implements [tui.ContentHeightPane]: the drain block, the
@@ -88,7 +94,13 @@ func (p *cloudPane) ContentWidth() int {
 // The unresolved backlog is deliberately not counted here; see [migrationRows].
 func (p *cloudPane) ContentHeight(int) int {
 	rows, ok := p.migrationRows(time.Now())
-	drains := len(p.drainBlock())
+	// The headed form, since that is what Render draws whenever the grid grants
+	// what is asked for here. Asking for the compact form's height would be a
+	// request for exactly the size at which the heading has to be dropped.
+	drains := len(p.drainHosts())
+	if drains > 0 {
+		drains += drainSectionCost
+	}
 	switch {
 	case !ok:
 		// Still polling, or the poll failed. Both draw a body the reader may need
@@ -104,13 +116,15 @@ func (p *cloudPane) ContentHeight(int) int {
 	return drains + len(rows) + 2
 }
 
-// drainBlock is the progress lines for the current snapshot, or nil.
-func (p *cloudPane) drainBlock() []string {
+// drainHosts is the unlabelled per-host progress lines for the current
+// snapshot, or nil. The extent methods measure these rather than the composed
+// block, so they do not depend on which form Render picks.
+func (p *cloudPane) drainHosts() []string {
 	snap, ok := store.Get[Migrations](p.store, KeyMigrations)
 	if !ok || snap.Err != nil {
 		return nil
 	}
-	return drainLines(snap)
+	return drainHostLines(snap)
 }
 
 // resourcesPane is the cloud's resource census, as a section of the Cloud frame.
@@ -182,19 +196,13 @@ var unresolvedCols = []table.Column{
 	{Header: "FAULT", Stretch: true},
 }
 
-// drainLines is the progress block: one line per host being emptied.
-//
-// It leads the pane because it is the frame the table is read inside. A row
-// saying a server is moving off some host means one thing when that host is the
-// one you are waiting on and another when it is not, and the complaint that
-// started this work — migrations showing that had nothing to do with the drain
-// — was in large part that the pane never said which host that was.
+// drainHostLines is one line per host being emptied, unlabelled and unindented.
 //
 // An empty host is called out rather than left as "0 left", because it is the
 // line the operator is waiting for: the drain is finished and the maintenance
 // can start. A stalled one is the same shape with nothing moving, which a
 // migration table alone cannot distinguish from a finished one.
-func drainLines(snap Migrations) []string {
+func drainHostLines(snap Migrations) []string {
 	if len(snap.Drains) == 0 {
 		return nil
 	}
@@ -204,11 +212,10 @@ func drainLines(snap Migrations) []string {
 		host := tui.StyleAccent.Render(ShortHost(d.Host))
 		switch {
 		case d.Err != nil:
-			lines = append(lines, "draining "+host+": "+
-				tui.StyleWarn.Render("server count unavailable"))
+			lines = append(lines, host+": "+tui.StyleWarn.Render("server count unavailable"))
 			continue
 		case d.Remaining == 0:
-			lines = append(lines, "draining "+host+": "+tui.StyleOK.Render("empty"))
+			lines = append(lines, host+": "+tui.StyleOK.Render("empty"))
 			continue
 		}
 
@@ -223,7 +230,7 @@ func drainLines(snap Migrations) []string {
 		if d.Stuck > 0 {
 			parts = append(parts, tui.StyleErr.Render(fmt.Sprintf("%d stuck", d.Stuck)))
 		}
-		lines = append(lines, "draining "+host+": "+strings.Join(parts, ", "))
+		lines = append(lines, host+": "+strings.Join(parts, ", "))
 	}
 
 	// Hosts past the probe cap. Named as a count rather than omitted, so the
@@ -232,6 +239,48 @@ func drainLines(snap Migrations) []string {
 		lines = append(lines, tui.StyleMuted.Render(fmt.Sprintf("+ %d more draining", rest)))
 	}
 	return lines
+}
+
+// drainSectionCost is what the headed form spends beyond its host lines: a
+// heading, and the blank line that separates it from the migrations below.
+const drainSectionCost = 2
+
+// drainLines is the progress block as it will be drawn.
+//
+// It leads the pane because it is the frame the table is read inside. A row
+// saying a server is moving off some host means one thing when that host is the
+// one you are waiting on and another when it is not, and the complaint that
+// started this work — migrations showing that had nothing to do with the drain
+// — was in large part that the pane never said which host that was.
+//
+// headed sets the section off the way the unresolved detail below it is set
+// off: a heading, the hosts indented under it to the same left edge the tables
+// use, and a blank line after. That is two lines, which a pane at [MinHeight]
+// does not have — so the compact form folds the label into each line instead
+// and spends one, keeping the separator and losing only the heading. The
+// heading is the part that can be inferred from the words; the gap is not.
+func drainLines(snap Migrations, width int, headed bool) []string {
+	body := drainHostLines(snap)
+	if len(body) == 0 {
+		return nil
+	}
+
+	if !headed {
+		for i, ln := range body {
+			body[i] = "draining " + ln
+		}
+		return append(body, "")
+	}
+
+	// Aligned with the migration table's own left edge rather than a margin of
+	// this pane's invention; see [table.PaneLeftPad].
+	indent := strings.Repeat(" ", table.PaneLeftPad(width, migrationCols))
+	out := make([]string, 0, len(body)+drainSectionCost)
+	out = append(out, tui.StyleAccent.Render("Draining"))
+	for _, ln := range body {
+		out = append(out, indent+ln)
+	}
+	return append(out, "")
 }
 
 // migrationRows builds the table rows for the migrations worth listing, and
@@ -320,7 +369,15 @@ func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
 	}
 
 	shown := snap.Relevant(now)
-	drains := drainLines(snap)
+	// Headed when there is room for the heading and the blank line on top of
+	// whatever follows: a summary, a table header and at least one row worth
+	// reading, or the single line saying nothing is in flight.
+	hosts := len(drainHostLines(snap))
+	below := 1
+	if len(shown.Rows) > 0 {
+		below = 3
+	}
+	drains := drainLines(snap, w, hosts > 0 && h >= hosts+drainSectionCost+below)
 	if len(shown.Rows) == 0 && len(shown.Unresolved) == 0 && len(drains) == 0 {
 		// An idle list during a rollout is good news — it means the drain is not
 		// stuck — so it is worth saying rather than leaving an empty table. Outside
@@ -330,6 +387,22 @@ func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
 			return table.Placeholder(w, h, "no active migrations")
 		}
 		return table.Placeholder(w, h, "no migrations")
+	}
+
+	// At the very bottom of the size range the separator is the first thing to
+	// go. A table left with only its header and a "+ N more" tells the reader
+	// nothing, and the gap is a courtesy where that row is not.
+	//
+	// One line more than the heading asks for when the rows will not all fit,
+	// because a table that has to truncate spends one of them on the overflow
+	// marker: three lines below the block would buy a summary, a header and a
+	// "+ N more", and no content at all. Rows that fit need no such allowance.
+	sep := below
+	if seats := h - len(drains) - 2; len(shown.Rows) > seats {
+		sep++
+	}
+	if len(drains) > 0 && h-len(drains) < sep && drains[len(drains)-1] == "" {
+		drains = drains[:len(drains)-1]
 	}
 
 	// A drain with nothing moving publishes no migration rows at all, and that
