@@ -341,19 +341,20 @@ func pluginRows(s *store.Store) []reportRow {
 		if snap.Err != nil {
 			row.summary = "error: " + snap.Err.Error()
 		} else {
-			shown := openstack.Relevant(openstack.LatestPerServer(snap.Items), time.Now())
-			failed := 0
-			for _, m := range shown {
-				if openstack.Failed(m.Status) {
-					failed++
-				}
+			shown := snap.Relevant(time.Now())
+			// Every number matters for a different reason: the history proves
+			// the endpoint answers, the shown count is what the pane would
+			// display, and the unresolved count is the backlog it is holding
+			// back. Whether the ERROR probe ran at all is reported too, since
+			// an unanswered probe silently reverts the retention rule to the
+			// age window and would otherwise look like an empty backlog.
+			row.summary = fmt.Sprintf("%d in history, %d shown (%d failed), %d unresolved",
+				len(snap.Items), len(shown.Rows), shown.Failures(), len(shown.Unresolved))
+			if !snap.BrokenKnown {
+				row.summary += "; ERROR probe unavailable"
 			}
-			// Both numbers matter: the history proves the endpoint answers, the
-			// shown count is what the pane would actually display.
-			row.summary = fmt.Sprintf("%d in history, %d shown (%d failed)",
-				len(snap.Items), len(shown), failed)
-			if len(shown) > 0 {
-				m := shown[0]
+			if len(shown.Rows) > 0 {
+				m := shown.Rows[0]
 				row.sample = fmt.Sprintf("%s %s %s: %s -> %s", m.Status, m.Type, m.InstanceUUID,
 					openstack.ShortHost(m.SourceCompute), openstack.ShortHost(m.DestCompute))
 			}

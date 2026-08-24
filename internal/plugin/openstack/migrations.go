@@ -10,6 +10,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/utils"
 )
 
@@ -44,15 +45,42 @@ type Migration struct {
 	UpdatedAt     time.Time
 }
 
+// BrokenServer is what Nova says about an instance currently in ERROR.
+//
+// Host is where the instance actually is, which after a failed live migration
+// is often the destination it half-landed on rather than the source it was
+// meant to leave. That is the field that decides whether a stale failure is in
+// the way of the drain happening now.
+type BrokenServer struct {
+	UUID string
+	Name string
+	Host string
+	// Fault is Nova's own explanation, when it gave one.
+	Fault string
+}
+
 // Migrations is what the migration poll publishes: the cloud's full recent
-// migration history, newest first.
+// migration history, newest first, plus the context needed to judge which of it
+// still matters.
 //
 // The history is published unfiltered. Deciding which rows are worth showing is
 // a display question that depends on the clock, and a snapshot that has already
 // discarded everything but the interesting rows cannot answer a different
 // question later.
 type Migrations struct {
-	Items     []Migration
+	Items []Migration
+	// Broken maps instance UUID to what Nova reports about servers in ERROR,
+	// read in the same poll as Items so the join cannot tear across two.
+	Broken map[string]BrokenServer
+	// BrokenKnown separates "nothing is broken" from "could not ask". A
+	// credential without all-tenants access, or a Nova mid-rollout, leaves this
+	// false — see [Migrations.Relevant], where it can only ever extend a row's
+	// life and never cut one short.
+	BrokenKnown bool
+	// Draining is the set of compute hosts an operator has disabled, captured
+	// at the same instant. A disabled host is how a drain looks; see the
+	// package comment.
+	Draining  map[string]bool
 	UpdatedAt time.Time
 	Err       error
 }
@@ -181,19 +209,94 @@ func ShortStatus(s string) string {
 	return s
 }
 
-// Relevant keeps the migrations worth showing at now: everything in flight, plus
-// failures inside [FailedWindow].
-func Relevant(items []Migration, now time.Time) []Migration {
-	out := make([]Migration, 0, len(items))
-	for _, m := range items {
+// Shown is the split a pane needs: the rows worth listing at this size, and the
+// unresolved failures worth counting but not spending a row on.
+type Shown struct {
+	// Rows is what the compact pane lists, failures first.
+	Rows []Migration
+	// Unresolved is every failure whose instance is still in ERROR and whose
+	// host nobody is draining right now. Named in the summary line and listed
+	// only when the pane has rows to spare, which is what zoom is for.
+	Unresolved []Migration
+}
+
+// Failures counts the rows in Rows that ended badly.
+func (s Shown) Failures() int {
+	n := 0
+	for _, m := range s.Rows {
+		if Failed(m.Status) {
+			n++
+		}
+	}
+	return n
+}
+
+// Relevant decides which of the history is worth the operator's attention now.
+//
+// Everything in flight is listed, as is any failure inside [FailedWindow] —
+// "this just happened" is worth a row whether or not the instance recovered,
+// because a migration that failed is a server that did not leave the host.
+//
+// # Unresolved failures are retained, not expired
+//
+// A failure whose instance is still in ERROR is never dropped on age. It cannot
+// be live-migrated, so it is a landmine: it costs nothing until the rollout
+// reaches its host, and then it costs the drain. Expiring it on a timer
+// disarms the detector before the next upgrade — a two-day rollout means last
+// week's breakage is invisible exactly when it is about to matter.
+//
+// What is bounded is not how long such a row is *kept* but when it takes up
+// space. It is listed while its instance sits on a host being drained now, and
+// counted the rest of the time. So a stale-VM backlog cannot crowd out the live
+// drain, and nothing disappears silently either.
+//
+// When the ERROR probe could not run, BrokenKnown is false and no row is ever
+// promoted or retained on this path — the behavior falls back to the window
+// alone. The probe can only extend a row's life. A probe that failed must not
+// be able to hide a failure, which would be a worse bug than the one this
+// solves.
+func (m Migrations) Relevant(now time.Time) Shown {
+	items := LatestPerServer(m.Items)
+	out := Shown{Rows: make([]Migration, 0, len(items))}
+	for _, mg := range items {
 		switch {
-		case Active(m.Status):
-			out = append(out, m)
-		case Failed(m.Status) && now.Sub(m.UpdatedAt) <= FailedWindow:
-			out = append(out, m)
+		case Active(mg.Status):
+			out.Rows = append(out.Rows, mg)
+		case !Failed(mg.Status):
+			// A terminal success, or a status this build does not know. Both
+			// leave the pane; see [Active].
+		case now.Sub(mg.UpdatedAt) <= FailedWindow:
+			out.Rows = append(out.Rows, mg)
+		case m.blocking(mg):
+			out.Rows = append(out.Rows, mg)
+		case m.stillBroken(mg):
+			out.Unresolved = append(out.Unresolved, mg)
 		}
 	}
 	return out
+}
+
+// stillBroken reports whether a migration's instance is one Nova currently
+// lists in ERROR.
+func (m Migrations) stillBroken(mg Migration) bool {
+	if !m.BrokenKnown || mg.InstanceUUID == "" {
+		return false
+	}
+	_, broken := m.Broken[mg.InstanceUUID]
+	return broken
+}
+
+// blocking reports whether a still-broken instance is sitting on a host someone
+// is draining, which is the moment a retained failure earns a row back.
+//
+// The instance's *current* host is what matters, not the migration's source: a
+// failed live migration often leaves the server on the destination it
+// half-reached, and that is the host it will now obstruct.
+func (m Migrations) blocking(mg Migration) bool {
+	if !m.stillBroken(mg) {
+		return false
+	}
+	return m.Draining[m.Broken[mg.InstanceUUID].Host]
 }
 
 // migrationsResponse is the wire shape of GET /os-migrations.
@@ -251,19 +354,25 @@ var migrationMicroversions = []string{"2.59", "2.23"}
 // operator set, which is the point of asking at all.
 const migrationLimit = 1000
 
-// pollMigrations fetches the migration history.
+// pollMigrations fetches the migration history, and the broken instances that
+// decide how long a failure in it stays interesting.
 //
 // The whole page is requested rather than a status-filtered slice. Nova has no
 // server-side filter narrow enough for what the pane wants — in flight, or
 // failed within two hours — so the filtering happens here.
-func (p *Plugin) pollMigrations(ctx context.Context) Migrations {
-	snap := Migrations{UpdatedAt: time.Now()}
+//
+// draining is the set of disabled compute hosts as of the same publish; it is
+// passed in rather than read from the store so the snapshot is self-contained
+// and the pane does not have to join two independently-timed polls.
+func (p *Plugin) pollMigrations(ctx context.Context, draining map[string]bool) Migrations {
+	snap := Migrations{UpdatedAt: time.Now(), Draining: draining}
 
 	client, err := p.migrationsClient(ctx)
 	if err != nil {
 		snap.Err = err
 		return snap
 	}
+	snap.Broken, snap.BrokenKnown = brokenServers(ctx, client)
 
 	url := client.ServiceURL("os-migrations")
 	if supportsMigrationPaging(client.Microversion) {
@@ -299,6 +408,45 @@ func (p *Plugin) pollMigrations(ctx context.Context) Migrations {
 		return snap.Items[i].ID > snap.Items[j].ID
 	})
 	return snap
+}
+
+// brokenServers lists every instance Nova currently reports in ERROR, keyed by
+// UUID. The second return distinguishes an empty cloud from an unanswered
+// question; see [Migrations.BrokenKnown].
+//
+// One call, not one per row. The status filter is what makes that affordable:
+// the join is against migration records, so instances in ERROR for reasons
+// having nothing to do with a migration cost a map entry and no more. The
+// detail listing is what Nova serves here regardless, and it is what carries
+// the host and the fault — the two things that turn "this failed" into "this is
+// in the way, and here is why".
+//
+// A failure is not the snapshot's failure. An operator whose credential can
+// read migrations but not every project's servers still gets the pane; it falls
+// back to the age window alone.
+func brokenServers(ctx context.Context, client *gophercloud.ServiceClient) (map[string]BrokenServer, bool) {
+	page, err := servers.List(client, servers.ListOpts{
+		AllTenants: true,
+		Status:     "ERROR",
+	}).AllPages(ctx)
+	if err != nil {
+		return nil, false
+	}
+	items, err := servers.ExtractServers(page)
+	if err != nil {
+		return nil, false
+	}
+
+	out := make(map[string]BrokenServer, len(items))
+	for _, s := range items {
+		out[s.ID] = BrokenServer{
+			UUID:  s.ID,
+			Name:  s.Name,
+			Host:  s.Host,
+			Fault: strings.TrimSpace(s.Fault.Message),
+		}
+	}
+	return out, true
 }
 
 // migrationsClient builds the compute client for the migration poll, with the

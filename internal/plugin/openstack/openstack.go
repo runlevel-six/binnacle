@@ -117,6 +117,28 @@ type State struct {
 	Err       error
 }
 
+// DrainingHosts is the set of compute hosts an operator has taken out of the
+// scheduler, which is what draining a hypervisor looks like from the API.
+//
+// Only nova-compute is considered. A disabled neutron agent is a different
+// event, and a host is not being emptied of servers because its metadata agent
+// is off.
+//
+// The name overstates it slightly and deliberately: a host disabled for a dead
+// power supply is not being drained either, and this will call it draining. The
+// rest of the plugin already reads disabled as intentional-not-broken — see the
+// package comment — so this is the same heuristic rather than a second one, and
+// the cost of the false positive is one extra row on a pane.
+func DrainingHosts(s State) map[string]bool {
+	out := map[string]bool{}
+	for _, a := range s.Agents {
+		if a.Service == ServiceCompute && a.Binary == "nova-compute" && !a.Enabled {
+			out[a.Host] = true
+		}
+	}
+	return out
+}
+
 // DownAgents returns the agents that are down while still enabled — the ones that
 // need attention.
 func (s State) DownAgents() []Agent {
@@ -296,8 +318,15 @@ func parseClouds(cloud string) (
 func (p *Plugin) Run(ctx context.Context, s *store.Store) error {
 	polls := 0
 	publish := func() {
-		s.Put(KeyState, p.poll(ctx))
-		s.Put(KeyMigrations, p.pollMigrations(ctx))
+		// The agent poll comes first because the migration poll consumes it: a
+		// disabled compute host is what a drain looks like, and that is what
+		// decides whether an old unresolved failure is in the way. Reading it
+		// from the same publish keeps the two consistent — a pane joining two
+		// independently-timed snapshots would promote and demote rows on the
+		// seam between them.
+		state := p.poll(ctx)
+		s.Put(KeyState, state)
+		s.Put(KeyMigrations, p.pollMigrations(ctx, DrainingHosts(state)))
 		if polls%inventoryEvery == 0 {
 			s.Put(KeyInventory, p.pollInventory(ctx))
 		}

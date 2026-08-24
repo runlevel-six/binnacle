@@ -64,7 +64,7 @@ func (p *cloudPane) Render(w, h int, _ bool) string {
 // ContentWidth implements [tui.ContentWidthPane]: the migration table, which is a
 // status, a type, a short UUID and a pair of compute hostnames.
 func (p *cloudPane) ContentWidth() int {
-	rows, _, _ := p.migrationRows(time.Now())
+	rows, _ := p.migrationRows(time.Now())
 	if len(rows) == 0 {
 		return 0
 	}
@@ -78,7 +78,7 @@ func (p *cloudPane) ContentWidth() int {
 // about: this pane spends most of its life saying "no migrations", and a whole
 // grid row spent centering those two words is a row the fleet tables wanted.
 func (p *cloudPane) ContentHeight(int) int {
-	rows, _, ok := p.migrationRows(time.Now())
+	rows, ok := p.migrationRows(time.Now())
 	switch {
 	case !ok:
 		// Still polling, or the poll failed. Both draw a body the reader may need
@@ -147,19 +147,38 @@ var migrationCols = []table.Column{
 	{Header: "AGE"},
 }
 
-// migrationRows builds the table rows and their styles for the migrations in
-// flight, and reports whether the poll has produced a usable answer at all.
+// unresolvedCols is the zoomed detail table: which server, where it actually
+// is, how long it has been that way, and Nova's own reason.
 //
-// Shared by Render and the extent methods, so the size this pane asks for is
-// measured from the rows it is about to draw.
-func (p *cloudPane) migrationRows(now time.Time) (rows [][]string, styles []lipgloss.Style, ok bool) {
+// The fault stretches because it is the only column whose useful length is
+// unbounded, and it is last because it is the one worth truncating.
+var unresolvedCols = []table.Column{
+	{Header: "SERVER"},
+	{Header: "ON HOST"},
+	{Header: "AGE"},
+	{Header: "FAULT", Stretch: true},
+}
+
+// migrationRows builds the table rows for the migrations worth listing, and
+// reports whether the poll has produced a usable answer at all.
+//
+// This is what the extent methods measure, so it deliberately covers the
+// compact form only: the unresolved backlog is not in it. Asking the grid for
+// height to draw the backlog would hand this pane a tall cell in the ordinary
+// layout, and leave zoom with nothing further to show.
+func (p *cloudPane) migrationRows(now time.Time) (rows [][]string, ok bool) {
 	snap, have := store.Get[Migrations](p.store, KeyMigrations)
 	if !have || snap.Err != nil {
-		return nil, nil, false
+		return nil, false
 	}
-	items := Relevant(LatestPerServer(snap.Items), now)
-	rows = make([][]string, 0, len(items))
-	styles = make([]lipgloss.Style, 0, len(items))
+	rows, _ = migrationTable(snap, snap.Relevant(now).Rows, now)
+	return rows, true
+}
+
+// migrationTable renders the in-flight table's cells and per-row styles.
+func migrationTable(snap Migrations, items []Migration, now time.Time) ([][]string, []lipgloss.Style) {
+	rows := make([][]string, 0, len(items))
+	styles := make([]lipgloss.Style, 0, len(items))
 	for _, m := range items {
 		dst := ShortHost(m.DestCompute)
 		if dst == "" {
@@ -174,9 +193,46 @@ func (p *cloudPane) migrationRows(now time.Time) (rows [][]string, styles []lipg
 			ShortHost(m.SourceCompute) + " → " + dst,
 			age(now, m.UpdatedAt),
 		})
-		styles = append(styles, migrationStyle(m.Status))
+		styles = append(styles, migrationStyle(m.Status, snap.stillBroken(m)))
 	}
-	return rows, styles, true
+	return rows, styles
+}
+
+// unresolvedRows renders the detail table behind the summary's unresolved count.
+func unresolvedRows(snap Migrations, items []Migration, now time.Time) [][]string {
+	rows := make([][]string, 0, len(items))
+	for _, m := range items {
+		b := snap.Broken[m.InstanceUUID]
+		fault := b.Fault
+		if fault == "" {
+			fault = "—"
+		}
+		rows = append(rows, []string{
+			shortUUID(m.InstanceUUID),
+			ShortHost(b.Host),
+			age(now, m.UpdatedAt),
+			fault,
+		})
+	}
+	return rows
+}
+
+// failureBudget caps how many failure rows may be drawn, so a backlog of them
+// cannot evict the drain the operator is actually watching.
+//
+// Failures sort first, so without this the table's own clipping keeps every
+// failure and drops every active one — the exact inversion of what a pane
+// watched during a drain is for. Half the available rows, and never fewer than
+// one: a single failure is the thing most worth seeing, and a pane too short to
+// show both still shows that.
+func failureBudget(failures, available int) int {
+	if available <= 0 {
+		return 0
+	}
+	if failures <= available/2 {
+		return failures
+	}
+	return max(available/2, 1)
 }
 
 func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
@@ -188,8 +244,8 @@ func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
 		return table.ErrorBody(w, h, snap.Err)
 	}
 
-	items := Relevant(LatestPerServer(snap.Items), now)
-	if len(items) == 0 {
+	shown := snap.Relevant(now)
+	if len(shown.Rows) == 0 && len(shown.Unresolved) == 0 {
 		// An idle list during a rollout is good news — it means the drain is not
 		// stuck — so it is worth saying rather than leaving an empty table. Outside
 		// one there is no drain to be reassured about, and the same words would
@@ -200,21 +256,42 @@ func (p *cloudPane) renderMigrations(w, h int, now time.Time) string {
 		return table.Placeholder(w, h, "no migrations")
 	}
 
-	rows, styles, _ := p.migrationRows(now)
-	failed := 0
-	for _, m := range items {
-		if Failed(m.Status) {
-			failed++
-		}
-	}
-
-	summary := tui.StyleAccent.Render(fmt.Sprintf("%d active", len(items)-failed))
+	failed := shown.Failures()
+	summary := tui.StyleAccent.Render(fmt.Sprintf("%d active", len(shown.Rows)-failed))
 	if failed > 0 {
 		summary += "  " + tui.StyleErr.Render(fmt.Sprintf("%d failed", failed))
 	}
+	if n := len(shown.Unresolved); n > 0 {
+		// Retained but not listed. Named here so a backlog of broken instances
+		// is never silently absent, and enumerated on zoom.
+		summary += "  " + tui.StyleWarn.Render(fmt.Sprintf("%d unresolved", n))
+	}
 
-	t := table.Table{Cols: migrationCols, Rows: rows, RowStyles: styles}
-	return table.ClipLines(summary+"\n"+t.Render(w, h-1), h)
+	// One line for the summary, one for the table's header.
+	body := max(h-2, 0)
+	listed := shown.Rows
+	if keep := failureBudget(failed, body); keep < failed {
+		listed = append(append([]Migration{}, shown.Rows[:keep]...), shown.Rows[failed:]...)
+	}
+
+	rows, styles := migrationTable(snap, listed, now)
+	main := table.Table{Cols: migrationCols, Rows: rows, RowStyles: styles}
+	out := summary + "\n" + main.Render(w, h-1)
+
+	// Spend anything left over on the detail behind the unresolved count. This
+	// is what zoom buys: the grid caps this pane at ContentHeight, which asks
+	// only for the compact form, while a zoomed pane is handed the whole body
+	// and lands here with rows to spare.
+	if spare := h - 1 - len(rows) - 1; spare >= 3 && len(shown.Unresolved) > 0 {
+		detail := table.Table{
+			Cols: unresolvedCols,
+			Rows: unresolvedRows(snap, shown.Unresolved, now),
+		}
+		heading := tui.StyleWarn.Render(fmt.Sprintf("Unresolved failures (%d)", len(shown.Unresolved)))
+		out += "\n\n" + heading + "\n" + detail.Render(w, spare-2)
+	}
+
+	return table.ClipLines(out, h)
 }
 
 // renderInventory is the at-rest content: cloud-wide counts.
@@ -337,11 +414,22 @@ func breakdown(by map[string]int, width int) string {
 	return "(" + strings.Join(parts, ", ") + ")"
 }
 
-func migrationStyle(status string) lipgloss.Style {
+// migrationStyle colors a row by what it needs from the reader.
+//
+// broken separates the two kinds of failure that used to look identical. A
+// migration that failed and left its instance in ERROR is a server that is down
+// and cannot be moved; one that failed while the instance kept running is a
+// drain that did not complete. Both are worth a row, only one is worth an
+// interrupt, and telling them apart at a glance is the question the operator
+// was really asking of this pane.
+func migrationStyle(status string, broken bool) lipgloss.Style {
 	var plain lipgloss.Style
 	switch strings.ToLower(status) {
 	case "failed", "error":
-		return tui.StyleErr
+		if broken {
+			return tui.StyleErr
+		}
+		return tui.StyleWarn
 	case "queued", "preparing", "accepted":
 		// Waiting to start. Amber, because a queue that never drains is the
 		// second-most-common way a drain stalls.

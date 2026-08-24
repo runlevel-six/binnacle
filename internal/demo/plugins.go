@@ -247,7 +247,29 @@ func putOpenStackWork(s *store.Store, now time.Time) {
 				SourceCompute: "compute-node-3", DestCompute: "compute-node-1",
 				CreatedAt: now.Add(-22 * time.Minute), UpdatedAt: now.Add(-18 * time.Minute),
 			},
+			{
+				// Two days old, instance still broken, and nobody is draining
+				// the host it landed on: the summary counts it and zoom lists
+				// it. This is the row the age window used to throw away.
+				ID: 4102, Status: "error", Type: "live-migration",
+				InstanceUUID:  "c7a2f5d1-9b34-4e08-a1d6-5f8b2c4e9037",
+				SourceCompute: "compute-node-4", DestCompute: "compute-node-2",
+				CreatedAt: now.Add(-49 * time.Hour), UpdatedAt: now.Add(-48 * time.Hour),
+			},
 		},
+		// The instance behind 4468 recovered; the one behind 4102 did not. The
+		// pane colors those two failures differently because of this.
+		BrokenKnown: true,
+		Broken: map[string]openstack.BrokenServer{
+			"c7a2f5d1-9b34-4e08-a1d6-5f8b2c4e9037": {
+				UUID: "c7a2f5d1-9b34-4e08-a1d6-5f8b2c4e9037",
+				Name: "web-frontend-07",
+				Host: "compute-node-2",
+				Fault: "Live migration operation has aborted, " +
+					"instance is not running on destination",
+			},
+		},
+		Draining:  map[string]bool{"compute-node-3": true},
 		UpdatedAt: now,
 	})
 

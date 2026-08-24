@@ -171,17 +171,24 @@ func TestLatestPerServerKeepsUUIDLessRecordsSeparate(t *testing.T) {
 func TestRelevantKeepsActiveAndRecentFailures(t *testing.T) {
 	now := at(t, "2026-07-28T12:00:00Z")
 	items := []Migration{
-		{ID: 1, InstanceUUID: "a", Status: "running", UpdatedAt: now.Add(-time.Minute)},
+		{ID: 1, InstanceUUID: "a", Status: "running",
+			CreatedAt: now.Add(-2 * time.Minute), UpdatedAt: now.Add(-time.Minute)},
 		// Old but still in flight: a migration stuck for a day is the single most
 		// important row on the pane, so age must not evict it.
-		{ID: 2, InstanceUUID: "b", Status: "queued", UpdatedAt: now.Add(-24 * time.Hour)},
-		{ID: 3, InstanceUUID: "c", Status: "failed", UpdatedAt: now.Add(-90 * time.Minute)},
-		{ID: 4, InstanceUUID: "d", Status: "failed", UpdatedAt: now.Add(-3 * time.Hour)},
-		{ID: 5, InstanceUUID: "e", Status: "completed", UpdatedAt: now.Add(-time.Minute)},
+		{ID: 2, InstanceUUID: "b", Status: "queued",
+			CreatedAt: now.Add(-25 * time.Hour), UpdatedAt: now.Add(-24 * time.Hour)},
+		{ID: 3, InstanceUUID: "c", Status: "failed",
+			CreatedAt: now.Add(-95 * time.Minute), UpdatedAt: now.Add(-90 * time.Minute)},
+		{ID: 4, InstanceUUID: "d", Status: "failed",
+			CreatedAt: now.Add(-4 * time.Hour), UpdatedAt: now.Add(-3 * time.Hour)},
+		{ID: 5, InstanceUUID: "e", Status: "completed",
+			CreatedAt: now.Add(-2 * time.Minute), UpdatedAt: now.Add(-time.Minute)},
 	}
 
-	got := ids(Relevant(items, now))
-	want := []int64{1, 2, 3}
+	got := ids(Migrations{Items: items}.Relevant(now).Rows)
+	// Relevant sorts through LatestPerServer now, so this is failures first and
+	// then the rest newest-first, rather than the input order it used to keep.
+	want := []int64{3, 1, 2}
 	if len(got) != len(want) {
 		t.Fatalf("kept %v, want %v", got, want)
 	}
@@ -195,14 +202,119 @@ func TestRelevantKeepsActiveAndRecentFailures(t *testing.T) {
 func TestRelevantFailureWindowBoundary(t *testing.T) {
 	now := at(t, "2026-07-28T12:00:00Z")
 	// Exactly at the window is kept; a second past it is not.
-	inside := []Migration{{ID: 1, Status: "failed", UpdatedAt: now.Add(-FailedWindow)}}
-	outside := []Migration{{ID: 2, Status: "failed", UpdatedAt: now.Add(-FailedWindow - time.Second)}}
+	inside := Migrations{Items: []Migration{
+		{ID: 1, Status: "failed", UpdatedAt: now.Add(-FailedWindow)}}}
+	outside := Migrations{Items: []Migration{
+		{ID: 2, Status: "failed", UpdatedAt: now.Add(-FailedWindow - time.Second)}}}
 
-	if got := Relevant(inside, now); len(got) != 1 {
+	if got := inside.Relevant(now); len(got.Rows) != 1 {
 		t.Errorf("failure exactly at the window was dropped")
 	}
-	if got := Relevant(outside, now); len(got) != 0 {
+	if got := outside.Relevant(now); len(got.Rows) != 0 {
 		t.Errorf("failure past the window was kept")
+	}
+}
+
+// The retention rule, as a matrix. An unresolved failure is never expired on
+// age; what varies is whether it takes a row or only a place in the count.
+func TestRelevantRetainsUnresolvedFailures(t *testing.T) {
+	now := at(t, "2026-07-28T12:00:00Z")
+	const (
+		drained = "compute-node-1.site-a.example.com"
+		quiet   = "compute-node-2.site-a.example.com"
+	)
+	old := now.Add(-72 * time.Hour) // older than any upgrade window
+
+	// Two failures from a previous upgrade, both instances still in ERROR. One
+	// sits on a host being drained right now, the other does not.
+	items := []Migration{
+		{ID: 1, InstanceUUID: "blocking", Status: "error", UpdatedAt: old},
+		{ID: 2, InstanceUUID: "backlog", Status: "error", UpdatedAt: old},
+		// Still broken but healthy again in Nova's eyes: nothing retains it.
+		{ID: 3, InstanceUUID: "recovered", Status: "error", UpdatedAt: old},
+	}
+	snap := Migrations{
+		Items:       items,
+		BrokenKnown: true,
+		Broken: map[string]BrokenServer{
+			"blocking": {UUID: "blocking", Host: drained},
+			"backlog":  {UUID: "backlog", Host: quiet},
+		},
+		Draining: map[string]bool{drained: true},
+	}
+
+	got := snap.Relevant(now)
+	if ids := ids(got.Rows); len(ids) != 1 || ids[0] != 1 {
+		t.Errorf("listed %v, want only id 1 — the one on a host being drained", ids)
+	}
+	if ids := ids(got.Unresolved); len(ids) != 1 || ids[0] != 2 {
+		t.Errorf("counted %v, want only id 2 — retained but not in the way", ids)
+	}
+}
+
+// A probe that could not run must never hide a row. Without it the pane falls
+// back to the age window alone, which is the behavior that shipped before.
+func TestRelevantFallsBackWhenProbeUnavailable(t *testing.T) {
+	now := at(t, "2026-07-28T12:00:00Z")
+	items := []Migration{
+		{ID: 1, InstanceUUID: "a", Status: "error", UpdatedAt: now.Add(-time.Minute)},
+		{ID: 2, InstanceUUID: "b", Status: "error", UpdatedAt: now.Add(-72 * time.Hour)},
+	}
+
+	// BrokenKnown false, and Broken deliberately populated to prove it is not
+	// consulted: a probe that failed leaves whatever the last one found, and
+	// acting on it would promote rows from a stale answer.
+	snap := Migrations{
+		Items:  items,
+		Broken: map[string]BrokenServer{"b": {UUID: "b", Host: "h"}},
+	}
+
+	got := snap.Relevant(now)
+	if ids := ids(got.Rows); len(ids) != 1 || ids[0] != 1 {
+		t.Errorf("listed %v, want only the recent failure id 1", ids)
+	}
+	if len(got.Unresolved) != 0 {
+		t.Errorf("counted %v as unresolved without a usable probe", ids(got.Unresolved))
+	}
+}
+
+// A recent failure is listed whether or not its instance recovered, because a
+// migration that failed is a server that did not leave the host.
+func TestRelevantListsRecentFailuresRegardlessOfInstanceState(t *testing.T) {
+	now := at(t, "2026-07-28T12:00:00Z")
+	snap := Migrations{
+		Items: []Migration{
+			{ID: 1, InstanceUUID: "healthy", Status: "failed", UpdatedAt: now.Add(-time.Minute)},
+		},
+		BrokenKnown: true,
+		Broken:      map[string]BrokenServer{},
+	}
+
+	got := snap.Relevant(now)
+	if len(got.Rows) != 1 {
+		t.Errorf("listed %v, want the recent failure even though the instance is fine", ids(got.Rows))
+	}
+}
+
+// Failures sort first, so without a budget the table's own clipping keeps every
+// failure and drops the drain the operator is watching.
+func TestFailureBudgetLeavesRoomForActives(t *testing.T) {
+	tests := []struct {
+		failures, available, want int
+	}{
+		{failures: 2, available: 8, want: 2}, // both fit, no cap
+		{failures: 4, available: 8, want: 4}, // exactly half, still no cap
+		{failures: 8, available: 8, want: 4}, // capped to half
+		{failures: 9, available: 3, want: 1}, // short pane: one failure survives
+		{failures: 3, available: 1, want: 1}, // never zero while failures exist
+		{failures: 5, available: 0, want: 0}, // no body at all
+		{failures: 0, available: 6, want: 0}, // nothing to cap
+	}
+	for _, tc := range tests {
+		if got := failureBudget(tc.failures, tc.available); got != tc.want {
+			t.Errorf("failureBudget(%d, %d) = %d, want %d",
+				tc.failures, tc.available, got, tc.want)
+		}
 	}
 }
 

@@ -362,3 +362,151 @@ func TestInventoryBreakdownDropsRarestRatherThanTruncating(t *testing.T) {
 		t.Errorf("a state name is truncated mid-word: %q", volumes)
 	}
 }
+
+// The summary names an unresolved backlog; zoom is what enumerates it.
+//
+// The grid caps this pane at ContentHeight, which asks only for the compact
+// form, while a zoomed pane is handed the whole body — so "has rows to spare"
+// and "the operator pressed z" are the same condition from here.
+func TestCloudPaneSummarizesUnresolvedAndEnumeratesWhenTall(t *testing.T) {
+	now := at(t, "2026-07-28T12:00:00Z")
+	const stale = "bbbbbbbb-2222-3333-4444-555555555555"
+	s := store.New()
+	s.Put(KeyMigrations, Migrations{
+		Items: []Migration{
+			{ID: 1, InstanceUUID: "aaaaaaaa-1111-2222-3333-444444444444", Status: "running",
+				SourceCompute: "compute-node-1.site-a.example.com",
+				DestCompute:   "compute-node-2.site-a.example.com",
+				CreatedAt:     now.Add(-2 * time.Minute), UpdatedAt: now.Add(-time.Minute)},
+			// Three days old, so only the retention rule keeps it at all.
+			{ID: 2, InstanceUUID: stale, Status: "error",
+				SourceCompute: "compute-node-3.site-a.example.com",
+				CreatedAt:     now.Add(-73 * time.Hour), UpdatedAt: now.Add(-72 * time.Hour)},
+		},
+		BrokenKnown: true,
+		Broken: map[string]BrokenServer{
+			stale: {UUID: stale, Host: "compute-node-9.site-a.example.com",
+				Fault: "Live migration operation failed"},
+		},
+	})
+	pane := newCloudPane(s, "v1.31.4")
+
+	compact := stripANSI(pane.renderMigrations(90, 5, now))
+	if !strings.Contains(compact, "1 unresolved") {
+		t.Errorf("compact pane does not name the backlog:\n%s", compact)
+	}
+	if strings.Contains(compact, "Unresolved failures") {
+		t.Errorf("compact pane spent rows enumerating the backlog:\n%s", compact)
+	}
+
+	zoomed := stripANSI(pane.renderMigrations(90, 30, now))
+	for _, want := range []string{
+		"Unresolved failures (1)",
+		"bbbbbbbb",                        // the server
+		"compute-node-9",                  // where it actually is, not where it was going
+		"Live migration operation failed", // Nova's own reason
+	} {
+		if !strings.Contains(zoomed, want) {
+			t.Errorf("zoomed pane missing %q:\n%s", want, zoomed)
+		}
+	}
+}
+
+// A retained failure earns a row back the moment someone drains the host its
+// instance is stuck on — that is the landmine going off.
+func TestCloudPanePromotesUnresolvedOnADrainingHost(t *testing.T) {
+	now := at(t, "2026-07-28T12:00:00Z")
+	const stale = "bbbbbbbb-2222-3333-4444-555555555555"
+	const host = "compute-node-9.site-a.example.com"
+	items := []Migration{
+		{ID: 2, InstanceUUID: stale, Status: "error",
+			SourceCompute: "compute-node-3.site-a.example.com",
+			CreatedAt:     now.Add(-73 * time.Hour), UpdatedAt: now.Add(-72 * time.Hour)},
+	}
+	broken := map[string]BrokenServer{stale: {UUID: stale, Host: host}}
+
+	s := store.New()
+	s.Put(KeyMigrations, Migrations{Items: items, Broken: broken, BrokenKnown: true})
+	quiet := stripANSI(newCloudPane(s, "v1.31.4").renderMigrations(90, 8, now))
+	if !strings.Contains(quiet, "1 unresolved") || strings.Contains(quiet, "1 failed") {
+		t.Errorf("nobody is draining, so it should only be counted:\n%s", quiet)
+	}
+
+	s.Put(KeyMigrations, Migrations{Items: items, Broken: broken, BrokenKnown: true,
+		Draining: map[string]bool{host: true}})
+	draining := stripANSI(newCloudPane(s, "v1.31.4").renderMigrations(90, 8, now))
+	if !strings.Contains(draining, "1 failed") || strings.Contains(draining, "unresolved") {
+		t.Errorf("its host is draining, so it should be a row:\n%s", draining)
+	}
+	if !strings.Contains(draining, "bbbbbbbb") {
+		t.Errorf("promoted row does not name the server:\n%s", draining)
+	}
+}
+
+// Failures sort first, so a backlog of them must not push the drain the
+// operator is watching off a short pane.
+func TestCloudPaneKeepsActivesVisibleUnderAFloodOfFailures(t *testing.T) {
+	now := at(t, "2026-07-28T12:00:00Z")
+	items := make([]Migration, 0, 12)
+	for i := range 10 {
+		items = append(items, Migration{
+			ID: int64(100 + i), InstanceUUID: strings.Repeat(string(rune('a'+i)), 8),
+			Status: "failed", SourceCompute: "compute-node-1.site-a.example.com",
+			CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
+		})
+	}
+	items = append(items, Migration{
+		ID: 200, InstanceUUID: "99999999-aaaa-bbbb-cccc-dddddddddddd", Status: "running",
+		SourceCompute: "compute-node-2.site-a.example.com",
+		DestCompute:   "compute-node-3.site-a.example.com",
+		CreatedAt:     now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute),
+	})
+	s := store.New()
+	s.Put(KeyMigrations, Migrations{Items: items})
+
+	body := stripANSI(newCloudPane(s, "v1.31.4").renderMigrations(90, 8, now))
+	if !strings.Contains(body, "99999999") {
+		t.Errorf("the in-flight migration was evicted by the failure backlog:\n%s", body)
+	}
+	// The summary still tells the truth about how many there are.
+	if !strings.Contains(body, "10 failed") {
+		t.Errorf("summary undercounts the failures it did not draw:\n%s", body)
+	}
+}
+
+// ContentHeight asks for the compact form only. Asking for the backlog too
+// would hand the pane a tall grid cell and there would be nothing left for zoom
+// to reveal.
+func TestCloudPaneContentHeightExcludesTheBacklog(t *testing.T) {
+	now := at(t, "2026-07-28T12:00:00Z")
+	const stale = "bbbbbbbb-2222-3333-4444-555555555555"
+	s := store.New()
+	s.Put(KeyMigrations, Migrations{
+		Items: []Migration{
+			{ID: 1, InstanceUUID: "aaaaaaaa", Status: "running",
+				CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute)},
+			{ID: 2, InstanceUUID: stale, Status: "error",
+				CreatedAt: now.Add(-73 * time.Hour), UpdatedAt: now.Add(-72 * time.Hour)},
+		},
+		BrokenKnown: true,
+		Broken:      map[string]BrokenServer{stale: {UUID: stale, Host: "compute-node-9"}},
+	})
+
+	// One row, plus the summary and the table header.
+	if got := newCloudPane(s, "v1.31.4").ContentHeight(90); got != 3 {
+		t.Errorf("ContentHeight = %d, want 3 (one listed row, not the backlog)", got)
+	}
+}
+
+// The two kinds of failure used to look identical. A server that is down and
+// cannot be moved is not the same event as a drain that did not complete.
+func TestMigrationStyleSeparatesBrokenFromRecovered(t *testing.T) {
+	broken := migrationStyle("error", true).Render("x")
+	recovered := migrationStyle("error", false).Render("x")
+	if broken == recovered {
+		t.Error("a still-broken failure renders identically to a recovered one")
+	}
+	if plain := migrationStyle("completed", false).Render("x"); plain == broken {
+		t.Error("a still-broken failure renders like an unremarkable row")
+	}
+}
