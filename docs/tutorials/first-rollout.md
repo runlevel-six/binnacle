@@ -31,8 +31,9 @@ or the network, so it is a safe place to learn the interface.
 Take a moment to find these, because they are what you will be reading during a real
 upgrade:
 
-- The **header**, naming both clusters and the profile, with `ROLLOUT` when one is in
-  progress.
+- The **header**, naming the version you are running, both clusters and the profile,
+  with `ROLLOUT` when one is in progress. A build straight from source reads `dev`
+  rather than a version.
 - The **banner** below it — one cell per subsystem, quiet when healthy and specific
   when not.
 - **Overview**, top left: clusters, rollout progress per pool, node readiness.

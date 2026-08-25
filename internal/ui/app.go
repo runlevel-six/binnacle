@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/runlevel-six/sextant/internal/build"
 	"github.com/runlevel-six/sextant/internal/config"
 	corepanes "github.com/runlevel-six/sextant/internal/core/panes"
 	"github.com/runlevel-six/sextant/pkg/plugin"
@@ -39,6 +40,9 @@ type Model struct {
 	registry *plugin.Registry
 	sub      <-chan struct{}
 	keys     keymap
+	// buildInfo names the build in the header. Zero renders no version at all,
+	// which is what a test that does not care about it gets.
+	buildInfo build.Info
 
 	width, height int
 
@@ -114,6 +118,18 @@ func New(resolved config.Resolved, s *store.Store, registry *plugin.Registry, ps
 		peaks:      map[string]widthPeak{},
 		now:        time.Now,
 	}
+}
+
+// WithBuild records the build the dashboard is running, which the header shows
+// beside the tool's name.
+//
+// It is a setter rather than a constructor argument because the version is
+// chrome: a Model without one is a working dashboard, and every caller that
+// builds a Model for a test would otherwise have to invent build metadata it
+// does not care about.
+func (m *Model) WithBuild(info build.Info) *Model {
+	m.buildInfo = info
+	return m
 }
 
 // peakHold is how long a pane keeps an appetite it no longer has.

@@ -18,20 +18,29 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/runlevel-six/sextant/internal/app"
+	"github.com/runlevel-six/sextant/internal/build"
 	"github.com/runlevel-six/sextant/internal/config"
 )
 
 // Build metadata, injected via -ldflags. Source builds report "dev".
+//
+// The linker writes these, and [buildInfo] carries them to the rest of the
+// program; the internal/build package documents why the -X flags name this
+// package and not that one.
 var (
 	version = "dev"
 	commit  = "unknown"
 	date    = "unknown"
 )
+
+// buildInfo gathers the linker's metadata for everything that reports a version.
+func buildInfo() build.Info {
+	return build.Info{Version: version, Commit: commit, Date: date}
+}
 
 func main() { os.Exit(sextant()) }
 
@@ -81,8 +90,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	case opts == nil:
 		return nil // --help was handled during parsing
 	case opts.showVersion:
-		fmt.Fprintf(out, "sextant %s (commit %s, built %s, %s/%s, %s)\n",
-			version, commit, date, runtime.GOOS, runtime.GOARCH, runtime.Version())
+		fmt.Fprintln(out, buildInfo().Line())
 		return nil
 	case opts.writeConfig:
 		return writeExampleConfig(out, opts.configPath)
@@ -108,7 +116,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	// The demo path resolves nothing against a kubeconfig, so it branches before
 	// Prepare rather than inside it.
 	if opts.demo {
-		setup, err := app.PrepareDemo(opts.cfg)
+		setup, err := app.PrepareDemo(opts.cfg, buildInfo())
 		if err != nil {
 			return err
 		}
@@ -127,7 +135,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 
 	// An ambiguous context pattern asks, when someone is there to answer, and
 	// errors with the flag to pin one when nobody is.
-	setup, err := app.Prepare(opts.cfg, app.InteractivePicker())
+	setup, err := app.Prepare(opts.cfg, buildInfo(), app.InteractivePicker())
 	if err != nil {
 		return err
 	}

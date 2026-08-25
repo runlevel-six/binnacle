@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
+	"github.com/runlevel-six/sextant/internal/build"
 	"github.com/runlevel-six/sextant/internal/config"
 	coremodel "github.com/runlevel-six/sextant/internal/core/model"
 	"github.com/runlevel-six/sextant/internal/testansi"
@@ -28,10 +29,15 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// demoVersion is the build every rendered demo frame claims to be, so that a
+// frame is evidence about the assembled header rather than about whatever the
+// test binary was linked with.
+const demoVersion = "1.4.0"
+
 // render draws one demo frame under the named theme.
 func render(t *testing.T, theme, size string) string {
 	t.Helper()
-	setup, err := PrepareDemo(config.Config{Theme: theme})
+	setup, err := PrepareDemo(config.Config{Theme: theme}, build.Info{Version: demoVersion})
 	if err != nil {
 		t.Fatalf("PrepareDemo(%q): %v", theme, err)
 	}
@@ -62,7 +68,7 @@ func TestRenderDemo_IsDeterministic(t *testing.T) {
 // an empty body or a "polling…" note, and a screenshot of that argues nothing —
 // this is the check that catches a fixture gone stale against a changed model.
 func TestRenderDemo_EveryPaneDraws(t *testing.T) {
-	setup, err := PrepareDemo(config.Config{})
+	setup, err := PrepareDemo(config.Config{}, build.Info{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +114,23 @@ func TestRenderDemo_EveryPaneDraws(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+// Which build is on screen is the first thing a bug report has to establish, and
+// the header is what gets screenshotted. This walks the whole wiring the version
+// travels — the linker's metadata through PrepareDemo, BuildModel and into the
+// assembled frame — which no test inside internal/ui can reach.
+func TestRenderDemo_HeaderNamesTheBuild(t *testing.T) {
+	first := strings.SplitN(testansi.StripANSI(render(t, "", "240x54")), "\n", 2)[0]
+	if !strings.Contains(first, "v"+demoVersion) {
+		t.Errorf("the header's first row should name the build: %q", first)
+	}
+	// Beside the name, not adrift at the other end of the row: the far right is
+	// where the row truncates and where the rollout badges go.
+	if name, version := strings.Index(strings.ToLower(first), "sextant"),
+		strings.Index(first, "v"+demoVersion); version-name > len("sextant ") {
+		t.Errorf("the version should sit next to the tool's name: %q", first)
 	}
 }
 
@@ -212,7 +235,7 @@ func TestDemoFixture_UsesReservedNamesOnly(t *testing.T) {
 // Checked through the assembled demo — frames included, since a merged frame's
 // ceiling is composed from its members' and is the one the layout actually reads.
 func TestRenderDemo_DeclaredCeilingsHideNothing(t *testing.T) {
-	setup, err := PrepareDemo(config.Config{})
+	setup, err := PrepareDemo(config.Config{}, build.Info{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +291,7 @@ func TestRenderDemo_DeclaredCeilingsHideNothing(t *testing.T) {
 func TestRenderDemo_LayoutConvergesUnderChurn(t *testing.T) {
 	for _, size := range []struct{ w, h int }{{395, 111}, {320, 80}, {240, 60}} {
 		t.Run(fmt.Sprintf("%dx%d", size.w, size.h), func(t *testing.T) {
-			setup, err := PrepareDemo(config.Config{})
+			setup, err := PrepareDemo(config.Config{}, build.Info{})
 			if err != nil {
 				t.Fatal(err)
 			}

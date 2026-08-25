@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"k8s.io/klog/v2"
 
+	"github.com/runlevel-six/sextant/internal/build"
 	"github.com/runlevel-six/sextant/internal/config"
 	"github.com/runlevel-six/sextant/internal/core/capi"
 	"github.com/runlevel-six/sextant/internal/core/workload"
@@ -25,7 +26,11 @@ import (
 
 // Setup is everything resolved and ready to run.
 type Setup struct {
-	Resolved   config.Resolved
+	Resolved config.Resolved
+	// Build is the binary's own version, which the dashboard shows in its
+	// header. It arrives as a parameter rather than being filled in afterwards
+	// so that a Setup is never half-built.
+	Build      build.Info
 	Kubeconfig *kube.Kubeconfig
 	Store      *store.Store
 	// Registry holds the plugins. Core panes are contributed directly rather
@@ -39,7 +44,7 @@ type Setup struct {
 //
 // picker may be nil, in which case an ambiguous context pattern is an error
 // naming the candidates rather than a prompt.
-func Prepare(cfg config.Config, picker kube.Picker) (*Setup, error) {
+func Prepare(cfg config.Config, info build.Info, picker kube.Picker) (*Setup, error) {
 	kc, err := kube.Load(cfg.KubeconfigPath)
 	if err != nil {
 		return nil, err
@@ -56,6 +61,7 @@ func Prepare(cfg config.Config, picker kube.Picker) (*Setup, error) {
 	}
 	return &Setup{
 		Resolved:   resolved,
+		Build:      info,
 		Kubeconfig: kc,
 		Store:      store.New(),
 		Registry:   plugin.NewRegistry(),
@@ -325,7 +331,7 @@ func (s *Setup) BuildModel() (*ui.Model, error) {
 	// second member was not detected collapses to a single section rather than
 	// disappearing.
 	all := tui.Group(append(panes, pluginPanes...))
-	return ui.New(s.Resolved, s.Store, s.Registry, all), nil
+	return ui.New(s.Resolved, s.Store, s.Registry, all).WithBuild(s.Build), nil
 }
 
 // runUI builds the dashboard and blocks until it exits.

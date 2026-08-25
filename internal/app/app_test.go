@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/runlevel-six/sextant/internal/build"
 	"github.com/runlevel-six/sextant/internal/config"
 	"github.com/runlevel-six/sextant/internal/kube"
 	"github.com/runlevel-six/sextant/internal/profile"
@@ -72,7 +73,7 @@ func TestSelectProfile_UnknownIsAnError(t *testing.T) {
 
 func TestPrepare_ZeroConfig(t *testing.T) {
 	cfg := config.Config{KubeconfigPath: writeKubeconfig(t)}
-	got, err := Prepare(cfg, nil)
+	got, err := Prepare(cfg, build.Info{}, nil)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -89,14 +90,14 @@ func TestPrepare_ZeroConfig(t *testing.T) {
 
 func TestPrepare_UnknownProfile(t *testing.T) {
 	cfg := config.Config{KubeconfigPath: writeKubeconfig(t), Profile: "nope"}
-	if _, err := Prepare(cfg, nil); err == nil {
+	if _, err := Prepare(cfg, build.Info{}, nil); err == nil {
 		t.Fatal("expected an error")
 	}
 }
 
 func TestPrepare_BadKubeconfigPath(t *testing.T) {
 	cfg := config.Config{KubeconfigPath: filepath.Join(t.TempDir(), "absent")}
-	if _, err := Prepare(cfg, nil); err == nil {
+	if _, err := Prepare(cfg, build.Info{}, nil); err == nil {
 		t.Fatal("expected an error for a missing explicit kubeconfig")
 	}
 }
@@ -209,7 +210,7 @@ func TestSortedByName(t *testing.T) {
 
 func TestStoreKeys_Sorted(t *testing.T) {
 	cfg := config.Config{KubeconfigPath: writeKubeconfig(t)}
-	s, err := Prepare(cfg, nil)
+	s, err := Prepare(cfg, build.Info{}, nil)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -226,7 +227,7 @@ func TestStoreKeys_Sorted(t *testing.T) {
 // gets, since every zero-config claim depends on it.
 func TestPrepare_UsesDefaultProfile(t *testing.T) {
 	cfg := config.Config{KubeconfigPath: writeKubeconfig(t)}
-	s, err := Prepare(cfg, nil)
+	s, err := Prepare(cfg, build.Info{}, nil)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}

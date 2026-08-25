@@ -43,7 +43,7 @@ candidates when nothing is attached to answer. See
 | `--list-profiles` | Every profile that can be loaded, and where it looked. |
 | `--list-themes` | Every color scheme. |
 | `--init` | Write an example config file and exit. |
-| `--version` | Print version, commit, build date and toolchain. |
+| `--version` | Print version, commit, build date and toolchain. The version alone is also shown in the dashboard header, beside the name. |
 
 ## Environment variables
 

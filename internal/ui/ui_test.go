@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
+	"github.com/runlevel-six/sextant/internal/build"
 	"github.com/runlevel-six/sextant/internal/config"
 	"github.com/runlevel-six/sextant/internal/core/model"
 	"github.com/runlevel-six/sextant/internal/profile"
@@ -92,9 +93,18 @@ func withTheme(t *testing.T, th tui.Theme) {
 	t.Cleanup(func() { tui.ApplyTheme(tui.DefaultTheme()) })
 }
 
+// testVersion is the build the test models claim to be.
+//
+// A prerelease on purpose: it is the longest version the header will realistically
+// carry, so the width assertions size the row against the worst case, and it holds
+// letters, so a theme that shouts its chrome can be caught rewriting an
+// identifier.
+const testVersion = "1.4.0-rc.2"
+
 func newModel(t *testing.T, s *store.Store, w, h int) *Model {
 	t.Helper()
-	m := New(resolved(), s, plugin.NewRegistry(), CorePanes(s, resolved(), nil))
+	m := New(resolved(), s, plugin.NewRegistry(), CorePanes(s, resolved(), nil)).
+		WithBuild(build.Info{Version: testVersion, Commit: "abc1234", Date: "2026-08-25T00:00:00Z"})
 	m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	return m
 }
@@ -385,6 +395,11 @@ func TestTheme_LCARSUppercasesChromeNotData(t *testing.T) {
 	if strings.Contains(view, "KIND-CAPI-MANAGEMENT") {
 		t.Errorf("the context name must not be uppercased:\n%s", firstLines(view, 3))
 	}
+	// A version is an identifier too. "V1.4.0-RC.2" names a release that does not
+	// exist.
+	if !strings.Contains(view, "v"+testVersion) {
+		t.Errorf("the version must survive verbatim:\n%s", firstLines(view, 3))
+	}
 }
 
 // Pane titles carry a catalog number under LCARS. It has to be stable, or a
@@ -419,6 +434,54 @@ func TestFreeze_KeepsConsumingUpdates(t *testing.T) {
 	_, cmd := m.Update(dataUpdateMsg{})
 	if cmd == nil {
 		t.Error("a data update should still re-arm the subscription while frozen")
+	}
+}
+
+// --- header ---------------------------------------------------------------
+
+// The version belongs to the tool's name and has to read as part of it. "Which
+// version were you running?" is the first question of any bug report, and the
+// header is what gets pasted into one.
+func TestHeader_VersionSitsBesideTheName(t *testing.T) {
+	m := newModel(t, populatedStore(), 200, 50)
+	row := firstLines(testansi.StripANSI(m.View()), 1)
+
+	want := "sextant v" + testVersion
+	if !strings.Contains(row, want) {
+		t.Errorf("the identity row should read %q: %q", want, row)
+	}
+	// Before the cluster identity, not after it: the left end of this row is the
+	// end that survives a narrow terminal, and the right end is where the rollout
+	// and FROZEN badges go.
+	if v, ctx := strings.Index(row, want), strings.Index(row, "kind-capi-management"); v > ctx {
+		t.Errorf("the version should precede the cluster identity: %q", row)
+	}
+}
+
+// A model with no build metadata is still a working dashboard — that is what
+// every test that does not care about the version gets — and it must not caption
+// the tool's name with a stray separator or an empty span.
+func TestHeader_NoBuildNoVersion(t *testing.T) {
+	s := populatedStore()
+	m := New(resolved(), s, plugin.NewRegistry(), CorePanes(s, resolved(), nil))
+	m.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
+
+	row := firstLines(testansi.StripANSI(m.View()), 1)
+	if got, want := row, "sextant"+tui.CurrentTheme().Separator; !strings.Contains(got, want) {
+		t.Errorf("an unstamped build should leave the name alone, want %q: %q", want, got)
+	}
+}
+
+// The version has to survive the narrowest terminal the dashboard supports, since
+// it is the one piece of the row that cannot be recovered by looking at the
+// cluster.
+func TestHeader_VersionSurvivesNarrowWidths(t *testing.T) {
+	for _, w := range []int{80, 100, 120} {
+		m := newModel(t, populatedStore(), w, 30)
+		row := firstLines(testansi.StripANSI(m.View()), 1)
+		if !strings.Contains(row, "v"+testVersion) {
+			t.Errorf("width %d dropped the version: %q", w, row)
+		}
 	}
 }
 

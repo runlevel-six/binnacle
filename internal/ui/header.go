@@ -71,7 +71,17 @@ func (m *Model) identityLine(hs headerStyles, width int) string {
 	th := tui.CurrentTheme()
 	st := rollout.Detect(m.store, m.resolved.TargetVersion)
 
-	parts := []string{hs.title.Render(th.Label("sextant"))}
+	// The version rides on the name, dim and without a separator, so it reads as
+	// a stamp on the title rather than a fourth labeled field competing with the
+	// cluster identity beside it. It sits leftmost because that end of the row is
+	// the stable one: truncation eats the right, and the rollout and FROZEN
+	// badges claim that edge when they appear.
+	title := hs.title.Render(th.Label("sextant"))
+	if v := m.buildInfo.Short(); v != "" {
+		title += hs.dim.Render(" " + v)
+	}
+
+	parts := []string{title}
 	label := func(name, value string) string {
 		return hs.bar.Render(th.Label(name)+" ") + hs.title.Render(value)
 	}

@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/runlevel-six/sextant/internal/build"
 	"github.com/runlevel-six/sextant/internal/config"
 	"github.com/runlevel-six/sextant/internal/demo"
 	"github.com/runlevel-six/sextant/pkg/plugin"
@@ -22,7 +23,7 @@ import (
 //
 // There is no Kubeconfig on the returned Setup, and nothing in the demo path may
 // come to expect one.
-func PrepareDemo(cfg config.Config) (*Setup, error) {
+func PrepareDemo(cfg config.Config, info build.Info) (*Setup, error) {
 	theme, err := tui.LookupTheme(cfg.Theme)
 	if err != nil {
 		return nil, err
@@ -30,6 +31,7 @@ func PrepareDemo(cfg config.Config) (*Setup, error) {
 
 	s := &Setup{
 		Resolved: demo.Resolved(theme),
+		Build:    info,
 		Store:    demo.Store(),
 		Registry: plugin.NewRegistry(),
 	}
