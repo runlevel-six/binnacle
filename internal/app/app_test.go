@@ -9,7 +9,7 @@ import (
 	"github.com/runlevel-six/sextant/internal/build"
 	"github.com/runlevel-six/sextant/internal/config"
 	"github.com/runlevel-six/sextant/internal/kube"
-	"github.com/runlevel-six/sextant/internal/profile"
+	"github.com/runlevel-six/sextant/pkg/profile"
 )
 
 const kubeconfig = `apiVersion: v1
@@ -99,23 +99,6 @@ func TestPrepare_BadKubeconfigPath(t *testing.T) {
 	cfg := config.Config{KubeconfigPath: filepath.Join(t.TempDir(), "absent")}
 	if _, err := Prepare(cfg, build.Info{}, nil); err == nil {
 		t.Fatal("expected an error for a missing explicit kubeconfig")
-	}
-}
-
-// --- namespace collapsing -------------------------------------------------
-
-// An informer factory scopes to one namespace or to all of them, so a
-// multi-namespace profile widens to cluster-wide. Widening is the safe direction:
-// showing more than asked beats silently hiding objects.
-func TestFirstNamespace(t *testing.T) {
-	if got := firstNamespace(nil); got != "" {
-		t.Errorf("nil: got %q want all-namespaces", got)
-	}
-	if got := firstNamespace([]string{"capi"}); got != "capi" {
-		t.Errorf("single: got %q want capi", got)
-	}
-	if got := firstNamespace([]string{"capi", "capi-system"}); got != "" {
-		t.Errorf("multiple should widen to all namespaces, got %q", got)
 	}
 }
 
@@ -239,38 +222,5 @@ func TestPrepare_UsesDefaultProfile(t *testing.T) {
 		"node-role.kubernetes.io/control-plane": "",
 	}); got != "control-plane" {
 		t.Errorf("default profile should read upstream role labels, got %q", got)
-	}
-}
-
-// --- OpenStack cloud selection --------------------------------------------
-
-// The flag and OS_CLOUD override a profile's own setting, which is what an
-// operator running several clouds needs: the profile describes how a cloud is laid
-// out — the same for all of theirs — while the name says which one, and that
-// changes per session.
-func TestOpenStackSettings_ResolvedCloudOverridesProfile(t *testing.T) {
-	pinned := map[string]profile.Settings{
-		"openstack": {"cloud": "from-profile"},
-	}
-
-	// With nothing named, the profile's own setting stands.
-	s := &Setup{Resolved: config.Resolved{}}
-	if got := s.openStackSettings(pinned).Cloud; got != "from-profile" {
-		t.Errorf("got %q want from-profile", got)
-	}
-
-	// A resolved cloud — from --os-cloud or OS_CLOUD — wins.
-	s = &Setup{Resolved: config.Resolved{OSCloud: "my-cloud"}}
-	if got := s.openStackSettings(pinned).Cloud; got != "my-cloud" {
-		t.Errorf("got %q want my-cloud", got)
-	}
-}
-
-// A profile that names no cloud and no flag leaves the plugin unconfigured, which
-// is how it stays absent for the many users who do not run OpenStack.
-func TestOpenStackSettings_UnconfiguredStaysEmpty(t *testing.T) {
-	s := &Setup{Resolved: config.Resolved{}}
-	if got := s.openStackSettings(nil).Cloud; got != "" {
-		t.Errorf("got %q want empty", got)
 	}
 }

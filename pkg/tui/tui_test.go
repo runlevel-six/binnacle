@@ -128,7 +128,7 @@ func TestBannerStatusWorse(t *testing.T) {
 
 func TestBannerStatusGlyph(t *testing.T) {
 	for _, s := range []BannerStatus{BannerLoading, BannerOK, BannerWarn, BannerErr} {
-		glyph, _ := s.Glyph()
+		glyph, _ := Glyph(s)
 		if glyph == "" {
 			t.Errorf("BannerStatus(%v) has no glyph", s)
 		}
@@ -141,13 +141,13 @@ func TestBannerStatusGlyph(t *testing.T) {
 func TestBannerCellRender(t *testing.T) {
 	plain := lipgloss.Style{}
 
-	healthy := BannerCell{Name: "Nodes", Status: BannerOK}.Render(plain)
+	healthy := RenderCell(BannerCell{Name: "Nodes", Status: BannerOK}, plain)
 	if !strings.Contains(healthy, "Nodes") {
 		t.Errorf("render dropped the name: %q", healthy)
 	}
 
 	// A healthy cell stays terse; detail only appears when set.
-	degraded := BannerCell{Name: "Nodes", Status: BannerWarn, Detail: "2 NotReady"}.Render(plain)
+	degraded := RenderCell(BannerCell{Name: "Nodes", Status: BannerWarn, Detail: "2 NotReady"}, plain)
 	if !strings.Contains(degraded, "2 NotReady") {
 		t.Errorf("render dropped the detail: %q", degraded)
 	}

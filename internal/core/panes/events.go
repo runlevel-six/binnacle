@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/runlevel-six/sextant/internal/core/model"
-	"github.com/runlevel-six/sextant/internal/core/rollout"
+	"github.com/runlevel-six/sextant/pkg/model"
+	"github.com/runlevel-six/sextant/pkg/rollout"
 	"github.com/runlevel-six/sextant/pkg/store"
 	"github.com/runlevel-six/sextant/pkg/tui"
 	"github.com/runlevel-six/sextant/pkg/tui/table"

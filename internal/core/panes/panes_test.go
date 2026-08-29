@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
-	"github.com/runlevel-six/sextant/internal/core/model"
-	"github.com/runlevel-six/sextant/internal/profile"
+	"github.com/runlevel-six/sextant/pkg/model"
+	"github.com/runlevel-six/sextant/pkg/profile"
 	"github.com/runlevel-six/sextant/pkg/store"
 	"github.com/runlevel-six/sextant/pkg/tui"
 )

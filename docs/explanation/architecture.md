@@ -187,5 +187,6 @@ rendered line tracking whether a background is armed.
 | add a plugin | `pkg/plugin` for the contract, `internal/plugin/*` for examples |
 | change the layout engine | `pkg/tui/grid` |
 | add a theme | `pkg/tui/theme.go` |
-| change what a snapshot holds | `internal/core/model` |
+| change what a snapshot holds | `pkg/model` |
+| consume the data layer from outside the TUI | `pkg/collect` |
 | work on the demo fixture | `internal/demo` |

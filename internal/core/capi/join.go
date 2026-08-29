@@ -3,7 +3,7 @@ package capi
 import (
 	"sort"
 
-	"github.com/runlevel-six/sextant/internal/core/model"
+	"github.com/runlevel-six/sextant/pkg/model"
 )
 
 // Metal3MachineKind is the infrastructure kind a Machine references when it is

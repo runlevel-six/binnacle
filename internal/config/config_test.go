@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/runlevel-six/sextant/internal/kube"
-	"github.com/runlevel-six/sextant/internal/profile"
+	"github.com/runlevel-six/sextant/pkg/profile"
 	"github.com/runlevel-six/sextant/pkg/tui"
 )
 

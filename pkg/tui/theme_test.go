@@ -237,7 +237,7 @@ func TestApplyTheme_RewritesPalette(t *testing.T) {
 		t.Error("StatusStyle should follow the applied theme")
 	}
 	// And the health strip's glyphs follow too.
-	if glyph, _ := BannerOK.Glyph(); glyph != lcars.GlyphOK {
+	if glyph, _ := Glyph(BannerOK); glyph != lcars.GlyphOK {
 		t.Errorf("banner glyph: got %q want %q", glyph, lcars.GlyphOK)
 	}
 }
@@ -346,7 +346,7 @@ func TestBannerCellRender_InheritsBackground(t *testing.T) {
 	bg := lipgloss.Color("236")
 	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(bg)
 
-	out := BannerCell{Name: "Nodes", Status: BannerWarn, Detail: "2 moving"}.Render(nameStyle)
+	out := RenderCell(BannerCell{Name: "Nodes", Status: BannerWarn, Detail: "2 moving"}, nameStyle)
 	// Every span between the resets has to re-establish the background, so the
 	// count of background introductions matches the count of resets.
 	if got, want := strings.Count(out, "48;5;236"), strings.Count(out, "\x1b[0m"); got != want {
@@ -355,7 +355,7 @@ func TestBannerCellRender_InheritsBackground(t *testing.T) {
 
 	// A caller with no background gets no background: the cell must not invent
 	// one for a pane body that is not drawing a bar.
-	plain := BannerCell{Name: "Nodes", Status: BannerWarn}.Render(lipgloss.Style{})
+	plain := RenderCell(BannerCell{Name: "Nodes", Status: BannerWarn}, lipgloss.Style{})
 	if strings.Contains(plain, "48;5;") {
 		t.Errorf("an unbacked cell should not set a background:\n%q", plain)
 	}

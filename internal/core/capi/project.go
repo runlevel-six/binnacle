@@ -8,7 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/runlevel-six/sextant/internal/core/model"
+	"github.com/runlevel-six/sextant/pkg/model"
 )
 
 // Projections turn API objects into model snapshots. They are pure functions of

@@ -20,7 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/runlevel-six/sextant/internal/kube"
-	"github.com/runlevel-six/sextant/internal/profile"
+	"github.com/runlevel-six/sextant/pkg/profile"
 	"github.com/runlevel-six/sextant/pkg/tui"
 )
 

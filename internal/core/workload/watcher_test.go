@@ -16,8 +16,8 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	"github.com/runlevel-six/sextant/internal/core/model"
-	"github.com/runlevel-six/sextant/internal/profile"
+	"github.com/runlevel-six/sextant/pkg/model"
+	"github.com/runlevel-six/sextant/pkg/profile"
 	"github.com/runlevel-six/sextant/pkg/store"
 )
 

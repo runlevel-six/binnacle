@@ -9,14 +9,15 @@ import (
 	"time"
 
 	"github.com/runlevel-six/sextant/internal/core/capi"
-	"github.com/runlevel-six/sextant/internal/core/model"
-	"github.com/runlevel-six/sextant/internal/core/rollout"
 	"github.com/runlevel-six/sextant/internal/plugin/ceph"
 	"github.com/runlevel-six/sextant/internal/plugin/cilium"
 	"github.com/runlevel-six/sextant/internal/plugin/kube"
 	"github.com/runlevel-six/sextant/internal/plugin/metallb"
 	"github.com/runlevel-six/sextant/internal/plugin/openstack"
 	"github.com/runlevel-six/sextant/internal/plugin/ovn"
+	"github.com/runlevel-six/sextant/pkg/collect"
+	"github.com/runlevel-six/sextant/pkg/model"
+	"github.com/runlevel-six/sextant/pkg/rollout"
 	"github.com/runlevel-six/sextant/pkg/store"
 )
 
@@ -78,7 +79,7 @@ func DebugSnapshot(ctx context.Context, s *Setup, w io.Writer, wait time.Duratio
 
 	// Detection before the wait, so its result is visible even if a source is
 	// slow to publish.
-	results := s.Registry.Detect(runCtx)
+	results := collect.Activate(runCtx, s.Registry, s.Store)
 	if len(results) > 0 {
 		fmt.Fprintln(w, "plugins:")
 		for _, r := range results {
@@ -93,11 +94,6 @@ func DebugSnapshot(ctx context.Context, s *Setup, w io.Writer, wait time.Duratio
 		}
 		fmt.Fprintln(w)
 	}
-	for _, src := range s.Registry.ActiveSources() {
-		source := src
-		go func() { _ = source.Run(runCtx, s.Store) }()
-	}
-
 	fmt.Fprintf(w, "waiting %s for caches to warm...\n\n", wait)
 	select {
 	case <-time.After(wait):

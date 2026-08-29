@@ -6,9 +6,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/runlevel-six/sextant/internal/core/model"
-	"github.com/runlevel-six/sextant/internal/core/rollout"
-	"github.com/runlevel-six/sextant/pkg/store"
+	"github.com/runlevel-six/sextant/pkg/health"
+	"github.com/runlevel-six/sextant/pkg/rollout"
 	"github.com/runlevel-six/sextant/pkg/tui"
 )
 
@@ -121,7 +120,7 @@ func (m *Model) bannerLine(hs headerStyles, width int) string {
 	gap := hs.bar.Render("  ")
 	parts := make([]string, 0, len(cells))
 	for _, c := range cells {
-		parts = append(parts, c.Render(hs.dim))
+		parts = append(parts, tui.RenderCell(c, hs.dim))
 	}
 	joined := strings.Join(parts, gap)
 	for i := len(parts) - 1; i > 0 && lipgloss.Width(joined) > width; i-- {
@@ -132,173 +131,15 @@ func (m *Model) bannerLine(hs headerStyles, width int) string {
 
 // bannerCells builds the core health cells, then appends any a plugin
 // contributed.
+//
+// The core verdicts live in pkg/health rather than here so that a consumer
+// outside the terminal reaches the same conclusions from the same store. Two
+// front ends disagreeing about whether a cluster is healthy would be worse than
+// either of them simply being wrong.
 func (m *Model) bannerCells() []tui.BannerCell {
-	var cells []tui.BannerCell
-	for _, build := range []func() (tui.BannerCell, bool){
-		m.cellRollout, m.cellMachines, m.cellHosts, m.cellNodes, m.cellPods,
-	} {
-		if c, ok := build(); ok {
-			cells = append(cells, c)
-		}
-	}
+	cells := health.CoreCells(m.store, m.resolved.Profile.NodeRoles)
 	if m.registry != nil {
 		cells = append(cells, m.registry.BannerCells(m.store)...)
 	}
 	return cells
-}
-
-// cellRollout summarizes Cluster API rollout progress.
-func (m *Model) cellRollout() (tui.BannerCell, bool) {
-	kcps, ok := store.Get[model.Snapshot[model.KubeadmControlPlane]](m.store, model.KeyMgmtKCPs)
-	mds, mdOK := store.Get[model.Snapshot[model.MachineDeployment]](m.store, model.KeyMgmtMachineDeployments)
-	if (!ok || kcps.Err != nil) && (!mdOK || mds.Err != nil) {
-		return tui.BannerCell{}, false
-	}
-
-	var desired, upToDate int32
-	for _, k := range kcps.Items {
-		desired += k.DesiredReplicas
-		upToDate += k.UpToDateReplicas
-	}
-	for _, d := range mds.Items {
-		desired += d.DesiredReplicas
-		upToDate += d.UpToDateReplicas
-	}
-
-	cell := tui.BannerCell{Name: "CAPI"}
-	switch {
-	case desired == 0:
-		cell.Status = tui.BannerLoading
-	case upToDate >= desired:
-		cell.Status = tui.BannerOK
-	default:
-		cell.Status = tui.BannerWarn
-		cell.Detail = fmt.Sprintf("%d/%d", upToDate, desired)
-	}
-	return cell, true
-}
-
-// cellMachines reports Machines not in a running phase.
-func (m *Model) cellMachines() (tui.BannerCell, bool) {
-	snap, ok := store.Get[model.Snapshot[model.Machine]](m.store, model.KeyMgmtMachines)
-	if !ok || snap.Err != nil {
-		return tui.BannerCell{}, false
-	}
-
-	cell := tui.BannerCell{Name: "Machines"}
-	if len(snap.Items) == 0 {
-		cell.Status = tui.BannerLoading
-		return cell, true
-	}
-	notRunning := 0
-	for _, mc := range snap.Items {
-		if mc.Phase != "Running" {
-			notRunning++
-		}
-	}
-	switch notRunning {
-	case 0:
-		cell.Status = tui.BannerOK
-	default:
-		// Machines transition through non-running phases during any normal
-		// rollout, so this is amber rather than red.
-		cell.Status = tui.BannerWarn
-		cell.Detail = fmt.Sprintf("%d/%d moving", notRunning, len(snap.Items))
-	}
-	return cell, true
-}
-
-// cellHosts reports BareMetalHost errors, the failure a rollout most often
-// stalls on.
-func (m *Model) cellHosts() (tui.BannerCell, bool) {
-	snap, ok := store.Get[model.Snapshot[model.BareMetalHost]](m.store, model.KeyMgmtBareMetalHosts)
-	if !ok || snap.Err != nil {
-		return tui.BannerCell{}, false
-	}
-
-	cell := tui.BannerCell{Name: "Hosts"}
-	if len(snap.Items) == 0 {
-		cell.Status = tui.BannerLoading
-		return cell, true
-	}
-	errored := 0
-	for _, b := range snap.Items {
-		if b.ErrorMessage != "" || b.OperationalStatus == "error" {
-			errored++
-		}
-	}
-	switch errored {
-	case 0:
-		cell.Status = tui.BannerOK
-	default:
-		cell.Status = tui.BannerErr
-		cell.Detail = fmt.Sprintf("%d errored", errored)
-	}
-	return cell, true
-}
-
-func (m *Model) cellNodes() (tui.BannerCell, bool) {
-	snap, ok := store.Get[model.Snapshot[model.Node]](m.store, model.KeyWorkloadNodes)
-	if !ok || snap.Err != nil {
-		return tui.BannerCell{}, false
-	}
-
-	cell := tui.BannerCell{Name: "Nodes"}
-	if len(snap.Items) == 0 {
-		cell.Status = tui.BannerLoading
-		return cell, true
-	}
-	roles := m.resolved.Profile.NodeRoles
-	notReady, cordoned := 0, 0
-	for _, n := range snap.Items {
-		if !n.Ready() {
-			notReady++
-		}
-		// A cordon the profile declares expected for this role is the steady
-		// state, not a drain, and must not hold the banner at amber for the life
-		// of the cluster.
-		if n.Cordoned && roles.CordonIsNews(n.Role, n.Ready()) {
-			cordoned++
-		}
-	}
-	switch {
-	case notReady > 0:
-		cell.Status = tui.BannerErr
-		cell.Detail = fmt.Sprintf("%d NotReady", notReady)
-	case cordoned > 0:
-		// Cordoned is expected mid-drain, so it is a warning rather than a
-		// failure.
-		cell.Status = tui.BannerWarn
-		cell.Detail = fmt.Sprintf("%d cordoned", cordoned)
-	default:
-		cell.Status = tui.BannerOK
-	}
-	return cell, true
-}
-
-func (m *Model) cellPods() (tui.BannerCell, bool) {
-	snap, ok := store.Get[model.Snapshot[model.Pod]](m.store, model.KeyWorkloadPods)
-	if !ok || snap.Err != nil {
-		return tui.BannerCell{}, false
-	}
-
-	cell := tui.BannerCell{Name: "Pods"}
-	if len(snap.Items) == 0 {
-		cell.Status = tui.BannerLoading
-		return cell, true
-	}
-	unhealthy := 0
-	for _, p := range snap.Items {
-		if !p.IsHealthy {
-			unhealthy++
-		}
-	}
-	switch unhealthy {
-	case 0:
-		cell.Status = tui.BannerOK
-	default:
-		cell.Status = tui.BannerWarn
-		cell.Detail = fmt.Sprintf("%d unhealthy", unhealthy)
-	}
-	return cell, true
 }

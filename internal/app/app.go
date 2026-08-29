@@ -10,16 +10,16 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
 	"github.com/runlevel-six/sextant/internal/build"
 	"github.com/runlevel-six/sextant/internal/config"
-	"github.com/runlevel-six/sextant/internal/core/capi"
-	"github.com/runlevel-six/sextant/internal/core/workload"
 	"github.com/runlevel-six/sextant/internal/kube"
-	"github.com/runlevel-six/sextant/internal/profile"
 	"github.com/runlevel-six/sextant/internal/ui"
+	"github.com/runlevel-six/sextant/pkg/collect"
 	"github.com/runlevel-six/sextant/pkg/plugin"
+	"github.com/runlevel-six/sextant/pkg/profile"
 	"github.com/runlevel-six/sextant/pkg/store"
 	"github.com/runlevel-six/sextant/pkg/tui"
 )
@@ -121,77 +121,35 @@ func ListThemes(w io.Writer) error {
 	return nil
 }
 
-// StartWatchers launches the management and workload watchers in the background.
+// StartWatchers resolves the kubeconfig contexts and starts the collectors.
 //
-// Each runs until ctx is canceled. A watcher that cannot be constructed is
-// reported, but one failing does not prevent the other from running: a management
-// cluster that denies access to Cluster API is still worth watching for nodes and
-// pods, and the reverse holds too.
-//
-// reachability, when non-nil, receives the management cluster's version or the
-// error from trying to reach it. Callers use it to report one clear connection
-// failure rather than the same error repeated per resource kind.
+// It is the CLI's adapter onto [collect.Watch]: contexts in, rest.Configs out.
+// Everything past that point is shared with any other consumer of the data
+// layer, so the terminal dashboard cannot drift from what a second front end
+// sees.
 func (s *Setup) StartWatchers(ctx context.Context, reachability func(version string, err error)) error {
 	mgmtCfg, err := s.Kubeconfig.RestConfig(s.Resolved.ManagementContext)
 	if err != nil {
 		return err
 	}
-
-	// Management events are what the events pane reads during a rollout, where
-	// Machine and host activity is reported. They are scoped to the same namespace
-	// as the Cluster API objects, so a profile that narrows one narrows both — an
-	// unscoped event watch on a large management cluster is expensive.
-	capiNamespace := firstNamespace(s.Resolved.ManagementNamespaces)
-	mgmt, err := capi.New(mgmtCfg, s.Store, capi.Options{
-		Namespace:      capiNamespace,
-		EventNamespace: capiNamespace,
-		WatchEvents:    true,
-		ClusterName:    s.Resolved.CAPIClusterName,
-	})
-	if err != nil {
-		return fmt.Errorf("management watcher: %w", err)
-	}
-	if reachability != nil {
-		reachability(mgmt.Reachable(ctx))
-	}
-	go func() { _ = mgmt.Run(ctx) }()
-
-	workloadCfg := mgmtCfg
+	var workloadCfg *rest.Config
 	if !s.Resolved.WorkloadIsManagement {
 		workloadCfg, err = s.Kubeconfig.RestConfig(s.Resolved.WorkloadContext)
 		if err != nil {
 			return err
 		}
 	}
-	wl, err := workload.New(workloadCfg, s.Store, workload.Options{
-		NodeRoles: s.Resolved.Profile.NodeRoles,
-		Events:    s.Resolved.Profile.Events,
-	})
-	if err != nil {
-		return fmt.Errorf("workload watcher: %w", err)
-	}
-	go func() { _ = wl.Run(ctx) }()
-
-	// Plugins observe the workload cluster, since that is where a CNI, a load
-	// balancer and a storage layer live.
-	if err := s.registerPlugins(workloadCfg); err != nil {
-		return err
-	}
-	return nil
-}
-
-// firstNamespace collapses a namespace list to the single namespace the informer
-// factory accepts.
-//
-// A factory scopes to one namespace or to all of them, so a multi-namespace
-// profile currently widens to cluster-wide and filters nothing. That is the safe
-// direction — showing more than asked rather than silently hiding objects in the
-// namespaces beyond the first.
-func firstNamespace(namespaces []string) string {
-	if len(namespaces) == 1 {
-		return namespaces[0]
-	}
-	return ""
+	return collect.Watch(ctx, collect.Options{
+		Store:                s.Store,
+		Registry:             s.Registry,
+		Management:           mgmtCfg,
+		Workload:             workloadCfg,
+		Profile:              s.Resolved.Profile,
+		ManagementNamespaces: s.Resolved.ManagementNamespaces,
+		CAPIClusterName:      s.Resolved.CAPIClusterName,
+		OSCloud:              s.Resolved.OSCloud,
+		TargetVersion:        s.Resolved.TargetVersion,
+	}, reachability)
 }
 
 // ListContexts writes every kubeconfig context, marking the current one and
@@ -295,14 +253,7 @@ func Run(ctx context.Context, s *Setup) error {
 
 	// Detection runs before panes are built so a plugin whose subsystem is
 	// absent never reaches the catalog.
-	s.Registry.Detect(runCtx)
-
-	// Only the detected plugins are started. A source for an absent subsystem
-	// would poll something that is not there.
-	for _, src := range s.Registry.ActiveSources() {
-		source := src
-		go func() { _ = source.Run(runCtx, s.Store) }()
-	}
+	collect.Activate(runCtx, s.Registry, s.Store)
 
 	return s.runUI(runCtx)
 }

@@ -15,10 +15,10 @@ import (
 
 	"github.com/runlevel-six/sextant/internal/build"
 	"github.com/runlevel-six/sextant/internal/config"
-	"github.com/runlevel-six/sextant/internal/core/model"
-	"github.com/runlevel-six/sextant/internal/profile"
 	"github.com/runlevel-six/sextant/internal/testansi"
+	"github.com/runlevel-six/sextant/pkg/model"
 	"github.com/runlevel-six/sextant/pkg/plugin"
+	"github.com/runlevel-six/sextant/pkg/profile"
 	"github.com/runlevel-six/sextant/pkg/store"
 	"github.com/runlevel-six/sextant/pkg/tui"
 	"github.com/runlevel-six/sextant/pkg/tui/grid"
@@ -833,58 +833,6 @@ func firstLines(s string, n int) string {
 		lines = lines[:n]
 	}
 	return strings.Join(lines, "\n")
-}
-
-// The Nodes banner cell must not sit at amber for the life of a cluster whose
-// hypervisors are cordoned on purpose. The color is the whole point of a banner:
-// a permanent warning is indistinguishable from no warning at all.
-func TestBanner_ExpectedCordonStaysGreen(t *testing.T) {
-	s := store.New()
-	s.Put(model.KeyWorkloadNodes, model.Snapshot[model.Node]{
-		Items: []model.Node{
-			{Name: "cp-1", Status: "Ready", Role: "control-plane"},
-			{Name: "compute-1", Status: "Ready", Role: "compute", Cordoned: true},
-			{Name: "compute-2", Status: "Ready", Role: "compute", Cordoned: true},
-		},
-		UpdatedAt: time.Now(),
-	})
-
-	res := resolved()
-	res.Profile.NodeRoles.CordonExpected = []string{"compute"}
-	m := New(res, s, plugin.NewRegistry(), CorePanes(s, res, nil))
-	cell, ok := m.cellNodes()
-	if !ok {
-		t.Fatal("no nodes cell")
-	}
-	if cell.Status != tui.BannerOK {
-		t.Errorf("status = %v (%q), want OK", cell.Status, cell.Detail)
-	}
-
-	// Without the setting the same fleet warns, which is right on a stock
-	// cluster where a cordon really is a drain.
-	plainModel := New(resolved(), s, plugin.NewRegistry(), CorePanes(s, resolved(), nil))
-	if cell, _ := plainModel.cellNodes(); cell.Status != tui.BannerWarn {
-		t.Errorf("unconfigured status = %v, want Warn", cell.Status)
-	}
-}
-
-// An exemption must not swallow a real failure on an exempt node.
-func TestBanner_ExpectedCordonStillReportsNotReady(t *testing.T) {
-	s := store.New()
-	s.Put(model.KeyWorkloadNodes, model.Snapshot[model.Node]{
-		Items: []model.Node{
-			{Name: "compute-1", Status: "NotReady", Role: "compute", Cordoned: true},
-		},
-		UpdatedAt: time.Now(),
-	})
-
-	res := resolved()
-	res.Profile.NodeRoles.CordonExpected = []string{"compute"}
-	m := New(res, s, plugin.NewRegistry(), CorePanes(s, res, nil))
-	cell, _ := m.cellNodes()
-	if cell.Status != tui.BannerErr {
-		t.Errorf("status = %v (%q), want Err", cell.Status, cell.Detail)
-	}
 }
 
 // --- settling -------------------------------------------------------------

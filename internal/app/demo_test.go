@@ -16,8 +16,8 @@ import (
 
 	"github.com/runlevel-six/sextant/internal/build"
 	"github.com/runlevel-six/sextant/internal/config"
-	coremodel "github.com/runlevel-six/sextant/internal/core/model"
 	"github.com/runlevel-six/sextant/internal/testansi"
+	coremodel "github.com/runlevel-six/sextant/pkg/model"
 	"github.com/runlevel-six/sextant/pkg/store"
 	"github.com/runlevel-six/sextant/pkg/tui"
 )

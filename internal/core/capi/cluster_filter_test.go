@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/runlevel-six/sextant/internal/core/model"
+	"github.com/runlevel-six/sextant/pkg/model"
 )
 
 func machinesSnap(clusters ...string) model.Snapshot[model.Machine] {

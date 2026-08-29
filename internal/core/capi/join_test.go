@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/runlevel-six/sextant/internal/core/model"
+	"github.com/runlevel-six/sextant/pkg/model"
 )
 
 func machine(ns, name, owner, ownerKind, infraName string) model.Machine {

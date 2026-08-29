@@ -35,7 +35,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/runlevel-six/sextant/internal/core"
-	"github.com/runlevel-six/sextant/internal/core/model"
+	"github.com/runlevel-six/sextant/pkg/model"
 	"github.com/runlevel-six/sextant/pkg/store"
 )
 

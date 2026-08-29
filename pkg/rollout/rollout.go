@@ -13,7 +13,7 @@ package rollout
 import (
 	"sort"
 
-	"github.com/runlevel-six/sextant/internal/core/model"
+	"github.com/runlevel-six/sextant/pkg/model"
 	"github.com/runlevel-six/sextant/pkg/store"
 )
 
