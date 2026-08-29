@@ -57,7 +57,7 @@ func TestCellNodes_ExpectedCordonStillReportsNotReady(t *testing.T) {
 
 // A store nothing has published into contributes no cells at all, rather than a
 // row of green ones. The distinction matters most on a fleet page, where a
-// cluster that has not been heard from must not be summarised as healthy.
+// cluster that has not been heard from must not be summarized as healthy.
 func TestCoreCells_EmptyStoreReportsNothing(t *testing.T) {
 	if got := CoreCells(store.New(), profile.NodeRoles{}); len(got) != 0 {
 		t.Errorf("got %d cells from an empty store, want none", len(got))

@@ -73,7 +73,7 @@ type Cell struct {
 // Worst folds a list of cells to the single most severe status.
 //
 // An empty list is [StatusLoading], not [StatusOK]: nothing has reported, so
-// the honest answer is that we do not know. Summarising a cluster we have not
+// the honest answer is that we do not know. Summarizing a cluster we have not
 // heard from as healthy is the one mistake a fleet view must not make.
 func Worst(cells []Cell) Status {
 	worst := StatusLoading
