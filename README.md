@@ -48,6 +48,8 @@ so an open listener is an open window into all of them.
 
 ### Deployment shape
 
+Manifests are in [`deploy/`](deploy/), with a `Dockerfile` at the root.
+
 **One binnacle per management cluster, running on it.** Each instance discovers
 the clusters its own management cluster owns, takes in-cluster credentials from a
 ServiceAccount there, and is reached through an Ingress on that cluster. Nothing

@@ -1,0 +1,66 @@
+---
+# Binnacle reads the management cluster with this identity. The workload
+# clusters are read with the credentials Cluster API minted for each of them,
+# so nothing here grants access to those — see deploy/README.md.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: binnacle
+  namespace: binnacle
+---
+# Namespaced, not cluster-wide.
+#
+# Every object binnacle reads on the management cluster — Cluster API, Metal3,
+# the kubeconfig Secrets and the events — lives in the one namespace the
+# clusters are defined in. A ClusterRole would grant read on every Secret in
+# the cluster to a process that only needs a handful, which is a poor trade for
+# saving one line of configuration.
+#
+# Set the namespace below to wherever your Cluster objects live, and pass the
+# same value to --namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: binnacle
+  namespace: managed-clusters
+rules:
+  - apiGroups: ["cluster.x-k8s.io"]
+    resources: ["clusters", "machines", "machinedeployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["controlplane.cluster.x-k8s.io"]
+    resources: ["kubeadmcontrolplanes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["infrastructure.cluster.x-k8s.io"]
+    resources: ["metal3clusters", "metal3machines"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metal3.io"]
+    resources: ["baremetalhosts"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  # The kubeconfig Cluster API mints for each workload cluster.
+  #
+  # "get" is the normal path: binnacle asks for <cluster>-kubeconfig by name.
+  # "list" is only needed for the fallback that finds a cluster's kubeconfig
+  # when it is not at that name. Dropping "list" is a supported narrowing — a
+  # cluster needing the fallback then reports why on its card instead of
+  # disappearing — and it is the right call if listing Secrets in this
+  # namespace is more than you want to grant.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: binnacle
+  namespace: managed-clusters
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: binnacle
+subjects:
+  - kind: ServiceAccount
+    name: binnacle
+    namespace: binnacle

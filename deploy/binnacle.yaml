@@ -1,0 +1,116 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: binnacle
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: binnacle
+  namespace: binnacle
+  labels: {app.kubernetes.io/name: binnacle}
+spec:
+  # One replica.
+  #
+  # Binnacle holds no state worth replicating: it re-reads the fleet from the
+  # management cluster on startup and every reconcile. Two replicas would
+  # double the watch load on that cluster and split browser sessions across
+  # pods, which the signed session cookie survives only if BINNACLE_SESSION_KEY
+  # is set to the same value in both.
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: binnacle}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: binnacle}
+    spec:
+      serviceAccountName: binnacle
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: binnacle
+          image: binnacle:latest
+          args:
+            - --addr=:8080
+            # Names this instance in the header and browser title. Sites reuse
+            # workload cluster names, so without it two deployments render
+            # pages identical down to the names on the cards.
+            - --site=site-a
+            # Where the Cluster objects live. Must match the namespace the
+            # Role in rbac.yaml is created in.
+            - --namespace=managed-clusters
+            - --profile=my-site
+            - --oidc-issuer=https://sso.example/realms/platform
+            - --oidc-client-id=binnacle
+            - --oidc-redirect-url=https://binnacle.site-a.example/auth/callback
+          env:
+            # Neither of these is a flag: a command line is visible in the
+            # process table.
+            - name: BINNACLE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: {name: binnacle-oidc, key: client-secret}
+            # Set this explicitly. A generated key does not survive a restart,
+            # and sign-in then loops for anyone whose session predates it.
+            - name: BINNACLE_SESSION_KEY
+              valueFrom:
+                secretKeyRef: {name: binnacle-oidc, key: session-key}
+          ports:
+            - {name: http, containerPort: 8080}
+          # Liveness only. There is deliberately no readiness gate on the
+          # fleet being readable: a management cluster that is briefly
+          # unreachable should show binnacle saying so, not take binnacle out
+          # of service and leave the reader with a 503 that explains nothing.
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            # Informers hold every watched object in memory. Two clusters is
+            # small; a fleet of twenty warrants raising this and watching it.
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: binnacle
+  namespace: binnacle
+spec:
+  selector: {app.kubernetes.io/name: binnacle}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: binnacle
+  namespace: binnacle
+  annotations:
+    # Server-Sent Events: the fleet stream is deliberately long-lived and must
+    # not be cut by a proxy read timeout. Binnacle sends a keepalive every 25s,
+    # so any value comfortably above that works; the failure this avoids is a
+    # page that looks live and silently stops updating.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: binnacle.site-a.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: binnacle
+                port: {name: http}
+  tls:
+    - hosts: [binnacle.site-a.example]
+      secretName: binnacle-tls
