@@ -38,6 +38,7 @@ type options struct {
 	site           string
 	demo           bool
 	osCloud        string
+	cloudsDir      string
 	oidcIssuer     string
 	oidcClientID   string
 	oidcRedirect   string
@@ -61,7 +62,8 @@ func run(args []string) error {
 	fs.StringVar(&o.namespace, "namespace", "", "namespace to discover clusters in; empty means all")
 	fs.StringVar(&o.profileName, "profile", "", "sextant site profile describing how these clusters are laid out")
 	fs.StringVar(&o.site, "site", "", "name of the management cluster this instance watches, shown in the header and browser title; a label, not the --profile")
-	fs.StringVar(&o.osCloud, "os-cloud", "", "clouds.yaml profile for sextant's OpenStack plugin")
+	fs.StringVar(&o.osCloud, "os-cloud", "", "clouds.yaml entry to use for clusters whose own credentials do not name one")
+	fs.StringVar(&o.cloudsDir, "clouds-dir", "", "where per-cluster clouds.yaml files are written; empty uses a directory under the system temp dir")
 	fs.StringVar(&o.oidcIssuer, "oidc-issuer", "", "OpenID Connect issuer URL, e.g. a Keycloak realm")
 	fs.StringVar(&o.oidcClientID, "oidc-client-id", "", "OpenID Connect client id")
 	fs.StringVar(&o.oidcRedirect, "oidc-redirect-url", "", "binnacle's callback URL as the browser reaches it")
@@ -138,6 +140,7 @@ func buildSource(ctx context.Context, o options) (web.Source, string, error) {
 		Namespace:  o.namespace,
 		Profile:    prof,
 		OSCloud:    o.osCloud,
+		CloudsDir:  o.cloudsDir,
 	})
 	if err != nil {
 		return nil, "", err

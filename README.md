@@ -99,7 +99,8 @@ person could see with `kubectl` — is the intended next step.
 | `--namespace` | Scope cluster discovery. Empty means every namespace. |
 | `--site` | Names this instance in the header and browser title. Set it whenever more than one binnacle exists. |
 | `--profile` | The sextant site profile describing how these clusters are laid out. |
-| `--os-cloud` | A `clouds.yaml` profile for sextant's OpenStack plugin. |
+| `--os-cloud` | The `clouds.yaml` entry to use for clusters whose own credentials do not name one. |
+| `--clouds-dir` | Where per-cluster `clouds.yaml` files are written for gophercloud. Should be memory-backed. |
 | `--oidc-issuer`, `--oidc-client-id`, `--oidc-redirect-url` | Turn on authentication. |
 | `--insecure-cookies` | Send session cookies without `Secure`. Testing over plain HTTP only. |
 

@@ -38,6 +38,16 @@ type Discovered struct {
 	Name      string
 	Config    *rest.Config
 	Err       error
+
+	// Clouds is this cluster's OpenStack credentials, when it has any. Nil
+	// means it does not run OpenStack, or nobody has supplied them — either
+	// way the plugin fails detection and contributes nothing, which is what it
+	// is designed to do.
+	Clouds *CloudCredentials
+	// CloudsErr records a credential that exists but could not be used. Kept
+	// apart from Err, which stops the cluster being collected at all: a
+	// malformed clouds.yaml should cost the OpenStack pane, not the cluster.
+	CloudsErr error
 }
 
 // Key identifies a cluster across reconciles.
@@ -132,6 +142,7 @@ func (d *Discoverer) List(ctx context.Context) ([]Discovered, error) {
 	for _, item := range list.Items {
 		found := Discovered{Namespace: item.GetNamespace(), Name: item.GetName()}
 		found.Config, found.Err = d.workloadConfig(ctx, found.Namespace, found.Name)
+		found.Clouds, found.CloudsErr = d.clouds(ctx, found.Namespace, found.Name)
 		out = append(out, found)
 	}
 	return out, nil

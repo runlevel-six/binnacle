@@ -29,6 +29,13 @@ spec:
       securityContext:
         runAsNonRoot: true
         seccompProfile: {type: RuntimeDefault}
+      volumes:
+        # Memory-backed, because binnacle writes each cluster's clouds.yaml here
+        # for gophercloud to read and those are credentials. The container's
+        # root filesystem is read-only, so this is also the only writable path
+        # it has.
+        - name: clouds
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}
       containers:
         - name: binnacle
           image: binnacle:latest
@@ -42,6 +49,9 @@ spec:
             # Role in rbac.yaml is created in.
             - --namespace=managed-clusters
             - --profile=my-site
+            # Per-cluster OpenStack credentials are written here for
+            # gophercloud, which reads a file and nothing else.
+            - --clouds-dir=/run/binnacle/clouds
             - --oidc-issuer=https://sso.example/realms/platform
             - --oidc-client-id=binnacle
             - --oidc-redirect-url=https://binnacle.site-a.example/auth/callback
@@ -56,6 +66,8 @@ spec:
             - name: BINNACLE_SESSION_KEY
               valueFrom:
                 secretKeyRef: {name: binnacle-oidc, key: session-key}
+          volumeMounts:
+            - {name: clouds, mountPath: /run/binnacle/clouds}
           ports:
             - {name: http, containerPort: 8080}
           # Liveness only. There is deliberately no readiness gate on the

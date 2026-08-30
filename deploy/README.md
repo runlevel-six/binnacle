@@ -61,6 +61,40 @@ Each deployment is independent, so each needs its own redirect URL registered
 with the identity provider — one client with several redirect URIs, or one
 client per site — and its own session key.
 
+## OpenStack credentials
+
+Each workload cluster is generally its own cloud, so credentials are per-cluster.
+Binnacle looks for them in the namespace the `Cluster` objects live in:
+
+1. A Secret named `<cluster>-clouds-yaml`.
+2. Failing that, a Secret labeled `binnacle/clouds-yaml=<cluster>` — the escape
+   hatch for a site that already names these something else. Two matches is a
+   refusal naming both, because picking one would mean authenticating to a cloud
+   on the strength of a resemblance, and that failure *succeeds*: it reports
+   another cloud's inventory as this cluster's.
+
+The Secret holds the file under `clouds.yaml`, and may name which entry inside
+it to use under `cloud`. Without that key, `--os-cloud` or the site profile
+decides.
+
+```
+kubectl -n managed-clusters create secret generic tenant-01-clouds-yaml \
+  --from-file=clouds.yaml=./tenant-01-clouds.yaml \
+  --from-literal=cloud=my-cloud
+```
+
+A cluster with no such Secret is not an error: the OpenStack plugin fails
+detection and contributes nothing, which is what it is designed to do. A Secret
+that exists but cannot be used *is* reported, on the card and on the cluster
+page — a pane missing because nobody configured it and one missing because the
+configuration is broken look identical, and only one of them is somebody's to
+fix.
+
+gophercloud reads credentials from a file and nothing else, so binnacle writes
+each cluster's to `--clouds-dir`. The deployment mounts that as a memory-backed
+`emptyDir`, so they never reach a disk, and each file is removed when its
+collector stops.
+
 ## What it can read
 
 On the management cluster, the Role grants read on Cluster API and Metal3

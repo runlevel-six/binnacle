@@ -23,6 +23,9 @@
 {{if .WorkloadProblem}}
   <p class="halfblind">Workload cluster: {{.WorkloadProblem}}</p>
 {{end}}
+{{if .CloudsProblem}}
+  <p class="halfblind">OpenStack credentials: {{.CloudsProblem}}</p>
+{{end}}
 
 <div class="panes">
   <section class="pane">

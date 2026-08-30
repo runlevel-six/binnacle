@@ -39,7 +39,8 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "watch"]
-  # The kubeconfig Cluster API mints for each workload cluster.
+  # Two kinds of Secret: the kubeconfig Cluster API mints for each workload
+  # cluster, and — where you supply one — that cluster's OpenStack credentials.
   #
   # "get" is the normal path: binnacle asks for <cluster>-kubeconfig by name.
   # "list" is only needed for the fallback that finds a cluster's kubeconfig

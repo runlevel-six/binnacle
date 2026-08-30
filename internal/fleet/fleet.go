@@ -3,6 +3,8 @@ package fleet
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -28,10 +30,17 @@ type Options struct {
 	// fleet gets the same one, which holds while a fleet is homogeneous; a
 	// per-cluster profile is the obvious extension when it stops being.
 	Profile profile.Profile
-	// OSCloud names a clouds.yaml profile for the OpenStack plugin. A deployed
-	// binnacle usually leaves this empty: without credentials the plugin fails
-	// detection and contributes nothing, which is the designed behavior.
+	// OSCloud names the clouds.yaml entry to use, for clusters whose own
+	// credentials do not name one. A fleet-wide fallback: each cluster is
+	// generally its own cloud, so per-cluster credentials are the normal case
+	// and this is what a single-cluster or uniform-naming site can set instead.
 	OSCloud string
+	// CloudsDir is where per-cluster clouds.yaml files are written for
+	// gophercloud to read. Empty uses a directory under the system temp dir.
+	//
+	// In a deployment this should be a memory-backed volume: these are
+	// credentials, and gophercloud will only read them from a file.
+	CloudsDir string
 	// RediscoverEvery sets how often the cluster list is re-read. Zero uses a
 	// sensible default.
 	RediscoverEvery time.Duration
@@ -53,6 +62,8 @@ type tracked struct {
 	store      *store.Store
 	registry   *plugin.Registry
 	cancel     context.CancelFunc
+	// cloudsPath is the file written for this cluster, removed when it stops.
+	cloudsPath string
 
 	// startedAt is when this cluster's collector began. Silence needs a clock
 	// against it: without one, "has not reported yet" is indistinguishable
@@ -74,6 +85,8 @@ type tracked struct {
 	// silence carries no reason a reader can act on.
 	workloadErr   error
 	workloadProbe bool
+	// cloudsErr records credentials that exist but could not be used.
+	cloudsErr error
 }
 
 // Fleet keeps one sextant collector per discovered cluster and answers what the
@@ -102,6 +115,9 @@ func New(opts Options) (*Fleet, error) {
 	}
 	if opts.CoalesceWindow == 0 {
 		opts.CoalesceWindow = defaultCoalesce
+	}
+	if opts.CloudsDir == "" {
+		opts.CloudsDir = filepath.Join(os.TempDir(), "binnacle-clouds")
 	}
 	return &Fleet{
 		opts:       opts,
@@ -210,6 +226,29 @@ func (f *Fleet) start(ctx context.Context, d Discovered) {
 		return
 	}
 
+	// OpenStack credentials, when this cluster has any. A failure here costs
+	// the OpenStack pane and nothing else: the cluster is still worth watching
+	// without it.
+	cloud, cloudsPath := f.opts.OSCloud, ""
+	if d.Clouds != nil {
+		path, err := writeClouds(f.opts.CloudsDir, d.Key(), d.Clouds)
+		if err != nil {
+			t.mu.Lock()
+			t.cloudsErr = err
+			t.mu.Unlock()
+		} else {
+			t.cloudsPath = path
+			cloudsPath = path
+			if d.Clouds.Cloud != "" {
+				cloud = d.Clouds.Cloud
+			}
+		}
+	} else if d.CloudsErr != nil {
+		t.mu.Lock()
+		t.cloudsErr = d.CloudsErr
+		t.mu.Unlock()
+	}
+
 	// Probe the workload API server directly, alongside the collectors. It is
 	// the only way an unreachable workload cluster produces a sentence rather
 	// than an absence.
@@ -233,7 +272,8 @@ func (f *Fleet) start(ctx context.Context, d Discovered) {
 			// own store and each row would report the whole fleet's numbers.
 			CAPIClusterName:      d.Name,
 			ManagementNamespaces: []string{d.Namespace},
-			OSCloud:              f.opts.OSCloud,
+			OSCloud:              cloud,
+			OSCloudsPath:         cloudsPath,
 		}, func(version string, err error) {
 			t.mu.Lock()
 			ok := err == nil
@@ -305,6 +345,7 @@ func (f *Fleet) stop(key string) {
 	f.mu.Unlock()
 	if ok {
 		t.cancel()
+		t.removeClouds()
 	}
 }
 
@@ -315,6 +356,17 @@ func (f *Fleet) stopAll() {
 	f.mu.Unlock()
 	for _, t := range all {
 		t.cancel()
+		t.removeClouds()
+	}
+}
+
+// removeClouds deletes the credentials written for this cluster.
+//
+// Best effort: a file left behind in a memory-backed directory disappears with
+// the pod, and failing to remove it is not a reason to hold up a shutdown.
+func (t *tracked) removeClouds() {
+	if t.cloudsPath != "" {
+		_ = os.Remove(t.cloudsPath)
 	}
 }
 
@@ -423,6 +475,15 @@ type ClusterView struct {
 	// from half the sources must not read as good news.
 	WorkloadProblem string
 
+	// CloudsProblem is set when this cluster has OpenStack credentials that
+	// could not be used. Its own field, not folded into WorkloadProblem,
+	// because the consequence is different and much narrower: the cluster is
+	// read normally and only the OpenStack pane is missing. Reported all the
+	// same — a pane absent because nobody configured it and one absent because
+	// the configuration is broken look identical, and only one of them is
+	// somebody's to fix.
+	CloudsProblem string
+
 	Rollout rollout.State
 
 	// Problem is set when the cluster cannot be read at all: no credentials, a
@@ -512,6 +573,9 @@ func (t *tracked) view(prof profile.Profile) ClusterView {
 	// on every restart would teach a reader to ignore amber.
 	t.mu.Lock()
 	probeErr, probed := t.workloadErr, t.workloadProbe
+	if t.cloudsErr != nil {
+		v.CloudsProblem = t.cloudsErr.Error()
+	}
 	t.mu.Unlock()
 
 	// A zero startedAt means the age is unknown, not infinite. Treating unknown
