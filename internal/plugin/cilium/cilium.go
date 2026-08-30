@@ -24,6 +24,7 @@ import (
 
 	"github.com/runlevel-six/sextant/internal/plugin/kube"
 	"github.com/runlevel-six/sextant/pkg/store"
+	ciliumstate "github.com/runlevel-six/sextant/pkg/subsystem/cilium"
 	"github.com/runlevel-six/sextant/pkg/tui"
 )
 
@@ -31,7 +32,7 @@ import (
 const Name = "cilium"
 
 // KeyState holds a State.
-const KeyState = "cilium/state"
+const KeyState = ciliumstate.KeyState
 
 // TestedVersions records the releases the parser has fixtures for. Reported in
 // diagnostics so a parse failure on an untested release is self-explaining.
@@ -41,100 +42,25 @@ var TestedVersions = []string{"1.14", "1.15", "1.16", "1.19"}
 // a pod, so this is deliberately slower than an informer would be.
 const pollInterval = 20 * time.Second
 
-// IPAM is one agent's view of pod-address allocation.
-//
-// These numbers are per-node, not cluster-wide: a pane must say which agent they
-// came from or a reader will take one node's exhaustion for the cluster's.
-type IPAM struct {
-	Used      int
-	Available int
-}
-
-// Total is the implied pool size. Cilium reports no total because a pool can
-// fragment across CIDRs, but used plus available is the figure that answers "are
-// we about to run out".
-func (i IPAM) Total() int { return i.Used + i.Available }
-
-// ExhaustionKnown reports whether Available is meaningful.
-//
-// The oldest status shape lists allocated addresses with no remaining count, so
-// Available is zero because it is unknown, not because the pool is full.
-// Presenting that as 100% used would be a false alarm.
-func (i IPAM) ExhaustionKnown() bool { return i.Available > 0 || i.Used == 0 }
-
-// Percent returns used as a percentage of the pool, or -1 when unknown.
-func (i IPAM) Percent() int {
-	if !i.ExhaustionKnown() || i.Total() == 0 {
-		return -1
-	}
-	return i.Used * 100 / i.Total()
-}
-
-// Hubble is the observability layer's state.
-type Hubble struct {
-	Enabled   bool
-	State     string
-	SeenFlows int64
-	// FlowsPerSecond is derived between polls, since SeenFlows is a lifetime
-	// counter. A lifetime average would understate a current spike by orders of
-	// magnitude on a long-running agent.
-	FlowsPerSecond float64
-}
-
-// Controllers counts Cilium's internal controllers on the agent polled.
-type Controllers struct {
-	Total   int
-	Failing int
-}
-
-// MeshPeer is one cluster-mesh peer.
-type MeshPeer struct {
-	Name  string
-	Ready bool
-}
-
-// ClusterMesh is the cross-cluster view. No peers means mesh is not enabled.
-type ClusterMesh struct {
-	Peers          []MeshPeer
-	GlobalServices int
-}
-
-// Status is what one agent reports.
-type Status struct {
-	Version              string
-	State                string
-	KubeProxyReplacement string
-	EncryptionMode       string
-	IPAM                 IPAM
-	Hubble               Hubble
-	Controllers          Controllers
-	ClusterMesh          ClusterMesh
-	// Unreadable names the status sections that could not be decoded, so a
-	// missing cell is reported as unreadable rather than as absent or healthy.
-	Unreadable []string
-}
-
-// State is everything the plugin publishes.
-type State struct {
-	// Tier is how much of the below is populated.
-	Tier kube.Tier
-	// AgentsReady and AgentsDesired come from the DaemonSet and are available at
-	// every tier.
-	AgentsReady   int32
-	AgentsDesired int32
-	// Rollout is the agent DaemonSet's progress toward its own pod template.
-	// Distinct from readiness: every agent can be Ready while half of them still
-	// run the version before the one the chart now asks for.
-	Rollout kube.Rollout
-	// Status is populated only at the full tier.
-	Status Status
-	// Pod names the agent Status came from, so per-node figures can be labeled.
-	Pod string
-	// TierReason explains a reduced tier, so a thin pane says why it is thin.
-	TierReason string
-	UpdatedAt  time.Time
-	Err        error
-}
+// The Cilium state types live in pkg/subsystem/cilium so a consumer outside
+// this module can read them. Aliased here so this package's own code is
+// unchanged.
+type (
+	// IPAM is an alias for [ciliumstate.IPAM].
+	IPAM = ciliumstate.IPAM
+	// Hubble is an alias for [ciliumstate.Hubble].
+	Hubble = ciliumstate.Hubble
+	// Controllers is an alias for [ciliumstate.Controllers].
+	Controllers = ciliumstate.Controllers
+	// MeshPeer is an alias for [ciliumstate.MeshPeer].
+	MeshPeer = ciliumstate.MeshPeer
+	// ClusterMesh is an alias for [ciliumstate.ClusterMesh].
+	ClusterMesh = ciliumstate.ClusterMesh
+	// Status is an alias for [ciliumstate.Status].
+	Status = ciliumstate.Status
+	// State is an alias for [ciliumstate.State].
+	State = ciliumstate.State
+)
 
 // Settings is the plugin's profile configuration.
 type Settings struct {

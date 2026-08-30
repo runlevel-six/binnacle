@@ -33,35 +33,23 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/remotecommand"
+
+	"github.com/runlevel-six/sextant/pkg/subsystem"
 )
 
 // Tier is how much detail a plugin can currently provide.
-type Tier int
+//
+// An alias for [subsystem.Tier]: the vocabulary is public so that a consumer
+// outside this module can read a plugin's state, while the machinery that
+// derives it stays here.
+type Tier = subsystem.Tier
 
+// The tiers, in increasing detail. See [subsystem.Tier].
 const (
-	// TierAbsent means the subsystem is not installed. The plugin contributes
-	// nothing at all — no pane, no banner cell.
-	TierAbsent Tier = iota
-	// TierInformer means the subsystem is present but its detail commands cannot
-	// be run, usually for want of pods/exec. The plugin renders what the API
-	// alone reveals.
-	TierInformer
-	// TierFull means detail commands work.
-	TierFull
+	TierAbsent   = subsystem.TierAbsent
+	TierInformer = subsystem.TierInformer
+	TierFull     = subsystem.TierFull
 )
-
-// String returns the tier's name, for diagnostics.
-func (t Tier) String() string {
-	switch t {
-	case TierAbsent:
-		return "absent"
-	case TierInformer:
-		return "informer-only"
-	case TierFull:
-		return "full"
-	}
-	return "?"
-}
 
 // Client bundles what a plugin needs to probe and read a cluster.
 type Client struct {

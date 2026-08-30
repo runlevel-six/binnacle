@@ -1,6 +1,8 @@
 package ovn
 
 import (
+	ovnstate "github.com/runlevel-six/sextant/pkg/subsystem/ovn"
+
 	"context"
 	"sort"
 	"strings"
@@ -10,18 +12,9 @@ import (
 	"github.com/runlevel-six/sextant/internal/plugin/kube"
 )
 
-// Component is one OVN or Open vSwitch workload family's rollout state.
-//
-// Named families rather than workloads, because the switching layer is not one
-// workload per job. Open vSwitch in particular is split into a DaemonSet per
-// distinct node configuration, hash-suffixed, and an operator asking "is OVS up to
-// date" wants one number rather than four — two of which are usually empty
-// leftovers from nodes that have since been relabeled.
-type Component struct {
-	// Name is the family, e.g. "ovn-northd", "ovn-controller", "openvswitch".
-	Name string
-	kube.Rollout
-}
+// Component is one OVN or Open vSwitch workload family's rollout state. It
+// lives in pkg/subsystem/ovn so a consumer outside this module can read it.
+type Component = ovnstate.Component
 
 // components are the workload families this plugin reports, in the order an
 // upgrade must proceed through them.

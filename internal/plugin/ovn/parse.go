@@ -2,7 +2,6 @@ package ovn
 
 import (
 	"fmt"
-	"net"
 	"regexp"
 	"strconv"
 	"strings"
@@ -181,51 +180,4 @@ func shortID(value string) string {
 		return m[1]
 	}
 	return value
-}
-
-// PodNameFrom extracts a member's pod name from its OVSDB address.
-//
-// A member's address is its headless-Service DNS name, whose first label is the
-// pod: "tcp:ovn-ovsdb-nb-2.ovn-ovsdb-nb.openstack.svc.cluster.local:6643" is
-// ovn-ovsdb-nb-2. That is the only place the mapping appears — every other line
-// refers to members by a four-hex-digit ID, which is useless for finding the pod
-// to look at.
-//
-// An address that is an IP rather than a DNS name is returned as the IP, since
-// half a name would be worse than none.
-func PodNameFrom(addr string) string {
-	host := addr
-
-	// Strip the transport scheme.
-	if i := strings.Index(host, ":"); i > 0 {
-		switch host[:i] {
-		case "tcp", "ssl", "unix", "punix", "ptcp", "pssl":
-			host = host[i+1:]
-		}
-	}
-
-	// Strip the port. A bracketed IPv6 literal is handled first, since its
-	// colons would otherwise be mistaken for the port separator.
-	switch {
-	case strings.HasPrefix(host, "["):
-		if end := strings.Index(host, "]"); end > 0 {
-			return host[1:end]
-		}
-	default:
-		if i := strings.LastIndex(host, ":"); i > 0 {
-			host = host[:i]
-		}
-	}
-
-	// An IP literal is returned whole. Taking the first dot-separated label would
-	// turn 10.0.0.5 into "10", which is worse than useless — it looks like a name.
-	if net.ParseIP(host) != nil {
-		return host
-	}
-
-	// The first DNS label of a headless-Service name is the pod.
-	if i := strings.Index(host, "."); i > 0 {
-		return host[:i]
-	}
-	return host
 }

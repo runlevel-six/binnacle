@@ -127,10 +127,13 @@ func TestLoad_MissingExplicitPathIsAnError(t *testing.T) {
 // config. The resolver then produces an actionable "no contexts" message, which
 // is more useful than a load failure for a file the user never named.
 func TestLoad_NoKubeconfigAnywhereYieldsEmptyConfig(t *testing.T) {
+	// $KUBECONFIG, pointed at a file that does not exist, rather than a blank
+	// HOME. client-go resolves the default ~/.kube/config path at package
+	// init, so a test that moves HOME afterwards still finds the developer's
+	// real kubeconfig — this passed only on machines that happened not to have
+	// one, which is CI and almost nowhere else.
 	empty := t.TempDir()
-	t.Setenv("KUBECONFIG", "")
-	t.Setenv("HOME", empty)
-	t.Setenv("USERPROFILE", empty) // Windows equivalent
+	t.Setenv("KUBECONFIG", filepath.Join(empty, "does-not-exist"))
 
 	k, err := Load("")
 	if err != nil {

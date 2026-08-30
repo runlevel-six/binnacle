@@ -189,4 +189,5 @@ rendered line tracking whether a background is armed.
 | add a theme | `pkg/tui/theme.go` |
 | change what a snapshot holds | `pkg/model` |
 | consume the data layer from outside the TUI | `pkg/collect` |
+| read a subsystem's state from outside | `pkg/subsystem/*` |
 | work on the demo fixture | `internal/demo` |

@@ -317,7 +317,7 @@ func migrationTable(snap Migrations, items []Migration, now time.Time) ([][]stri
 			ShortHost(m.SourceCompute) + " → " + dst,
 			age(now, m.UpdatedAt),
 		})
-		styles = append(styles, migrationStyle(m.Status, snap.stillBroken(m)))
+		styles = append(styles, migrationStyle(m.Status, snap.StillBroken(m)))
 	}
 	return rows, styles
 }

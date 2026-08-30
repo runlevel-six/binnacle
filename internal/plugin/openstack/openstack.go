@@ -34,6 +34,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
 
 	"github.com/runlevel-six/sextant/pkg/store"
+	osstate "github.com/runlevel-six/sextant/pkg/subsystem/openstack"
 	"github.com/runlevel-six/sextant/pkg/tui"
 )
 
@@ -41,7 +42,53 @@ import (
 const Name = "openstack"
 
 // KeyState holds a State.
-const KeyState = "openstack/state"
+const KeyState = osstate.KeyState
+
+// The OpenStack state types live in pkg/subsystem/openstack so a consumer
+// outside this module can read them. Aliased here so this package's own code is
+// unchanged.
+type (
+	// Count is an alias for [osstate.Count].
+	Count = osstate.Count
+	// Inventory is an alias for [osstate.Inventory].
+	Inventory = osstate.Inventory
+	// Migration is an alias for [osstate.Migration].
+	Migration = osstate.Migration
+	// BrokenServer is an alias for [osstate.BrokenServer].
+	BrokenServer = osstate.BrokenServer
+	// Drain is an alias for [osstate.Drain].
+	Drain = osstate.Drain
+	// Migrations is an alias for [osstate.Migrations].
+	Migrations = osstate.Migrations
+	// Shown is an alias for [osstate.Shown].
+	Shown = osstate.Shown
+	// Agent is an alias for [osstate.Agent].
+	Agent = osstate.Agent
+	// ServiceSummary is an alias for [osstate.ServiceSummary].
+	ServiceSummary = osstate.ServiceSummary
+	// State is an alias for [osstate.State].
+	State = osstate.State
+)
+
+// FailedWindow is how long a failed migration stays worth showing.
+const FailedWindow = osstate.FailedWindow
+
+// Service names, used as the grouping key.
+const (
+	ServiceCompute      = osstate.ServiceCompute
+	ServiceNetwork      = osstate.ServiceNetwork
+	ServiceBlockStorage = osstate.ServiceBlockStorage
+)
+
+// Interpretation that traveled with the types.
+var (
+	Active          = osstate.Active
+	Failed          = osstate.Failed
+	LatestPerServer = osstate.LatestPerServer
+	ShortType       = osstate.ShortType
+	ShortStatus     = osstate.ShortStatus
+	DrainingHosts   = osstate.DrainingHosts
+)
 
 // pollInterval is how often the cloud is queried. Several API round trips per
 // poll, so this is unhurried.
@@ -56,111 +103,6 @@ const pollInterval = 30 * time.Second
 // every thirty seconds costs the operator nothing they would notice and saves
 // the cloud three quarters of the load.
 const inventoryEvery = 4
-
-// Agent is one service agent, from whichever OpenStack service reported it.
-type Agent struct {
-	// Service is which OpenStack service this came from: "compute", "network" or
-	// "block-storage".
-	Service string
-	// Binary is the agent process, e.g. "nova-compute", "neutron-ovn-metadata-agent".
-	Binary string
-	// Host is the node or pod running it.
-	Host string
-	// Zone is the availability zone, or "internal" for a control-plane service.
-	Zone string
-	// Up reports whether the agent is reporting in.
-	Up bool
-	// Enabled reports whether the scheduler is allowed to use it. A disabled
-	// agent is a deliberate act, not a fault — see the package comment.
-	Enabled bool
-	// UpdatedAt is when the agent last checked in.
-	UpdatedAt time.Time
-}
-
-// Healthy reports whether an agent needs no attention: up, or deliberately
-// disabled.
-//
-// A disabled agent is excluded rather than counted as broken, because that is what
-// draining a compute node looks like and it must not read as a failure.
-func (a Agent) Healthy() bool { return a.Up || !a.Enabled }
-
-// ServiceSummary groups one OpenStack service's agents.
-type ServiceSummary struct {
-	Service string
-	Total   int
-	Up      int
-	// Disabled counts agents an operator has taken out of service.
-	Disabled int
-	// DownBinaries names the binaries with agents that are down and still
-	// enabled, so the summary says what is broken rather than only that
-	// something is.
-	DownBinaries []string
-	Err          error
-}
-
-// Healthy reports whether every enabled agent in this service is up.
-func (s ServiceSummary) Healthy() bool {
-	return s.Err == nil && len(s.DownBinaries) == 0
-}
-
-// State is everything the plugin publishes.
-type State struct {
-	// Cloud is the clouds.yaml profile in use.
-	Cloud string
-	// Region is the region the endpoints resolved to.
-	Region string
-	// Services is one summary per OpenStack service, in a stable order.
-	Services []ServiceSummary
-	// Agents is every agent, for the detail table.
-	Agents    []Agent
-	UpdatedAt time.Time
-	Err       error
-}
-
-// DrainingHosts is the set of compute hosts an operator has taken out of the
-// scheduler, which is what draining a hypervisor looks like from the API.
-//
-// Only nova-compute is considered. A disabled neutron agent is a different
-// event, and a host is not being emptied of servers because its metadata agent
-// is off.
-//
-// The name overstates it slightly and deliberately: a host disabled for a dead
-// power supply is not being drained either, and this will call it draining. The
-// rest of the plugin already reads disabled as intentional-not-broken — see the
-// package comment — so this is the same heuristic rather than a second one, and
-// the cost of the false positive is one extra row on a pane.
-func DrainingHosts(s State) map[string]bool {
-	out := map[string]bool{}
-	for _, a := range s.Agents {
-		if a.Service == ServiceCompute && a.Binary == "nova-compute" && !a.Enabled {
-			out[a.Host] = true
-		}
-	}
-	return out
-}
-
-// DownAgents returns the agents that are down while still enabled — the ones that
-// need attention.
-func (s State) DownAgents() []Agent {
-	var out []Agent
-	for _, a := range s.Agents {
-		if !a.Healthy() {
-			out = append(out, a)
-		}
-	}
-	return out
-}
-
-// DisabledAgents returns the agents an operator has taken out of service.
-func (s State) DisabledAgents() []Agent {
-	var out []Agent
-	for _, a := range s.Agents {
-		if !a.Enabled {
-			out = append(out, a)
-		}
-	}
-	return out
-}
 
 // Settings is the plugin's configuration: the profile's plugin block, with the
 // flag- and environment-sourced values layered over it.
@@ -387,13 +329,6 @@ func (p *Plugin) poll(ctx context.Context) State {
 	})
 	return state
 }
-
-// Service names, used as the grouping key.
-const (
-	ServiceCompute      = "compute"
-	ServiceNetwork      = "network"
-	ServiceBlockStorage = "block-storage"
-)
 
 // serviceError tags an error with the service that produced it, so a failure can
 // be attributed on its own summary row rather than failing the poll.

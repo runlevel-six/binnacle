@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	osstate "github.com/runlevel-six/sextant/pkg/subsystem/openstack"
+
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v3/volumes"
@@ -19,38 +21,7 @@ import (
 )
 
 // KeyInventory holds an Inventory.
-const KeyInventory = "openstack/inventory"
-
-// Count is one resource kind's tally.
-//
-// Each kind carries its own error, because each is a separate API call against a
-// separate service. A denied Keystone, an undeployed Octavia and a slow Nova are
-// three independent facts, and collapsing them into one pane-wide failure would
-// hide the seven counts that did come back.
-type Count struct {
-	// Label is the human-readable kind, e.g. "Floating IPs".
-	Label string
-	Total int
-	// ByState breaks the total down by the kind's own status vocabulary —
-	// server power states, volume states, load balancer provisioning states.
-	// Empty for kinds where a breakdown is noise.
-	ByState map[string]int
-	// Absent reports that the service is not in the catalog. Distinct from Err:
-	// a cloud with no Octavia is correctly configured, not broken.
-	Absent bool
-	Err    error
-}
-
-// Inventory is the cloud-wide resource count the at-rest pane shows.
-type Inventory struct {
-	// Counts is one entry per kind, in a fixed order chosen for reading rather
-	// than sorted: identity, then compute, then network, then storage.
-	Counts    []Count
-	UpdatedAt time.Time
-	// Err is set only when nothing could be counted at all — an authentication
-	// failure, rather than one service being unavailable.
-	Err error
-}
+const KeyInventory = osstate.KeyInventory
 
 // counter is one line of the inventory: a label, whether a state breakdown is
 // worth showing, and how to fetch it.
