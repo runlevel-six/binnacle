@@ -304,7 +304,7 @@ func (a *OIDC) sign(payload string) string {
 //
 // An open redirect through a login endpoint is the classic way a phishing link
 // borrows a trusted hostname, so anything that is not a plain rooted path is
-// discarded rather than sanitised.
+// discarded rather than sanitized.
 func safeNext(next string) string {
 	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
 		return "/"

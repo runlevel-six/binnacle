@@ -128,7 +128,7 @@ func TestView_TiesSortByName(t *testing.T) {
 	}
 }
 
-// The node count honours the profile's expected cordons for the same reason the
+// The node count honors the profile's expected cordons for the same reason the
 // health cell does: a fleet of hypervisors cordoned by design must not read as
 // a fleet-wide drain.
 func TestView_ExpectedCordonsAreNotCounted(t *testing.T) {

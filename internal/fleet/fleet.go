@@ -28,7 +28,7 @@ type Options struct {
 	Profile profile.Profile
 	// OSCloud names a clouds.yaml profile for the OpenStack plugin. A deployed
 	// binnacle usually leaves this empty: without credentials the plugin fails
-	// detection and contributes nothing, which is the designed behaviour.
+	// detection and contributes nothing, which is the designed behavior.
 	OSCloud string
 	// RediscoverEvery sets how often the cluster list is re-read. Zero uses a
 	// sensible default.
@@ -262,7 +262,7 @@ func (f *Fleet) stopAll() {
 	}
 }
 
-// NodeCount summarises the workload cluster's nodes.
+// NodeCount summarizes the workload cluster's nodes.
 type NodeCount struct {
 	Ready    int
 	Total    int

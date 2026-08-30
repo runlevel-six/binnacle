@@ -98,7 +98,7 @@ func TestSession_RoundTrip(t *testing.T) {
 }
 
 // The cookie is not secret, so the signature is the only thing making it a
-// session rather than a suggestion. An edited one must not be honoured.
+// session rather than a suggestion. An edited one must not be honored.
 func TestSession_TamperedCookieRejected(t *testing.T) {
 	a := testOIDC(t)
 	rec := httptest.NewRecorder()
