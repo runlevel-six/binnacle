@@ -1,5 +1,8 @@
 # Build
-FROM golang:1.26 AS build
+# Pinned to go.mod's exact version. golang:1.26 could be any patch release, and
+# a builder older than go.mod's target makes Go download a toolchain mid-build —
+# slower, and a network dependency the build does not otherwise have.
+FROM golang:1.26.1 AS build
 WORKDIR /src
 
 # Dependencies first, so a source-only change does not re-download the module

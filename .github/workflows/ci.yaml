@@ -4,7 +4,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # Both names: this repository's default branch is master while its sibling
+    # uses main, and a workflow that silently stops running when a branch is
+    # renamed is worse than one line of redundancy.
+    branches: [main, master]
   pull_request:
 
 permissions:
