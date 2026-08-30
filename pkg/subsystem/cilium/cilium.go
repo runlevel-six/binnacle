@@ -6,6 +6,7 @@
 package cilium
 
 import (
+	"strings"
 	"time"
 
 	"github.com/runlevel-six/sextant/pkg/subsystem"
@@ -74,8 +75,12 @@ type ClusterMesh struct {
 
 // Status is what one agent reports.
 type Status struct {
-	Version              string
-	State                string
+	Version string
+	State   string
+	// KubeProxyReplacement is Cilium's own mode string, and it reads as its own
+	// opposite: "true" means Cilium has *replaced* kube-proxy, not that
+	// kube-proxy is running. Render it through [Status.KubeProxyText] rather
+	// than showing the field.
 	KubeProxyReplacement string
 	EncryptionMode       string
 	IPAM                 IPAM
@@ -107,4 +112,28 @@ type State struct {
 	TierReason string
 	UpdatedAt  time.Time
 	Err        error
+}
+
+// KubeProxyText says what the replacement mode means, in words.
+//
+// The raw value is a trap: Cilium reports "true" when it has *replaced*
+// kube-proxy, so a display showing the field reads as the opposite of the
+// truth. The mapping lives on the type rather than in a pane so that every
+// front end says the same thing — this exact inversion was already found once
+// against a live cluster.
+func (s Status) KubeProxyText() string {
+	switch strings.ToLower(s.KubeProxyReplacement) {
+	case "":
+		return "unknown"
+	case "true", "strict":
+		return "replaced by Cilium"
+	case "false", "disabled":
+		// Deliberately says nothing about whether kube-proxy is running:
+		// Cilium reports only that it is not replacing it, and claiming more
+		// than that would be inventing an observation.
+		return "not replaced"
+	case "partial":
+		return "partially replaced"
+	}
+	return s.KubeProxyReplacement
 }

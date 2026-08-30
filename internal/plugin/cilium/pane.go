@@ -76,7 +76,7 @@ func (p *pane) statusLines(state State) []string {
 		lines = append(lines,
 			row("version", orUnknown(st.Version)),
 			row("state", tui.StatusStyle(st.State).Render(orUnknown(st.State))),
-			row("kube-proxy", kubeProxyText(st.KubeProxyReplacement)),
+			row("kube-proxy", st.KubeProxyText()),
 			row("ipam", ipamText(st.IPAM, state.Pod)),
 			row("hubble", hubbleText(st.Hubble)),
 			row("controllers", controllerText(st.Controllers)),
@@ -188,36 +188,6 @@ func meshText(m ClusterMesh) string {
 	return fmt.Sprintf("%s  %s",
 		style.Render(fmt.Sprintf("%d/%d peers ready", ready, len(m.Peers))),
 		tui.StyleMuted.Render(fmt.Sprintf("%d global services", m.GlobalServices)))
-}
-
-// kubeProxyText says what happened to kube-proxy, rather than echoing Cilium's
-// raw mode.
-//
-// The field is `kube-proxy-replacement`, and rendering its value beside the label
-// "kube-proxy" reverses the meaning: a cluster where Cilium has *replaced*
-// kube-proxy reports "True", which reads as kube-proxy being present and enabled.
-// Since replacing kube-proxy is one of the main reasons to run Cilium, and the
-// clusters that do it no longer have kube-proxy installed at all, that is the
-// worst possible way to be wrong.
-//
-// An unrecognized mode is passed through rather than guessed at: Cilium has
-// shipped "Strict", "Partial", "Probe" and "Disabled" over the years, and a
-// future one should appear verbatim instead of being flattened into a yes or no.
-func kubeProxyText(mode string) string {
-	switch strings.ToLower(mode) {
-	case "":
-		return orUnknown(mode)
-	case "true", "strict":
-		return "replaced by Cilium"
-	case "false", "disabled":
-		// Deliberately says nothing about whether kube-proxy is running: Cilium
-		// reports only that it is not replacing it, and claiming more than that
-		// would be inventing an observation.
-		return "not replaced"
-	case "partial":
-		return "partially replaced"
-	}
-	return mode
 }
 
 func orUnknown(s string) string {

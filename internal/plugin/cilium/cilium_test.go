@@ -699,8 +699,8 @@ func TestKubeProxyText(t *testing.T) {
 		"":             "unknown",
 	}
 	for mode, want := range tests {
-		if got := kubeProxyText(mode); got != want {
-			t.Errorf("kubeProxyText(%q) = %q, want %q", mode, got, want)
+		if got := (Status{KubeProxyReplacement: mode}).KubeProxyText(); got != want {
+			t.Errorf("KubeProxyText(%q) = %q, want %q", mode, got, want)
 		}
 	}
 }
