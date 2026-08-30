@@ -303,7 +303,7 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 			Rollout: subsystem.Rollout{Desired: 5, Updated: 5, Ready: 5},
 			Pod:     "cilium-czwz7",
 			Status: cilium.Status{
-				Version: "1.19.7", State: "Ok", KubeProxyReplacement: "replaced by Cilium",
+				Version: "1.19.7", State: "Ok", KubeProxyReplacement: "true",
 				EncryptionMode: "Ztunnel",
 				IPAM:           cilium.IPAM{Used: 130, Available: 124},
 				Controllers:    cilium.Controllers{Total: 717},

@@ -367,7 +367,9 @@ func TestClusterPage_NetworkPane(t *testing.T) {
 				Tier: subsystem.TierFull, AgentsReady: 5, AgentsDesired: 5,
 				Rollout: subsystem.Rollout{Desired: 5, Updated: 5},
 				Status: cilium.Status{
-					Version: "1.19.7", KubeProxyReplacement: "replaced by Cilium",
+					// Cilium's own raw value, deliberately: "true" is what the
+					// agent reports when it has *replaced* kube-proxy.
+					Version: "1.19.7", KubeProxyReplacement: "true",
 					IPAM: cilium.IPAM{Used: 130, Available: 124},
 				},
 			},
@@ -380,11 +382,21 @@ func TestClusterPage_NetworkPane(t *testing.T) {
 		},
 	}
 	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
-	for _, want := range []string{"Network", "Cilium", "1.19.7", "replaced by Cilium", "MetalLB", "unannounced", "192.0.2.12"} {
+	for _, want := range []string{"Network", "Cilium", "1.19.7", "MetalLB", "unannounced", "192.0.2.12"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("network pane does not mention %q", want)
 		}
 	}
+	// Cilium reports "true" when it has replaced kube-proxy, so the raw field
+	// says the opposite of the truth. The page must render sextant's reading of
+	// it, never the field.
+	if !strings.Contains(body, "replaced by Cilium") {
+		t.Error("the kube-proxy mode was not interpreted")
+	}
+	if strings.Contains(body, ">kube-proxy</td><td colspan=\"2\">true<") {
+		t.Error("the raw kube-proxy value reached the page")
+	}
+
 	// A pool nothing advertises hands out addresses that never get announced.
 	// It is silent otherwise, which is exactly why it is called out.
 	if !strings.Contains(body, "nothing announces") {

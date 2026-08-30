@@ -152,7 +152,7 @@
               <td>{{if not .Rollout.Converged}}<span class="rolling">{{.Rollout.Updated}}/{{.Rollout.Desired}} updated{{if .Rollout.Manual}} &middot; manual{{end}}</span>{{end}}</td></tr>
             {{if .Status.Version}}<tr><td class="dim">version</td><td colspan="2">{{.Status.Version}}</td></tr>{{end}}
             {{if .Status.State}}<tr><td class="dim">state</td><td colspan="2">{{.Status.State}}</td></tr>{{end}}
-            {{if .Status.KubeProxyReplacement}}<tr><td class="dim">kube-proxy</td><td colspan="2">{{.Status.KubeProxyReplacement}}</td></tr>{{end}}
+            {{if .Status.KubeProxyReplacement}}<tr><td class="dim">kube-proxy</td><td colspan="2">{{.Status.KubeProxyText}}</td></tr>{{end}}
             {{if .Status.EncryptionMode}}<tr><td class="dim">encryption</td><td colspan="2">{{.Status.EncryptionMode}}</td></tr>{{end}}
             {{if .Status.IPAM.ExhaustionKnown}}
             <tr><td class="dim">ipam</td>
