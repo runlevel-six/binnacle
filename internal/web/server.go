@@ -9,6 +9,7 @@ package web
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"embed"
 	"fmt"
@@ -53,6 +54,11 @@ type Authenticator interface {
 type Source interface {
 	// View returns the current state of every cluster, worst first.
 	View() []fleet.ClusterView
+	// Cluster returns everything known about one cluster. False means no such
+	// cluster is tracked, which is a 404 rather than an empty cluster: "this
+	// cluster has no nodes" and "there is no such cluster" are different
+	// claims and must not render the same.
+	Cluster(namespace, name string) (fleet.ClusterDetail, bool)
 	// Changed ticks when something may have moved.
 	Changed() <-chan struct{}
 }
@@ -103,6 +109,8 @@ func (s *Server) Handler() http.Handler {
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /{$}", s.handleFleet)
 	protected.HandleFunc("GET /events", s.handleEvents)
+	protected.HandleFunc("GET /cluster/{namespace}/{name}", s.handleCluster)
+	protected.HandleFunc("GET /cluster/{namespace}/{name}/events", s.handleClusterEvents)
 	mux.Handle("/", s.auth.Middleware(protected))
 	return mux
 }
@@ -115,6 +123,13 @@ type pageData struct {
 	Now      time.Time
 }
 
+type clusterData struct {
+	Cluster fleet.ClusterDetail
+	Auth    string
+	Version string
+	Site    string
+}
+
 func (s *Server) page() pageData {
 	return pageData{
 		Clusters: s.fleet.View(),
@@ -125,20 +140,77 @@ func (s *Server) page() pageData {
 	}
 }
 
-func (s *Server) handleFleet(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "fleet.html", s.page()); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+func (s *Server) cluster(r *http.Request) (clusterData, bool) {
+	d, ok := s.fleet.Cluster(r.PathValue("namespace"), r.PathValue("name"))
+	if !ok {
+		return clusterData{}, false
 	}
+	return clusterData{Cluster: d, Auth: s.auth.Describe(), Version: s.version, Site: s.site}, true
+}
+
+func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
+	data, ok := s.cluster(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	s.render(w, "cluster.html", data)
+}
+
+// render writes a template, or an error, but never half of each.
+//
+// html/template streams as it executes, so a failure partway down a page has
+// already sent a 200 and most of the markup. The reader then gets a truncated
+// page that looks like a rendering quirk rather than a fault, and the error
+// text lands in the middle of the document. Buffering costs one page of memory
+// and makes the failure honest.
+func (s *Server) render(w http.ResponseWriter, name string, data any) {
+	var buf bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(buf.Bytes())
+}
+
+// handleClusterEvents streams the cluster page's body, the same way the fleet
+// page streams its grid.
+//
+// A cluster page is where somebody sits during an upgrade, watching machines
+// move through phases. That is precisely when a page that needs reloading is
+// worst: the reader cannot tell a quiet cluster from a stale tab.
+func (s *Server) handleClusterEvents(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.cluster(r); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	s.stream(w, r, "cluster", func() (any, bool) {
+		data, ok := s.cluster(r)
+		return data, ok
+	})
+}
+
+func (s *Server) handleFleet(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "fleet.html", s.page())
 }
 
 // handleEvents streams a re-rendered cluster grid whenever the fleet changes.
-//
-// The first frame is sent immediately rather than on the first change: a
-// browser that reconnects after a network blip would otherwise sit on whatever
-// it had until something in the fleet happened to move, which on a quiet
-// morning could be a very long time.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	s.stream(w, r, "fleet", func() (any, bool) { return s.page(), true })
+}
+
+// stream pushes a re-rendered fragment over Server-Sent Events.
+//
+// The first frame goes out immediately rather than on the first change: a
+// browser that reconnects after a network blip would otherwise sit on whatever
+// it had until something happened to move, which on a quiet morning could be a
+// very long time.
+//
+// fragment names both the template and the SSE event, which keeps the two from
+// drifting apart — the browser listens for the name of the thing it is being
+// sent.
+func (s *Server) stream(w http.ResponseWriter, r *http.Request, fragment string, data func() (any, bool)) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -149,11 +221,18 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 
 	send := func() bool {
-		var buf strings.Builder
-		if err := s.tmpl.ExecuteTemplate(&buf, "grid.html", s.page()); err != nil {
+		d, ok := data()
+		if !ok {
+			// The cluster went away while somebody was watching it. Ending the
+			// stream is the honest move: the browser stops updating and the
+			// reader's next navigation gets the 404.
 			return false
 		}
-		fmt.Fprint(w, "event: fleet\n")
+		var buf strings.Builder
+		if err := s.tmpl.ExecuteTemplate(&buf, fragment+"-body.html", d); err != nil {
+			return false
+		}
+		fmt.Fprintf(w, "event: %s\n", fragment)
 		// SSE frames are line-oriented, so every line of the fragment needs its
 		// own data: prefix.
 		sc := bufio.NewScanner(strings.NewReader(buf.String()))
@@ -227,6 +306,9 @@ func funcs() template.FuncMap {
 			}
 			return int(float64(ready) / float64(desired) * 100)
 		},
+		// age renders a model duration the way the tables do: one unit.
+		"age": fleet.Compact,
+		"add": func(a, b int) int { return a + b },
 	}
 }
 

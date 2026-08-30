@@ -16,11 +16,17 @@ import (
 
 type fakeFleet struct {
 	clusters []fleet.ClusterView
+	detail   map[string]fleet.ClusterDetail
 	changed  chan struct{}
 }
 
 func (f *fakeFleet) View() []fleet.ClusterView { return f.clusters }
 func (f *fakeFleet) Changed() <-chan struct{}  { return f.changed }
+
+func (f *fakeFleet) Cluster(namespace, name string) (fleet.ClusterDetail, bool) {
+	d, ok := f.detail[namespace+"/"+name]
+	return d, ok
+}
 
 func serve(t *testing.T, clusters ...fleet.ClusterView) http.Handler {
 	t.Helper()
@@ -230,5 +236,119 @@ func TestFleetPage_UnreportedClusterShowsNoZeros(t *testing.T) {
 	// Its cells still belong to it: "CAPI, still loading" is real information.
 	if !strings.Contains(body, "CAPI") {
 		t.Error("cells were dropped along with the counts")
+	}
+}
+
+func serveDetail(t *testing.T, d fleet.ClusterDetail) http.Handler {
+	t.Helper()
+	s, err := New(&fakeFleet{
+		detail:  map[string]fleet.ClusterDetail{d.Namespace + "/" + d.Name: d},
+		changed: make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s.Handler()
+}
+
+// The detail page is where somebody sits during an upgrade. It has to carry
+// what sextant's core panes carry, or there is no reason to open it.
+func TestClusterPage_RendersTheCorePanes(t *testing.T) {
+	d := fleet.ClusterDetail{
+		ClusterView: fleet.ClusterView{
+			Namespace: "capi", Name: "tenant-01", Version: "v1.36.2", Phase: "Provisioned",
+			Status: health.StatusWarn,
+			Cells:  []health.Cell{{Name: "Nodes", Status: health.StatusWarn, Detail: "1 cordoned"}},
+			Pools: []fleet.NodePool{
+				{Role: "Control Plane", Name: "tenant-01-kcp", Ready: 3, Desired: 3, Version: "v1.36.2"},
+			},
+			Nodes: fleet.NodeCount{Ready: 5, Total: 5}, NodesKnown: true,
+			UpdatedAt: time.Now(),
+		},
+		Machines: []model.Machine{{Name: "tenant-01-machine-1", Phase: "Running",
+			Version: "v1.36.2", NodeName: "node-1.site-a.example", Age: 31 * 24 * time.Hour}},
+		Hosts: []model.BareMetalHost{{Name: "host-1.site-a.example", State: "provisioned",
+			OperationalStatus: "error", ErrorMessage: "timed out waiting for the deploy image"}},
+		NodeRows: []fleet.NodeRow{{
+			Node:       model.Node{Name: "node-1.site-a.example", Role: "control-plane", Status: "Ready", Version: "v1.36.2"},
+			CPUPercent: 28, MemPercent: 41,
+		}},
+		UnhealthyPods: []model.Pod{{Namespace: "example-system", Name: "api-1",
+			ReadyTotal: 1, Status: "CrashLoopBackOff", Restarts: 441}},
+		Events: []model.Event{{Type: "Warning", Reason: "Unhealthy", ObjectKind: "Pod",
+			ObjectName: "api-1", Message: "Readiness probe failed", Count: 9148,
+			LastTimestamp: time.Now().Add(-time.Minute)}},
+		Summaries: []fleet.SummaryBlock{{Title: "Ceph", Lines: []string{"health  HEALTH_OK"}}},
+	}
+
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+	for _, want := range []string{
+		"tenant-01", "v1.36.2", "Node pools", "tenant-01-kcp",
+		"Machines &amp; hosts", "tenant-01-machine-1",
+		"host-1.site-a.example", "timed out waiting for the deploy image",
+		"Nodes", "node-1.site-a.example", "28%", "41%",
+		"Unhealthy pods", "CrashLoopBackOff", "441",
+		"Events", "Readiness probe failed", "9148",
+		"Subsystems", "HEALTH_OK",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("cluster page does not mention %q", want)
+		}
+	}
+}
+
+// A cluster that is not tracked is a 404. Rendering an empty page would claim
+// the cluster exists and has nothing in it, which is a different statement.
+func TestClusterPage_UnknownClusterIs404(t *testing.T) {
+	h := serveDetail(t, fleet.ClusterDetail{ClusterView: fleet.ClusterView{Namespace: "capi", Name: "tenant-01"}})
+	if rec := get(t, h, "/cluster/capi/nope"); rec.Code != http.StatusNotFound {
+		t.Errorf("got %d, want 404", rec.Code)
+	}
+	if rec := get(t, h, "/cluster/other/tenant-01"); rec.Code != http.StatusNotFound {
+		t.Errorf("wrong namespace: got %d, want 404", rec.Code)
+	}
+}
+
+// Truncation has to be visible: "60 unhealthy pods" and "60 of 400" are
+// different situations, and a page that silently drops the tail reports the
+// first when it means the second.
+func TestClusterPage_TruncationIsStated(t *testing.T) {
+	d := fleet.ClusterDetail{
+		ClusterView:   fleet.ClusterView{Namespace: "capi", Name: "tenant-01", NodesKnown: true},
+		UnhealthyPods: []model.Pod{{Namespace: "ns", Name: "a", Status: "Error"}},
+		PodsTruncated: 339,
+	}
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+	if !strings.Contains(body, "of 340") || !strings.Contains(body, "339 more not shown") {
+		t.Error("the page does not say what it left out")
+	}
+}
+
+// Each fleet card links to its own cluster.
+func TestFleetPage_CardsLinkToTheCluster(t *testing.T) {
+	h := serve(t, fleet.ClusterView{Namespace: "capi", Name: "tenant-01", Status: health.StatusOK})
+	if body := get(t, h, "/").Body.String(); !strings.Contains(body, `href="/cluster/capi/tenant-01"`) {
+		t.Error("the card does not link to its cluster")
+	}
+}
+
+// The cluster page streams its own body, so a reader watching an upgrade never
+// has to wonder whether the tab is stale.
+func TestClusterEvents_StreamsTheBody(t *testing.T) {
+	d := fleet.ClusterDetail{ClusterView: fleet.ClusterView{
+		Namespace: "capi", Name: "tenant-01", Version: "v1.36.2", NodesKnown: true,
+	}}
+	req := httptest.NewRequest(http.MethodGet, "/cluster/capi/tenant-01/events", nil)
+	ctx, cancel := contextWithFrame(t)
+	defer cancel()
+	rec := httptest.NewRecorder()
+	serveDetail(t, d).ServeHTTP(rec, req.WithContext(ctx))
+
+	body := rec.Body.String()
+	if !strings.HasPrefix(body, "event: cluster\n") {
+		t.Fatalf("stream did not open with a cluster event:\n%s", firstLine(body))
+	}
+	if !strings.Contains(body, "v1.36.2") {
+		t.Error("first frame carries no cluster detail")
 	}
 }

@@ -1,8 +1,10 @@
-{{define "grid.html"}}
+{{define "fleet-body.html"}}
 <div class="grid">
 {{range .Clusters}}
   <article class="card {{.Status}}">
-    <h2>{{.Name}} <span class="ns">{{.Namespace}}</span></h2>
+    <a class="card-link" href="/cluster/{{.Namespace}}/{{.Name}}">
+      <h2>{{.Name}} <span class="ns">{{.Namespace}}</span></h2>
+    </a>
 
     {{if .Problem}}
       <p class="problem">{{.Problem}}</p>

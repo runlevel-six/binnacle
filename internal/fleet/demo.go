@@ -199,3 +199,102 @@ func (d *Demo) View() []ClusterView {
 	sortViews(out)
 	return out
 }
+
+// Cluster satisfies the same contract as [Fleet.Cluster], with invented detail
+// for whichever fixture cluster was asked for.
+//
+// The tables are populated only for a cluster that has something to say. A
+// fixture where every cluster is fully detailed would make the empty states —
+// which are most of what a detail page has to get right — impossible to look at.
+func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
+	var view ClusterView
+	for _, c := range d.View() {
+		if c.Namespace == namespace && c.Name == name {
+			view = c
+		}
+	}
+	if view.Name == "" {
+		return ClusterDetail{}, false
+	}
+
+	detail := ClusterDetail{ClusterView: view}
+	if view.Problem != "" || !view.NodesKnown {
+		return detail, true
+	}
+
+	roles := []string{"control-plane", "control-plane", "control-plane", "compute", "compute"}
+	for i, role := range roles {
+		n := model.Node{
+			Name: fmt.Sprintf("%s-node-%d.site-a.example", name, i+1),
+			Role: role, Status: "Ready", Version: view.Version,
+			Age:               time.Duration(31*24+i) * time.Hour,
+			AllocatableCPU:    64000,
+			RequestedCPU:      int64(18000 + i*4000),
+			AllocatableMemory: 192 << 30,
+			RequestedMemory:   int64(64+i*12) << 30,
+		}
+		if role == "compute" {
+			n.Cordoned = true
+		}
+		if i == len(roles)-1 && view.Status == health.StatusErr {
+			n.Status = "NotReady"
+			n.MemoryPressure = true
+		}
+		detail.NodeRows = append(detail.NodeRows, NodeRow{
+			Node:       n,
+			CPUPercent: percent(n.RequestedCPU, n.AllocatableCPU),
+			MemPercent: percent(n.RequestedMemory, n.AllocatableMemory),
+		})
+		detail.Machines = append(detail.Machines, model.Machine{
+			Namespace: namespace, Name: fmt.Sprintf("%s-machine-%d", name, i+1),
+			ClusterName: name, NodeName: n.Name, Phase: "Running",
+			Version: view.Version, InfraKind: "Metal3Machine",
+			Age: n.Age,
+		})
+		host := model.BareMetalHost{
+			Namespace: namespace, Name: fmt.Sprintf("host-%d.site-a.example", i+1),
+			State: "provisioned", OperationalStatus: "OK", PoweredOn: true, Online: true,
+			ConsumerKind: "Metal3Machine", ConsumerName: fmt.Sprintf("%s-machine-%d", name, i+1),
+			Age: n.Age,
+		}
+		if i == len(roles)-1 && view.Status == health.StatusErr {
+			host.OperationalStatus = "error"
+			host.ErrorMessage = "provisioning failed: timed out waiting for the deploy image"
+		}
+		detail.Hosts = append(detail.Hosts, host)
+	}
+
+	for i := 0; i < view.UnhealthyPods; i++ {
+		detail.UnhealthyPods = append(detail.UnhealthyPods, model.Pod{
+			Namespace: "example-system", Name: fmt.Sprintf("api-%d-5f9c8", i+1),
+			ReadyReady: 0, ReadyTotal: 1, Status: "CrashLoopBackOff",
+			Restarts: int32(441 - i*7), Node: detail.NodeRows[i%len(detail.NodeRows)].Name,
+			Age: 26 * time.Hour, Phase: "Running",
+		})
+	}
+
+	now := time.Now()
+	detail.Events = []model.Event{
+		{Namespace: "example-system", Type: "Warning", Reason: "Unhealthy",
+			ObjectKind: "Pod", ObjectName: "api-1-5f9c8", Count: 9148,
+			Message:       "Readiness probe failed: HTTP probe failed with statuscode: 503",
+			LastTimestamp: now.Add(-time.Minute)},
+		{Namespace: "example-system", Type: "Warning", Reason: "BackOff",
+			ObjectKind: "Pod", ObjectName: "api-2-5f9c8", Count: 3208,
+			Message:       "Back-off restarting failed container",
+			LastTimestamp: now.Add(-2 * time.Minute)},
+		{Namespace: namespace, Type: "Normal", Reason: "SuccessfulCreate",
+			ObjectKind: "MachineSet", ObjectName: name + "-md-0", Count: 1,
+			Message:       "Created machine " + name + "-machine-5",
+			LastTimestamp: now.Add(-14 * time.Minute)},
+	}
+	if view.Status != health.StatusErr {
+		detail.Events = detail.Events[2:]
+	}
+
+	detail.Summaries = []SummaryBlock{{
+		Title: "Ceph",
+		Lines: []string{"health  HEALTH_OK", "osds    36/36 up, 36 in", "capacity 13% used"},
+	}}
+	return detail, true
+}

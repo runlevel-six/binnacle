@@ -1,0 +1,165 @@
+{{define "cluster-body.html"}}
+{{with .Cluster}}
+<section class="detail-head">
+  <div class="dh-left">
+    <h2>{{.Name}} <span class="ns">{{.Namespace}}</span></h2>
+    <div class="meta">
+      {{if .Version}}{{.Version}}{{else}}version unknown{{end}}
+      {{if .Phase}} &middot; {{.Phase}}{{end}}
+      {{if .Paused}} &middot; <span class="frozen">PAUSED</span>{{end}}
+      {{if .Rolling}} &middot; <span class="rolling">ROLLING{{if .Rollout.Rolling}} ({{len .Rollout.Rolling}}){{end}}</span>{{end}}
+      {{if not .UpdatedAt.IsZero}} &middot; seen {{ago .UpdatedAt}}{{end}}
+    </div>
+  </div>
+  <div class="cells">
+    {{range .Cells}}<span class="cell {{.Status}}">{{.Name}}{{if .Detail}} <span class="d">{{.Detail}}</span>{{end}}</span>{{end}}
+  </div>
+</section>
+
+{{if .Problem}}
+  <section class="pane"><p class="problem">{{.Problem}}</p></section>
+{{else}}
+
+{{if .WorkloadProblem}}
+  <p class="halfblind">Workload cluster: {{.WorkloadProblem}}</p>
+{{end}}
+
+<div class="panes">
+  <section class="pane">
+    <h3>Node pools</h3>
+    {{if .Pools}}
+    <table>
+      <thead><tr><th>ROLE</th><th>NAME</th><th class="r">READY</th><th>VERSION</th><th></th></tr></thead>
+      <tbody>
+      {{range .Pools}}
+        <tr><td class="dim">{{.Role}}</td><td>{{.Name}}</td>
+          <td class="r{{if .Rolling}} warnish{{end}}">{{.Ready}}/{{.Desired}}</td>
+          <td class="dim">{{.Version}}</td>
+          <td>{{if .Paused}}<span class="frozen">paused</span>{{else if .Rolling}}<span class="rolling">rolling</span>{{end}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="empty">Nothing reported.</p>{{end}}
+
+    {{if .NodesKnown}}
+    <div class="nums">
+      <div class="num"><div class="k">Nodes</div><div class="v">{{.Nodes.Ready}}/{{.Nodes.Total}}{{if .Nodes.Cordoned}} <span class="warnish">{{.Nodes.Cordoned}} cordoned</span>{{end}}</div></div>
+      {{if .Capacity.Known}}
+      <div class="num"><div class="k">CPU committed</div><div class="v">{{.Capacity.CPUPercent}}%</div></div>
+      <div class="num"><div class="k">Memory committed</div><div class="v">{{.Capacity.MemPercent}}%</div></div>
+      {{end}}
+    </div>
+    {{end}}
+    {{if .Workloads}}
+    <div class="workloads">
+      {{range .Workloads}}<span class="wl{{if .Degraded}} degraded{{end}}">{{.Kind}} {{.Ready}}/{{.Total}}</span>{{end}}
+    </div>
+    {{end}}
+  </section>
+
+  {{if .Summaries}}
+  <section class="pane">
+    <h3>Subsystems</h3>
+    {{range .Summaries}}
+      <h4>{{.Title}}</h4>
+      <pre class="summary">{{range .Lines}}{{.}}
+{{end}}</pre>
+    {{end}}
+  </section>
+  {{end}}
+
+  <section class="pane wide">
+    <h3>Machines &amp; hosts</h3>
+    {{if .Machines}}
+    <table>
+      <thead><tr><th>MACHINE</th><th>PHASE</th><th>VERSION</th><th>NODE</th><th class="r">AGE</th></tr></thead>
+      <tbody>
+      {{range .Machines}}
+        <tr><td>{{.Name}}</td>
+          <td{{if ne .Phase "Running"}} class="warnish"{{end}}>{{.Phase}}</td>
+          <td class="dim">{{.Version}}</td><td class="dim">{{.NodeName}}</td>
+          <td class="r dim">{{age .Age}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="empty">No machines reported.</p>{{end}}
+
+    {{if .Hosts}}
+    <table class="spaced">
+      <thead><tr><th>HOST</th><th>STATE</th><th>STATUS</th><th>CONSUMER</th><th class="r">AGE</th></tr></thead>
+      <tbody>
+      {{range .Hosts}}
+        <tr{{if .ErrorMessage}} class="row-err"{{end}}>
+          <td>{{.Name}}</td><td class="dim">{{.State}}</td>
+          <td{{if .ErrorMessage}} class="errish"{{end}}>{{.OperationalStatus}}</td>
+          <td class="dim">{{.ConsumerName}}</td><td class="r dim">{{age .Age}}</td></tr>
+        {{if .ErrorMessage}}<tr class="row-err"><td colspan="5" class="errish indent">{{.ErrorMessage}}</td></tr>{{end}}
+      {{end}}
+      </tbody>
+    </table>
+    {{end}}
+  </section>
+
+  <section class="pane wide">
+    <h3>Nodes</h3>
+    {{if .NodeRows}}
+    <table>
+      <thead><tr><th>NODE</th><th>ROLE</th><th>STATUS</th><th>VERSION</th><th class="r">CPU</th><th class="r">MEM</th><th class="r">AGE</th></tr></thead>
+      <tbody>
+      {{range .NodeRows}}
+        <tr>
+          <td>{{.Name}}</td><td class="dim">{{.Role}}</td>
+          <td{{if not .Ready}} class="errish"{{else if .Cordoned}} class="warnish"{{end}}>
+            {{.Status}}{{if .Cordoned}} &middot; cordoned{{end}}{{if .Pressure}} &middot; <span class="warnish">pressure</span>{{end}}</td>
+          <td class="dim">{{.Version}}</td>
+          <td class="r">{{.CPUPercent}}%</td><td class="r">{{.MemPercent}}%</td>
+          <td class="r dim">{{age .Age}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="empty">No nodes reported.</p>{{end}}
+  </section>
+
+  <section class="pane wide">
+    <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
+    {{if .UnhealthyPods}}
+    <table>
+      <thead><tr><th>POD</th><th class="r">READY</th><th>STATUS</th><th class="r">RESTARTS</th><th>NODE</th><th class="r">AGE</th></tr></thead>
+      <tbody>
+      {{range .UnhealthyPods}}
+        <tr><td>{{.Namespace}}/{{.Name}}</td>
+          <td class="r">{{.ReadyReady}}/{{.ReadyTotal}}</td>
+          <td class="errish">{{.Status}}</td>
+          <td class="r">{{.Restarts}}</td>
+          <td class="dim">{{.Node}}</td><td class="r dim">{{age .Age}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{if .PodsTruncated}}<p class="empty">{{.PodsTruncated}} more not shown.</p>{{end}}
+    {{else if .NodesKnown}}<p class="empty">Every pod is healthy.</p>
+    {{else}}<p class="empty">Not reported.</p>{{end}}
+  </section>
+
+  <section class="pane wide">
+    <h3>Events{{if .EventsTruncated}} <span class="count">{{len .Events}} of {{add (len .Events) .EventsTruncated}}</span>{{end}}</h3>
+    {{if .Events}}
+    <table>
+      <thead><tr><th>TYPE</th><th>REASON</th><th>OBJECT</th><th>MESSAGE</th><th class="r">COUNT</th><th class="r">AGE</th></tr></thead>
+      <tbody>
+      {{range .Events}}
+        <tr><td{{if eq .Type "Warning"}} class="warnish"{{else}} class="dim"{{end}}>{{.Type}}</td>
+          <td>{{.Reason}}</td>
+          <td class="dim">{{.ObjectKind}}/{{.ObjectName}}</td>
+          <td class="msg">{{.Message}}</td>
+          <td class="r">{{.Count}}</td>
+          <td class="r dim">{{ago .LastTimestamp}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{if .EventsTruncated}}<p class="empty">{{.EventsTruncated}} more not shown.</p>{{end}}
+    {{else}}<p class="empty">No events reported.</p>{{end}}
+  </section>
+</div>
+{{end}}
+{{end}}
+{{end}}

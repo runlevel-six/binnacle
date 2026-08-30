@@ -1,0 +1,158 @@
+{{define "styles"}}
+<style>
+  :root {
+    color-scheme: dark;
+    /* Sampled from the artwork, so the mark sits on the page with no seam
+       around it: --bg is literally the logo's own ground. */
+    --bg: #000b1e; --panel: #0a1a2e; --line: #17324d;
+    --ink: #f0e8d8; --dim: #8ba3bd;
+    --brass: #b08040; --teal: #4fc3b5;
+
+    /* Status colors are not brand colors. The logo's brass sits almost on
+       top of a conventional amber, so warn is pushed toward orange and brass
+       is kept to structure — rules and the wordmark — and never put on a card.
+       A subsystem in trouble must not be mistakable for decoration. */
+    --ok: #4fb37a; --warn: #e08a2e; --err: #e05a5a; --loading: #5d7186;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: .85rem; flex-wrap: wrap;
+    padding: .9rem 1.5rem;
+    border-bottom: 1px solid var(--line);
+    box-shadow: inset 0 -1px 0 0 color-mix(in srgb, var(--brass) 35%, transparent);
+  }
+  .mark { width: 34px; height: 34px; display: block; }
+  /* A serif wordmark, echoing the logo's own lettering. */
+  h1 {
+    margin: 0; font-size: 1.15rem; letter-spacing: .16em; text-transform: uppercase;
+    font-family: Georgia, "Times New Roman", serif; font-weight: 600; color: var(--ink);
+  }
+  .sub { color: var(--dim); font-size: .85rem; }
+  /* The site is the one thing distinguishing two otherwise identical pages,
+     so it reads as a peer of the product name rather than as metadata. */
+  .site {
+    font-size: .9rem; font-weight: 600; color: var(--teal);
+    padding: .1rem .55rem; border: 1px solid color-mix(in srgb, var(--teal) 45%, transparent);
+    border-radius: 4px; letter-spacing: .02em;
+  }
+  .live { margin-left: auto; color: var(--dim); font-size: .8rem; }
+  .live::before {
+    content: ""; display: inline-block; width: .5rem; height: .5rem;
+    border-radius: 50%; background: var(--ok); margin-right: .4rem;
+    vertical-align: baseline;
+  }
+  .live.stale::before { background: var(--warn); }
+  main { padding: 1.5rem; }
+  /* Cards are wide enough for a pool table and grow to fill the row. A fleet
+     is read on a wide screen, and two narrow cards stranded at the top left of
+     it waste the only thing a browser has that a terminal does not. */
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(27rem, 1fr)); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--loading); border-radius: 6px; padding: .9rem 1.05rem;
+  }
+  .card.ok   { border-left-color: var(--ok); }
+  .card.warn { border-left-color: var(--warn); }
+  .card.err  { border-left-color: var(--err); }
+  .card h2 { margin: 0; font-size: 1.02rem; font-weight: 600; }
+  .ns { color: var(--dim); font-weight: 400; font-size: .8rem; }
+  .meta { color: var(--dim); font-size: .8rem; margin: .15rem 0 .7rem; }
+  .rolling { color: var(--warn); font-weight: 600; }
+  .frozen  { color: var(--err); font-weight: 600; }
+  .warnish { color: var(--warn); }
+
+  .pools { width: 100%; border-collapse: collapse; font-size: .8rem; margin-bottom: .7rem; }
+  .pools td { padding: .12rem .4rem .12rem 0; white-space: nowrap; }
+  .pool-role { color: var(--dim); text-transform: uppercase; font-size: .68rem; letter-spacing: .05em; }
+  .pool-name { color: var(--ink); width: 99%; overflow: hidden; text-overflow: ellipsis; max-width: 0; }
+  .pool-n, .pool-v { font-variant-numeric: tabular-nums; text-align: right; }
+  .pool-v { color: var(--dim); }
+  .pool-rolling .pool-n { color: var(--warn); }
+
+  /* The workload cluster is unreadable while the management side answers
+     happily. Stated in words, because the absence of six health cells is not
+     something a reader can be expected to notice. */
+  .halfblind {
+    margin: 0 0 .7rem; padding: .35rem .55rem; font-size: .78rem;
+    color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, transparent);
+    border-left: 2px solid var(--warn); border-radius: 0 3px 3px 0; word-break: break-word;
+  }
+
+  .nums { display: flex; gap: 1.25rem; margin-bottom: .7rem; flex-wrap: wrap; }
+  .num .k { color: var(--dim); font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; }
+  .num .v { font-variant-numeric: tabular-nums; }
+
+  .workloads { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .7rem; }
+  .wl { font-size: .75rem; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .wl.degraded { color: var(--warn); }
+
+  .cells { display: flex; flex-wrap: wrap; gap: .35rem; }
+  .cell {
+    font-size: .75rem; padding: .1rem .45rem; border-radius: 3px;
+    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  }
+  .cell.ok   { color: var(--ok); }
+  .cell.warn { color: var(--warn); border-color: var(--warn); }
+  .cell.err  { color: var(--err); border-color: var(--err); }
+  .cell .d { opacity: .85; }
+  .problem { color: var(--err); font-size: .82rem; word-break: break-word; }
+  .empty { color: var(--dim); }
+  .seen { color: var(--dim); font-size: .75rem; margin-top: .6rem; }
+  footer {
+    padding: 1rem 1.5rem; color: var(--dim); font-size: .8rem;
+    border-top: 1px solid var(--line);
+    box-shadow: inset 0 1px 0 0 color-mix(in srgb, var(--brass) 30%, transparent);
+  }
+</style>
+<style>
+  /* Cluster detail. Panes are a masonry-ish grid rather than sextant's packed
+     terminal layout: a browser can scroll, so a pane that wants to be tall is
+     allowed to be, and nothing has to be truncated to fit a fixed row. */
+  .detail-head {
+    display: flex; gap: 1rem; align-items: flex-start; flex-wrap: wrap;
+    padding: 0 0 .9rem; border-bottom: 1px solid var(--line); margin-bottom: 1rem;
+  }
+  .dh-left { flex: 1 1 22rem; }
+  .detail-head h2 { margin: 0; font-size: 1.15rem; }
+  .panes { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr)); }
+  .pane {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: .8rem 1rem 1rem; min-width: 0;
+  }
+  .pane.wide { grid-column: 1 / -1; }
+  .pane h3 {
+    margin: 0 0 .6rem; font-size: .72rem; text-transform: uppercase;
+    letter-spacing: .1em; color: var(--brass); font-weight: 700;
+  }
+  .pane h4 { margin: .6rem 0 .2rem; font-size: .78rem; color: var(--ink); }
+  .count { color: var(--dim); font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .pane table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+  .pane table.spaced { margin-top: .9rem; }
+  .pane th {
+    text-align: left; font-weight: 600; font-size: .66rem; letter-spacing: .06em;
+    color: var(--dim); text-transform: uppercase; padding: 0 .5rem .25rem 0;
+    border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  .pane td { padding: .16rem .5rem .16rem 0; vertical-align: top; }
+  .pane td.r, .pane th.r { text-align: right; font-variant-numeric: tabular-nums; padding-right: 0; }
+  .dim { color: var(--dim); }
+  .errish { color: var(--err); }
+  .row-err td { background: color-mix(in srgb, var(--err) 7%, transparent); }
+  .indent { padding-left: 1rem; font-size: .74rem; }
+  /* Messages are the one unbounded column; let it take the slack and wrap
+     rather than pushing the numeric columns off the pane. */
+  .msg { width: 99%; word-break: break-word; }
+  .summary {
+    margin: 0; font-size: .76rem; color: var(--ink);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
+  }
+  .backlink { color: var(--teal); text-decoration: none; font-size: .8rem; }
+  .backlink:hover { text-decoration: underline; }
+  .card-link { color: inherit; text-decoration: none; }
+  .card-link:hover h2 { text-decoration: underline; text-decoration-color: var(--brass); }
+</style>
+{{end}}
