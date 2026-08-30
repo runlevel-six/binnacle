@@ -25,5 +25,9 @@ RUN CGO_ENABLED=0 go build -trimpath \
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/binnacle /binnacle
 EXPOSE 8080
-USER nonroot:nonroot
+# Numeric, not the "nonroot" name distroless ships. A kubelet enforcing
+# runAsNonRoot cannot verify a name — it has no way to resolve it to a UID —
+# and refuses to start the container with "image has non-numeric user".
+# 65532 is what distroless means by nonroot.
+USER 65532:65532
 ENTRYPOINT ["/binnacle"]

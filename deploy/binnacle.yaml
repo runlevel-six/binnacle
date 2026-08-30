@@ -28,6 +28,12 @@ spec:
       serviceAccountName: binnacle
       securityContext:
         runAsNonRoot: true
+        # Explicit UID as well as runAsNonRoot: the image's own USER is a name,
+        # and a kubelet enforcing runAsNonRoot cannot resolve one. 65532 is
+        # distroless's nonroot.
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile: {type: RuntimeDefault}
       volumes:
         # Memory-backed, because binnacle writes each cluster's clouds.yaml here
