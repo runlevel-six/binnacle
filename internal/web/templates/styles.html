@@ -150,6 +150,20 @@
     margin: 0; font-size: .76rem; color: var(--ink);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
   }
+  /* Network and Cloud hold several subsystems each. Nesting a grid inside the
+     pane lets Cilium, OVN and MetalLB sit side by side on a wide screen and
+     stack on a narrow one, without any of them needing a fixed height. */
+  .panes.inner { gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); margin-top: .2rem; }
+  .sub { min-width: 0; }
+  .sub h4 {
+    margin: 0 0 .35rem; font-size: .68rem; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--teal); font-weight: 700;
+  }
+  .pane > h4 {
+    margin: 1rem 0 .35rem; font-size: .68rem; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--teal); font-weight: 700;
+  }
+  .okish { color: var(--ok); }
   .backlink { color: var(--teal); text-decoration: none; font-size: .8rem; }
   .backlink:hover { text-decoration: underline; }
   .card-link { color: inherit; text-decoration: none; }

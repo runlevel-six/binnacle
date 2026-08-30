@@ -120,6 +120,189 @@
     {{else}}<p class="empty">No nodes reported.</p>{{end}}
   </section>
 
+
+  {{if .Subsystems.Reduced}}
+  <section class="pane wide">
+    <h3>Reporting below full detail</h3>
+    <table>
+      <tbody>
+      {{range .Subsystems.Reduced}}
+        <tr><td class="warnish">{{.Name}}</td><td class="msg">{{.Reason}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </section>
+  {{end}}
+
+  {{if .Subsystems.Network}}
+  <section class="pane wide">
+    <h3>Network</h3>
+    <div class="panes inner">
+
+      {{with .Subsystems.Cilium}}
+      <div class="sub">
+        <h4>Cilium</h4>
+        {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
+        <table>
+          <tbody>
+            <tr><td class="dim">agents</td><td class="r">{{.AgentsReady}}/{{.AgentsDesired}}</td>
+              <td>{{if not .Rollout.Converged}}<span class="rolling">{{.Rollout.Updated}}/{{.Rollout.Desired}} updated{{if .Rollout.Manual}} &middot; manual{{end}}</span>{{end}}</td></tr>
+            {{if .Status.Version}}<tr><td class="dim">version</td><td colspan="2">{{.Status.Version}}</td></tr>{{end}}
+            {{if .Status.State}}<tr><td class="dim">state</td><td colspan="2">{{.Status.State}}</td></tr>{{end}}
+            {{if .Status.KubeProxyReplacement}}<tr><td class="dim">kube-proxy</td><td colspan="2">{{.Status.KubeProxyReplacement}}</td></tr>{{end}}
+            {{if .Status.EncryptionMode}}<tr><td class="dim">encryption</td><td colspan="2">{{.Status.EncryptionMode}}</td></tr>{{end}}
+            {{if .Status.IPAM.ExhaustionKnown}}
+            <tr><td class="dim">ipam</td>
+              <td class="r{{if gt .Status.IPAM.Percent 85}} warnish{{end}}">{{.Status.IPAM.Percent}}%</td>
+              <td class="dim">{{.Status.IPAM.Used}}/{{.Status.IPAM.Total}}{{if .Pod}} on {{.Pod}}{{end}}</td></tr>
+            {{end}}
+            {{if .Status.Controllers.Failing}}<tr><td class="dim">controllers</td>
+              <td class="r errish">{{.Status.Controllers.Failing}} failing</td><td class="dim">of {{.Status.Controllers.Total}}</td></tr>{{end}}
+          </tbody>
+        </table>
+        {{if .Status.Unreadable}}<p class="empty">unreadable: {{range $i, $u := .Status.Unreadable}}{{if $i}}, {{end}}{{$u}}{{end}}</p>{{end}}
+        {{end}}
+      </div>
+      {{end}}
+
+      {{with .Subsystems.OVN}}
+      <div class="sub">
+        <h4>OVN</h4>
+        {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
+        {{if .Statuses}}
+        <table>
+          <thead><tr><th>DB</th><th>ROLE</th><th class="r">TERM</th><th>LEADER</th><th class="r">MEMBERS</th></tr></thead>
+          <tbody>
+          {{range .Statuses}}
+            <tr><td>{{.Database}}</td>
+              <td{{if .IsLeader}} class="okish"{{end}}>{{.Role}}</td>
+              <td class="r dim">{{.Term}}</td>
+              <td class="dim">{{.LeaderName}}</td>
+              <td class="r">{{len .Servers}}</td></tr>
+          {{end}}
+          </tbody>
+        </table>
+        {{else}}<p class="empty">Raft status not readable.</p>{{end}}
+        {{if .Components}}
+        <table class="spaced">
+          <thead><tr><th>COMPONENT</th><th class="r">UPDATED</th><th></th></tr></thead>
+          <tbody>
+          {{range .Components}}
+            <tr><td>{{.Name}}</td>
+              <td class="r{{if not .Converged}} warnish{{end}}">{{.Updated}}/{{.Desired}}</td>
+              <td>{{if .Manual}}<span class="warnish">manual</span>{{end}}</td></tr>
+          {{end}}
+          </tbody>
+        </table>
+        {{end}}
+        {{end}}
+      </div>
+      {{end}}
+
+      {{with .Subsystems.MetalLB}}
+      <div class="sub">
+        <h4>MetalLB</h4>
+        {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
+        <table>
+          <thead><tr><th>POOL</th><th>ADDRESSES</th><th>ADVERTISED</th><th class="r">IN USE</th></tr></thead>
+          <tbody>
+          {{range .Pools}}
+            <tr><td>{{.Name}}</td>
+              <td class="dim msg">{{range $i, $a := .Addresses}}{{if $i}}, {{end}}{{$a}}{{end}}</td>
+              <td{{if not .Advertised}} class="errish"{{end}}>{{if .Advertised}}{{range $i, $a := .Advertised}}{{if $i}}/{{end}}{{$a}}{{end}}{{else}}none{{end}}</td>
+              <td class="r">{{.Assigned}}{{if .Available}}/{{add .Assigned .Available}}{{end}}</td></tr>
+          {{end}}
+          </tbody>
+        </table>
+        <div class="nums">
+          <div class="num"><div class="k">Speakers</div><div class="v">{{.SpeakerReady}}/{{.SpeakerDesired}}</div></div>
+          {{if .PendingServices}}<div class="num"><div class="k">Pending services</div><div class="v warnish">{{.PendingServices}}</div></div>{{end}}
+        </div>
+        {{if .UnadvertisedPools}}<p class="halfblind">Pools handing out addresses nothing announces: {{range $i, $p := .UnadvertisedPools}}{{if $i}}, {{end}}{{$p}}{{end}}</p>{{end}}
+        {{end}}
+      </div>
+      {{end}}
+
+    </div>
+  </section>
+  {{end}}
+
+  {{if .Subsystems.Cloud}}
+  <section class="pane wide">
+    <h3>Cloud</h3>
+
+    {{if .Drains}}
+    <h4>Draining hosts</h4>
+    <table>
+      <thead><tr><th>HOST</th><th class="r">REMAINING</th><th class="r">MOVING</th><th class="r">STUCK</th></tr></thead>
+      <tbody>
+      {{range .Drains}}
+        <tr><td>{{.Host}}</td>
+          <td class="r">{{.Remaining}}</td>
+          <td class="r{{if and .Remaining (not .Moving)}} warnish{{end}}">{{.Moving}}</td>
+          <td class="r{{if .Stuck}} errish{{end}}">{{.Stuck}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{end}}
+
+    <div class="panes inner">
+      {{with .Subsystems.OpenStack}}
+      <div class="sub">
+        <h4>Services</h4>
+        {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
+        <table>
+          <thead><tr><th>SERVICE</th><th class="r">AGENTS</th><th class="r">DISABLED</th></tr></thead>
+          <tbody>
+          {{range .Services}}
+            <tr><td>{{.Service}}</td>
+              <td class="r{{if lt .Up .Total}} errish{{end}}">{{.Up}}/{{.Total}}</td>
+              <td class="r{{if .Disabled}} warnish{{end}}">{{if .Disabled}}{{.Disabled}}{{else}}&ndash;{{end}}</td></tr>
+          {{end}}
+          </tbody>
+        </table>
+        {{end}}
+      </div>
+      {{end}}
+
+      {{with .Subsystems.Inventory}}
+      <div class="sub">
+        <h4>Resources</h4>
+        {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
+        <table>
+          <tbody>
+          {{range .Counts}}
+            <tr><td class="dim">{{.Label}}</td>
+              {{if .Absent}}<td colspan="2" class="empty">not deployed</td>
+              {{else if .Err}}<td colspan="2" class="errish">unreadable</td>
+              {{else}}<td class="r">{{.Total}}</td>
+              <td class="dim msg">{{range $k, $v := .ByState}}{{$k}} {{$v}} {{end}}</td>{{end}}</tr>
+          {{end}}
+          </tbody>
+        </table>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+
+    {{if .Shown.Rows}}
+    <h4>Server migrations{{if .Shown.Failures}} <span class="count">{{.Shown.Failures}} failed</span>{{end}}</h4>
+    <table>
+      <thead><tr><th>SERVER</th><th>TYPE</th><th>STATUS</th><th>FROM</th><th>TO</th><th class="r">AGE</th></tr></thead>
+      <tbody>
+      {{range .Shown.Rows}}
+        <tr><td class="msg">{{.ServerID}}</td>
+          <td class="dim">{{shortType .Type}}</td>
+          <td{{if failed .Status}} class="errish"{{else if active .Status}} class="warnish"{{end}}>{{shortStatus .Status}}</td>
+          <td class="dim">{{.SourceCompute}}</td><td class="dim">{{.DestCompute}}</td>
+          <td class="r dim">{{ago .UpdatedAt}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{end}}
+  </section>
+  {{end}}
+
   <section class="pane wide">
     <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
     {{if .UnhealthyPods}}

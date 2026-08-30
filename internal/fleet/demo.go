@@ -9,6 +9,11 @@ import (
 	"github.com/runlevel-six/sextant/pkg/health"
 	"github.com/runlevel-six/sextant/pkg/model"
 	"github.com/runlevel-six/sextant/pkg/rollout"
+	"github.com/runlevel-six/sextant/pkg/subsystem"
+	"github.com/runlevel-six/sextant/pkg/subsystem/cilium"
+	"github.com/runlevel-six/sextant/pkg/subsystem/metallb"
+	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
+	"github.com/runlevel-six/sextant/pkg/subsystem/ovn"
 )
 
 // Demo is a fleet with no cluster behind it.
@@ -290,6 +295,64 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 	}
 	if view.Status != health.StatusErr {
 		detail.Events = detail.Events[2:]
+	}
+
+	detail.Subsystems = Subsystems{
+		Cilium: &cilium.State{
+			Tier: subsystem.TierFull, AgentsReady: 5, AgentsDesired: 5,
+			Rollout: subsystem.Rollout{Desired: 5, Updated: 5, Ready: 5},
+			Pod:     "cilium-czwz7",
+			Status: cilium.Status{
+				Version: "1.19.7", State: "Ok", KubeProxyReplacement: "replaced by Cilium",
+				EncryptionMode: "Ztunnel",
+				IPAM:           cilium.IPAM{Used: 130, Available: 124},
+				Controllers:    cilium.Controllers{Total: 717},
+			},
+		},
+		OVN: &ovn.State{
+			Tier: subsystem.TierFull,
+			Statuses: []ovn.ClusterStatus{
+				{Database: "nb", Role: "leader", Term: 385, Leader: "self",
+					Servers: []ovn.Server{{ID: "a1b2"}, {ID: "c3d4"}, {ID: "e5f6"}}},
+				{Database: "sb", Role: "leader", Term: 388, Leader: "self",
+					Servers: []ovn.Server{{ID: "a1b2"}, {ID: "c3d4"}, {ID: "e5f6"}}},
+			},
+			Components: []ovn.Component{
+				{Name: "ovn-northd", Rollout: subsystem.Rollout{Desired: 3, Updated: 3, Ready: 3}},
+				{Name: "ovn-controller", Rollout: subsystem.Rollout{Desired: 5, Updated: 5, Ready: 5}},
+				{Name: "openvswitch", Rollout: subsystem.Rollout{Desired: 5, Updated: 2, Ready: 5, Manual: true}},
+			},
+		},
+		MetalLB: &metallb.State{
+			Namespace: "kube-system", SpeakerReady: 4, SpeakerDesired: 4,
+			Pools: []metallb.Pool{
+				{Name: "default", Addresses: []string{"192.0.2.12-192.0.2.99"},
+					Advertised: []string{"L2"}, Assigned: 8, Available: 80,
+					Usage: metallb.UsageStatus},
+				{Name: "reserved", Addresses: []string{"192.0.2.100-192.0.2.120"},
+					Assigned: 0, Usage: metallb.UsageUnknown},
+			},
+		},
+		OpenStack: &openstack.State{
+			Cloud: "my-cloud", Region: "region-1",
+			Services: []openstack.ServiceSummary{
+				{Service: "block-storage", Total: 3, Up: 3},
+				{Service: "compute", Total: 8, Up: 8},
+				{Service: "network", Total: 13, Up: 12},
+			},
+		},
+		Inventory: &openstack.Inventory{
+			Counts: []openstack.Count{
+				{Label: "Projects", Total: 16},
+				{Label: "Servers", Total: 54, ByState: map[string]int{"ACTIVE": 50, "ERROR": 2, "BUILD": 2}},
+				{Label: "Networks", Total: 24},
+				{Label: "Load Balancers", Absent: true},
+			},
+		},
+	}
+	detail.Drains = []openstack.Drain{
+		{Host: "compute-node-3.site-a.example", Remaining: 4, Moving: 1},
+		{Host: "compute-node-7.site-a.example", Remaining: 2, Moving: 0, Stuck: 2},
 	}
 
 	detail.Summaries = []SummaryBlock{{

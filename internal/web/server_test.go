@@ -9,6 +9,10 @@ import (
 
 	"github.com/runlevel-six/sextant/pkg/health"
 	"github.com/runlevel-six/sextant/pkg/model"
+	"github.com/runlevel-six/sextant/pkg/subsystem"
+	"github.com/runlevel-six/sextant/pkg/subsystem/cilium"
+	"github.com/runlevel-six/sextant/pkg/subsystem/metallb"
+	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
 
 	"github.com/runlevel-six/binnacle/internal/auth"
 	"github.com/runlevel-six/binnacle/internal/fleet"
@@ -350,5 +354,102 @@ func TestClusterEvents_StreamsTheBody(t *testing.T) {
 	}
 	if !strings.Contains(body, "v1.36.2") {
 		t.Error("first frame carries no cluster detail")
+	}
+}
+
+// The network pane carries what sextant's own network pane carries, and each
+// subsystem appears only when it published something.
+func TestClusterPage_NetworkPane(t *testing.T) {
+	d := fleet.ClusterDetail{
+		ClusterView: fleet.ClusterView{Namespace: "capi", Name: "tenant-01", NodesKnown: true},
+		Subsystems: fleet.Subsystems{
+			Cilium: &cilium.State{
+				Tier: subsystem.TierFull, AgentsReady: 5, AgentsDesired: 5,
+				Rollout: subsystem.Rollout{Desired: 5, Updated: 5},
+				Status: cilium.Status{
+					Version: "1.19.7", KubeProxyReplacement: "replaced by Cilium",
+					IPAM: cilium.IPAM{Used: 130, Available: 124},
+				},
+			},
+			MetalLB: &metallb.State{
+				SpeakerReady: 4, SpeakerDesired: 4,
+				Pools: []metallb.Pool{
+					{Name: "unannounced", Addresses: []string{"192.0.2.12-192.0.2.99"}},
+				},
+			},
+		},
+	}
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+	for _, want := range []string{"Network", "Cilium", "1.19.7", "replaced by Cilium", "MetalLB", "unannounced", "192.0.2.12"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("network pane does not mention %q", want)
+		}
+	}
+	// A pool nothing advertises hands out addresses that never get announced.
+	// It is silent otherwise, which is exactly why it is called out.
+	if !strings.Contains(body, "nothing announces") {
+		t.Error("an unadvertised pool was not flagged")
+	}
+	// OVN published nothing, so it gets no section at all.
+	if strings.Contains(body, ">OVN<") {
+		t.Error("an absent subsystem rendered a section")
+	}
+}
+
+// The cloud pane shows drains first: mid-maintenance that is the question, and
+// a migration table only answers it sideways.
+func TestClusterPage_CloudPane(t *testing.T) {
+	d := fleet.ClusterDetail{
+		ClusterView: fleet.ClusterView{Namespace: "capi", Name: "tenant-01", NodesKnown: true},
+		Subsystems: fleet.Subsystems{
+			OpenStack: &openstack.State{
+				Services: []openstack.ServiceSummary{{Service: "compute", Total: 8, Up: 7}},
+			},
+			Inventory: &openstack.Inventory{
+				Counts: []openstack.Count{
+					{Label: "Servers", Total: 54},
+					{Label: "Load Balancers", Absent: true},
+				},
+			},
+		},
+		Drains: []openstack.Drain{{Host: "compute-node-7.site-a.example", Remaining: 2, Stuck: 2}},
+	}
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+	for _, want := range []string{"Cloud", "Draining hosts", "compute-node-7.site-a.example", "compute", "7/8", "Servers", "54"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("cloud pane does not mention %q", want)
+		}
+	}
+	// A cloud with no Octavia is correctly configured, not broken.
+	if !strings.Contains(body, "not deployed") {
+		t.Error("an absent service was not distinguished from a failed one")
+	}
+}
+
+// Neither pane appears on a cluster running none of it.
+func TestClusterPage_NoSubsystemsNoPanes(t *testing.T) {
+	d := fleet.ClusterDetail{ClusterView: fleet.ClusterView{
+		Namespace: "capi", Name: "tenant-01", NodesKnown: true,
+	}}
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+	for _, unwanted := range []string{"<h3>Network</h3>", "<h3>Cloud</h3>"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("rendered %q for a cluster running none of it", unwanted)
+		}
+	}
+}
+
+// A subsystem reporting below full detail says so on the page, rather than
+// rendering thin and letting a reader assume there is nothing to report.
+func TestClusterPage_ReducedTierIsStated(t *testing.T) {
+	d := fleet.ClusterDetail{
+		ClusterView: fleet.ClusterView{Namespace: "capi", Name: "tenant-01", NodesKnown: true},
+		Subsystems: fleet.Subsystems{Cilium: &cilium.State{
+			Tier: subsystem.TierInformer, TierReason: "no permission to exec into cilium pods",
+		}},
+	}
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+	if !strings.Contains(body, "below full detail") || !strings.Contains(body, "no permission to exec") {
+		t.Error("a reduced tier rendered thin without saying why")
 	}
 }

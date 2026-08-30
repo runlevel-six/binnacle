@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
+
 	"github.com/runlevel-six/binnacle/internal/fleet"
 )
 
@@ -309,6 +311,13 @@ func funcs() template.FuncMap {
 		// age renders a model duration the way the tables do: one unit.
 		"age": fleet.Compact,
 		"add": func(a, b int) int { return a + b },
+		// Migration status vocabulary is OpenStack's and its abbreviations are
+		// sextant's. Both come from the same place the dashboard reads them,
+		// so the two cannot describe the same migration differently.
+		"shortType":   openstack.ShortType,
+		"shortStatus": openstack.ShortStatus,
+		"active":      openstack.Active,
+		"failed":      openstack.Failed,
 	}
 }
 

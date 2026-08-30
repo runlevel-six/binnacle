@@ -6,6 +6,7 @@ import (
 
 	"github.com/runlevel-six/sextant/pkg/model"
 	"github.com/runlevel-six/sextant/pkg/store"
+	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
 )
 
 // Caps on what one page will render.
@@ -70,6 +71,20 @@ type ClusterDetail struct {
 	EventsTruncated int
 
 	Summaries []SummaryBlock
+
+	// Subsystems is whatever optional subsystems this cluster runs. Absent ones
+	// are nil rather than empty, so a cluster without Ceph gets no Ceph section
+	// instead of an empty one.
+	Subsystems Subsystems
+
+	// Drains is the compute hosts being emptied, worked out by the OpenStack
+	// plugin. Lifted out of Subsystems because it is the question an operator
+	// mid-maintenance actually has, and it deserves the top of the cloud pane
+	// rather than a row inside a migration table.
+	Drains []openstack.Drain
+	// Shown is the migration split: rows worth listing, and failures worth
+	// counting.
+	Shown openstack.Shown
 }
 
 // Cluster returns everything known about one cluster.
@@ -116,6 +131,16 @@ func (f *Fleet) Cluster(namespace, name string) (ClusterDetail, bool) {
 
 	for _, b := range t.registry.Summaries(s) {
 		d.Summaries = append(d.Summaries, SummaryBlock{Title: b.Title, Lines: b.Lines})
+	}
+
+	d.Subsystems = readSubsystems(s)
+	if m := d.Subsystems.Migrations; m != nil {
+		// Relevant decides which failures are still worth a row: sextant's
+		// judgement, not ours. Re-deriving it here would mean the fleet page
+		// and the dashboard disagreeing about whether a migration still
+		// matters, and there would be no way to tell which was right.
+		d.Shown = m.Relevant(time.Now())
+		d.Drains = m.Drains
 	}
 	return d, true
 }
