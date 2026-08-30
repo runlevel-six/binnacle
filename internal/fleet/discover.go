@@ -5,7 +5,11 @@ package fleet
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -82,10 +86,41 @@ func NewDiscoverer(cfg *rest.Config, namespace string) (*Discoverer, error) {
 // error. Only a failure to enumerate at all is fatal, because that one means we
 // do not know what the fleet contains — and a fleet page that silently shrinks
 // is worse than one that will not load.
+//
+// # Why the fleet is not enumerated from kubeconfig Secrets
+//
+// Listing every "cluster.x-k8s.io/secret" whose name ends in -kubeconfig looks
+// like a simpler discovery mechanism, and it is one — but it answers a different
+// question. A Cluster object is a cluster; a Secret is a credential for one, and
+// a cluster may have more than one credential under more than one name.
+//
+// Naming conventions change, and clusters built before a change keep the names
+// they were built with, so one namespace can hold both eras at once: a Cluster
+// named tenant-01 with CAPI's own tenant-01-kubeconfig, alongside a Cluster
+// named tenant-02-cluster with its tenant-02-cluster-kubeconfig. Add an
+// operator-maintained copy of the first under the newer convention —
+// tenant-01-cluster-kubeconfig, kept in sync so that tooling assuming the
+// convention keeps working — and there are three Secrets for two clusters.
+//
+// Enumerated from Secrets, that namespace reports three clusters, and the extra
+// one is not an obvious ruin: it is the same live cluster a second time under a
+// second name, with working credentials, rendering a second healthy card
+// carrying identical numbers. A reader would have no way to tell which was real.
+//
+// Enumerated from Clusters, it reports two, each resolving its own Secret
+// through upstream's convention, and the mixed naming is handled without
+// binnacle knowing that any convention ever changed. That is also why the suffix
+// is composed onto a Cluster's real name rather than applied as a site-wide
+// rule: within one namespace, both eras can be live.
+//
+// So Clusters are the list and Secrets are only ever looked up *for* a Cluster.
+// The failure mode this preserves is the right way round: a cluster whose Secret
+// is missing appears on the page saying so, and a Secret with no Cluster of its
+// name appears nowhere.
 func (d *Discoverer) List(ctx context.Context) ([]Discovered, error) {
 	mapping, err := d.mapper.RESTMapping(clusterGK)
 	if err != nil {
-		return nil, fmt.Errorf("Cluster API is not installed on the management cluster: %w", err)
+		return nil, fmt.Errorf("the management cluster does not have Cluster API installed: %w", err)
 	}
 
 	list, err := d.dyn.Resource(mapping.Resource).Namespace(d.namespace).List(ctx, metav1.ListOptions{})
@@ -102,25 +137,88 @@ func (d *Discoverer) List(ctx context.Context) ([]Discovered, error) {
 	return out, nil
 }
 
-// workloadConfig reads the kubeconfig Cluster API minted for a workload cluster.
+// kubeconfigSuffix is Cluster API's own convention: the controller writes
+// <cluster>-kubeconfig alongside the Cluster, which is the same artifact Argo CD
+// registers a destination cluster from.
 //
-// The Secret name and the "value" key are Cluster API's own convention: the
-// controller writes <cluster>-kubeconfig alongside the Cluster, which is the
-// same artifact Argo CD registers a destination cluster from. Reading it is why
-// binnacle needs no hand-maintained cluster list — the list that goes stale is
-// the one nobody updates.
+// Note this composes with a Cluster's *actual* name, so a site that suffixes its
+// Cluster objects gets <name>-cluster-kubeconfig for free. There is no naming
+// convention encoded here beyond upstream's.
+const kubeconfigSuffix = "-kubeconfig"
+
+// clusterNameLabel ties a Cluster API secret back to its Cluster. Used only as a
+// fallback, and only ever to *narrow* candidates — never to widen them.
+const clusterNameLabel = "cluster.x-k8s.io/cluster-name"
+
+// workloadConfig resolves one workload cluster's credentials.
+//
+// The Cluster object is the source of truth for what exists; a Secret is only
+// where that cluster's credentials happen to live. Resolution therefore always
+// starts from a Cluster and looks for its Secret, never the reverse — see
+// [Discoverer.List] for why the reverse is wrong.
+//
+// Two attempts, in order, and neither of them guesses:
+//
+//  1. The Secret named <cluster>-kubeconfig. This is upstream's convention and
+//     covers every cluster observed so far.
+//  2. Failing that, Secrets carrying this cluster's own name label, narrowed to
+//     those holding a parseable kubeconfig. Exactly one match is used; several
+//     is an error naming them, because picking one would mean picking a
+//     credential for a cluster on the strength of a resemblance.
 func (d *Discoverer) workloadConfig(ctx context.Context, namespace, name string) (*rest.Config, error) {
-	secret, err := d.core.CoreV1().Secrets(namespace).Get(ctx, name+"-kubeconfig", metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("read %s-kubeconfig: %w", name, err)
+	secret, err := d.core.CoreV1().Secrets(namespace).Get(ctx, name+kubeconfigSuffix, metav1.GetOptions{})
+	switch {
+	case err == nil:
+		return configFromSecret(secret)
+	case !apierrors.IsNotFound(err):
+		// Forbidden, or the API server is unwell. Either way the fallback would
+		// fail the same way and for the same reason, so report this one.
+		return nil, fmt.Errorf("read %s%s: %w", name, kubeconfigSuffix, err)
 	}
+
+	labeled, listErr := d.core.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: clusterNameLabel + "=" + name,
+	})
+	if listErr != nil {
+		return nil, fmt.Errorf("no secret %s%s, and listing this cluster's secrets failed: %w",
+			name, kubeconfigSuffix, listErr)
+	}
+
+	var candidates []corev1.Secret
+	for _, s := range labeled.Items {
+		if _, ok := s.Data["value"]; ok {
+			candidates = append(candidates, s)
+		}
+	}
+	switch len(candidates) {
+	case 1:
+		return configFromSecret(&candidates[0])
+	case 0:
+		return nil, fmt.Errorf("no kubeconfig for cluster %s: no secret named %s%s, "+
+			"and none labeled %s=%s holds a \"value\" key",
+			name, name, kubeconfigSuffix, clusterNameLabel, name)
+	default:
+		names := make([]string, 0, len(candidates))
+		for _, s := range candidates {
+			names = append(names, s.Name)
+		}
+		sort.Strings(names)
+		return nil, fmt.Errorf("ambiguous kubeconfig for cluster %s: no secret named %s%s, "+
+			"and %d labeled secrets hold one (%s). Refusing to guess which credential "+
+			"belongs to this cluster",
+			name, name, kubeconfigSuffix, len(candidates), strings.Join(names, ", "))
+	}
+}
+
+// configFromSecret turns a Cluster API kubeconfig secret into a REST config.
+func configFromSecret(secret *corev1.Secret) (*rest.Config, error) {
 	raw, ok := secret.Data["value"]
 	if !ok {
-		return nil, fmt.Errorf("secret %s-kubeconfig has no \"value\" key", name)
+		return nil, fmt.Errorf("secret %s has no \"value\" key", secret.Name)
 	}
 	cfg, err := clientcmd.RESTConfigFromKubeConfig(raw)
 	if err != nil {
-		return nil, fmt.Errorf("parse %s-kubeconfig: %w", name, err)
+		return nil, fmt.Errorf("parse secret %s: %w", secret.Name, err)
 	}
 	return cfg, nil
 }

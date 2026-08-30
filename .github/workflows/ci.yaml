@@ -1,0 +1,101 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "${unformatted}" ]; then
+            echo "::error::These files need gofmt:"
+            echo "${unformatted}"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      # Race-enabled because the fleet runs one collector per cluster, each
+      # publishing into its own store while the HTTP handlers read them.
+      - name: Test
+        run: go test -race -coverprofile=coverage.txt ./...
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.txt
+          if-no-files-found: ignore
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Pinned rather than `latest`: a new release can add a check and turn a
+      # green branch red with no change to the code.
+      #
+      # The constraint to respect when changing this version or go.mod's Go
+      # version: golangci-lint refuses to run against a target newer than the
+      # toolchain its own binary was built with. This release is built with
+      # go1.26.2, which covers go.mod's 1.26.1. Bumping go.mod past that needs a
+      # linter bump in the same commit.
+      #
+      # go.mod deliberately targets the same Go version as sextant, which this
+      # module depends on. Keeping them together means one toolchain validates
+      # both, and a linter that runs on one runs on the other.
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+
+  # golangci-lint's misspell only reads Go files. The templates and the README
+  # are prose a reader sees, and they have to hold to the same US spellings.
+  spelling:
+    name: Spelling
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install misspell
+        run: go install github.com/client9/misspell/cmd/misspell@v0.3.4
+
+      - name: Check spelling
+        run: misspell -error -locale US $(git ls-files '*.go' '*.md' '*.yaml' '*.html')
