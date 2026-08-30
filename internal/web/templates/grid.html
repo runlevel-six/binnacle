@@ -1,0 +1,33 @@
+{{define "grid.html"}}
+<div class="grid">
+{{range .Clusters}}
+  <article class="card {{.Status}}">
+    <h2>{{.Name}} <span class="ns">{{.Namespace}}</span></h2>
+    {{if .Problem}}
+      <p class="problem">{{.Problem}}</p>
+    {{else}}
+      <div class="meta">
+        {{if .Version}}{{.Version}}{{else}}version unknown{{end}}
+        {{if .Phase}} &middot; {{.Phase}}{{end}}
+        {{if .Paused}} &middot; <span class="frozen">PAUSED</span>{{end}}
+        {{if .Rolling}} &middot; <span class="rolling">ROLLING{{if .Rollout.Rolling}} ({{len .Rollout.Rolling}}){{end}}</span>{{end}}
+      </div>
+      <div class="nums">
+        <div class="num"><div class="k">Control plane</div>
+          <div class="v">{{.ControlPlane.Ready}}/{{.ControlPlane.Desired}}</div></div>
+        <div class="num"><div class="k">Workers</div>
+          <div class="v">{{.Workers.Ready}}/{{.Workers.Desired}}</div></div>
+        <div class="num"><div class="k">Nodes</div>
+          <div class="v">{{.Nodes.Ready}}/{{.Nodes.Total}}{{if .Nodes.Cordoned}} &middot; {{.Nodes.Cordoned}} cordoned{{end}}</div></div>
+      </div>
+      <div class="cells">
+        {{range .Cells}}<span class="cell {{.Status}}">{{.Name}}{{if .Detail}} <span class="d">{{.Detail}}</span>{{end}}</span>{{else}}<span class="empty">waiting for data…</span>{{end}}
+      </div>
+      <div class="seen">seen {{ago .UpdatedAt}}</div>
+    {{end}}
+  </article>
+{{else}}
+  <p class="empty">No Cluster API clusters found on the management cluster.</p>
+{{end}}
+</div>
+{{end}}

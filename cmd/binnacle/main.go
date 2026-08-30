@@ -1,0 +1,195 @@
+// Command binnacle serves a fleet view of Cluster API clusters in a browser.
+//
+// It is the web front end to sextant: the same collectors, the same verdicts,
+// laid out for a team that would rather open a tab than a terminal. Binnacle
+// discovers what to watch from the management cluster's own Cluster objects, so
+// there is no cluster list to maintain and nothing to go stale.
+package main
+
+import (
+	"context"
+	"encoding/base64"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+
+	"github.com/runlevel-six/sextant/pkg/profile"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/runlevel-six/binnacle/internal/auth"
+	"github.com/runlevel-six/binnacle/internal/fleet"
+	"github.com/runlevel-six/binnacle/internal/web"
+)
+
+// version is set at build time by the release tooling.
+var version = "dev"
+
+type options struct {
+	addr           string
+	kubeconfig     string
+	context        string
+	namespace      string
+	profileName    string
+	osCloud        string
+	oidcIssuer     string
+	oidcClientID   string
+	oidcRedirect   string
+	insecureCookie bool
+}
+
+func main() {
+	log.SetFlags(0)
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, "binnacle:", err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	var o options
+	fs := flag.NewFlagSet("binnacle", flag.ContinueOnError)
+	fs.StringVar(&o.addr, "addr", "127.0.0.1:8080", "address to listen on")
+	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to a kubeconfig; empty uses in-cluster credentials, then $KUBECONFIG")
+	fs.StringVar(&o.context, "management-context", "", "kubeconfig context for the management cluster")
+	fs.StringVar(&o.namespace, "namespace", "", "namespace to discover clusters in; empty means all")
+	fs.StringVar(&o.profileName, "profile", "", "sextant site profile describing how these clusters are laid out")
+	fs.StringVar(&o.osCloud, "os-cloud", "", "clouds.yaml profile for sextant's OpenStack plugin")
+	fs.StringVar(&o.oidcIssuer, "oidc-issuer", "", "OpenID Connect issuer URL, e.g. a Keycloak realm")
+	fs.StringVar(&o.oidcClientID, "oidc-client-id", "", "OpenID Connect client id")
+	fs.StringVar(&o.oidcRedirect, "oidc-redirect-url", "", "binnacle's callback URL as the browser reaches it")
+	fs.BoolVar(&o.insecureCookie, "insecure-cookies", false, "send session cookies without the Secure flag; for testing over plain HTTP only")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "binnacle serves a fleet view of Cluster API clusters.")
+		fmt.Fprintln(fs.Output())
+		fmt.Fprintln(fs.Output(), "The OIDC client secret is read from $BINNACLE_OIDC_CLIENT_SECRET, and the")
+		fmt.Fprintln(fs.Output(), "session signing key from $BINNACLE_SESSION_KEY (base64, 32 bytes). Neither")
+		fmt.Fprintln(fs.Output(), "is a flag: a command line is visible in the process table.")
+		fmt.Fprintln(fs.Output())
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	authenticator, err := buildAuth(ctx, o)
+	if err != nil {
+		return err
+	}
+	if _, open := authenticator.(auth.Open); open {
+		if err := auth.RequireOIDCOffLoopback(o.addr, false); err != nil {
+			return err
+		}
+	}
+
+	mgmt, err := managementConfig(o)
+	if err != nil {
+		return err
+	}
+	prof, err := profile.NewLoader().Load(o.profileName)
+	if err != nil {
+		return fmt.Errorf("load profile: %w", err)
+	}
+
+	f, err := fleet.New(fleet.Options{
+		Management: mgmt,
+		Namespace:  o.namespace,
+		Profile:    prof,
+		OSCloud:    o.osCloud,
+	})
+	if err != nil {
+		return err
+	}
+	go func() {
+		if err := f.Run(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("cluster discovery stopped: %v", err)
+		}
+	}()
+
+	srv, err := web.New(f, authenticator, version)
+	if err != nil {
+		return err
+	}
+	log.Printf("binnacle %s listening on %s (%s), profile %q", version, o.addr, authenticator.Describe(), prof.Name)
+	return srv.ServeContext(ctx, o.addr)
+}
+
+// buildAuth picks the scheme from what was configured.
+//
+// Naming an issuer is what turns authentication on. There is no --auth flag,
+// because a flag whose safe value is the non-default one is a mistake waiting
+// for a hurried deployment; the guard in [auth.RequireOIDCOffLoopback] catches
+// the case where nothing was configured and the listener is not local.
+func buildAuth(ctx context.Context, o options) (web.Authenticator, error) {
+	if o.oidcIssuer == "" {
+		return auth.Open{}, nil
+	}
+
+	key, err := sessionKey()
+	if err != nil {
+		return nil, err
+	}
+	return auth.NewOIDC(ctx, auth.OIDCConfig{
+		Issuer:       o.oidcIssuer,
+		ClientID:     o.oidcClientID,
+		ClientSecret: os.Getenv("BINNACLE_OIDC_CLIENT_SECRET"),
+		RedirectURL:  o.oidcRedirect,
+		SessionKey:   key,
+		Secure:       !o.insecureCookie,
+	})
+}
+
+// sessionKey reads the cookie signing key, generating one if none was given.
+//
+// A generated key works for a single replica and logs why it is not enough for
+// two: sessions signed by one pod are rejected by the other, and the symptom is
+// a login that loops rather than an error anyone can read.
+func sessionKey() ([]byte, error) {
+	if raw := os.Getenv("BINNACLE_SESSION_KEY"); raw != "" {
+		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
+		if err != nil {
+			return nil, fmt.Errorf("BINNACLE_SESSION_KEY is not valid base64: %w", err)
+		}
+		if len(key) < 32 {
+			return nil, fmt.Errorf("BINNACLE_SESSION_KEY is %d bytes; want at least 32", len(key))
+		}
+		return key, nil
+	}
+	key, err := auth.NewSessionKey()
+	if err != nil {
+		return nil, err
+	}
+	log.Println("warning: BINNACLE_SESSION_KEY is unset, so a random key was generated. " +
+		"Sessions will not survive a restart, and with more than one replica sign-in will loop.")
+	return key, nil
+}
+
+// managementConfig resolves credentials for the management cluster.
+//
+// In-cluster credentials win when they exist, because that is the deployed case
+// and it needs no configuration at all. A kubeconfig is the developer's path.
+func managementConfig(o options) (*rest.Config, error) {
+	if o.kubeconfig == "" && o.context == "" {
+		if cfg, err := rest.InClusterConfig(); err == nil {
+			return cfg, nil
+		}
+	}
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if o.kubeconfig != "" {
+		rules.ExplicitPath = o.kubeconfig
+	}
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		rules, &clientcmd.ConfigOverrides{CurrentContext: o.context},
+	).ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("management cluster credentials: %w", err)
+	}
+	return cfg, nil
+}

@@ -1,0 +1,92 @@
+{{define "fleet.html"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Binnacle</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #16181d; --panel: #1e2128; --line: #2c313a;
+    --ink: #e6e8ec; --dim: #9aa3b2;
+    --ok: #4ea672; --warn: #d9a441; --err: #d05a5a; --loading: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
+    padding: 1rem 1.5rem; border-bottom: 1px solid var(--line);
+  }
+  h1 { margin: 0; font-size: 1.1rem; letter-spacing: .08em; text-transform: uppercase; }
+  .sub { color: var(--dim); font-size: .85rem; }
+  .live { margin-left: auto; color: var(--dim); font-size: .8rem; }
+  .live::before {
+    content: ""; display: inline-block; width: .5rem; height: .5rem;
+    border-radius: 50%; background: var(--ok); margin-right: .4rem;
+    vertical-align: baseline;
+  }
+  .live.stale::before { background: var(--warn); }
+  main { padding: 1.5rem; }
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr)); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--loading); border-radius: 6px; padding: .9rem 1rem;
+  }
+  .card.ok   { border-left-color: var(--ok); }
+  .card.warn { border-left-color: var(--warn); }
+  .card.err  { border-left-color: var(--err); }
+  .card h2 { margin: 0; font-size: 1rem; font-weight: 600; }
+  .ns { color: var(--dim); font-weight: 400; font-size: .8rem; }
+  .meta { color: var(--dim); font-size: .8rem; margin: .15rem 0 .7rem; }
+  .rolling { color: var(--warn); font-weight: 600; }
+  .frozen  { color: var(--err); font-weight: 600; }
+  .nums { display: flex; gap: 1.25rem; margin-bottom: .7rem; }
+  .num .k { color: var(--dim); font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; }
+  .num .v { font-variant-numeric: tabular-nums; }
+  .cells { display: flex; flex-wrap: wrap; gap: .35rem; }
+  .cell {
+    font-size: .75rem; padding: .1rem .45rem; border-radius: 3px;
+    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  }
+  .cell.ok   { color: var(--ok); }
+  .cell.warn { color: var(--warn); border-color: var(--warn); }
+  .cell.err  { color: var(--err); border-color: var(--err); }
+  .cell .d { opacity: .85; }
+  .problem { color: var(--err); font-size: .82rem; word-break: break-word; }
+  .empty { color: var(--dim); }
+  .seen { color: var(--dim); font-size: .75rem; margin-top: .6rem; }
+  footer { padding: 1rem 1.5rem; color: var(--dim); font-size: .8rem; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Binnacle</h1>
+  <span class="sub">{{len .Clusters}} cluster{{if ne (len .Clusters) 1}}s{{end}}</span>
+  <span class="live" id="live">live</span>
+</header>
+<main id="grid">{{template "grid.html" .}}</main>
+<footer>binnacle {{.Version}} &middot; {{.Auth}} &middot; verdicts from sextant</footer>
+<script>
+  // The page is server-rendered; this only swaps in the fragment the server
+  // sends. Any judgement made here would be a second opinion about a cluster's
+  // health, and one of the two would eventually be wrong.
+  const grid = document.getElementById("grid");
+  const live = document.getElementById("live");
+  const es = new EventSource("/events");
+  es.addEventListener("fleet", (e) => {
+    grid.innerHTML = e.data;
+    live.classList.remove("stale");
+    live.textContent = "live";
+  });
+  es.onerror = () => {
+    // EventSource reconnects on its own. Say so rather than silently showing
+    // a frozen page, which is the one thing a status board must never do.
+    live.classList.add("stale");
+    live.textContent = "reconnecting…";
+  };
+</script>
+</body>
+</html>{{end}}

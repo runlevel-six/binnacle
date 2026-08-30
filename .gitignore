@@ -1,0 +1,17 @@
+# Build output
+/binnacle
+/dist/
+
+# Local plan and working notes: they name real clusters and real people.
+/docs/plan.md
+/docs/notes/
+
+# Screenshots taken against a live fleet carry hostnames, IP pools and
+# inventory. Nothing rendered from a real cluster belongs in the tree.
+*.png
+*.jpg
+
+# Anything holding credentials
+*.kubeconfig
+clouds.yaml
+.env

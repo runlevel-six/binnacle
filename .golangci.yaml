@@ -1,0 +1,54 @@
+---
+# yaml-language-server: $schema=https://golangci-lint.run/jsonschema/golangci.jsonschema.json
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - errorlint
+    - gocritic
+    - misspell
+    - nilerr
+    - revive
+    - unconvert
+    - unparam
+    - usestdlibvars
+
+  settings:
+    errcheck:
+      # Writes to the CLI's own stdout. A failed Fprintln is not actionable —
+      # there is nowhere left to report it — and checking each of the ninety
+      # would bury the writes that do matter.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    revive:
+      rules:
+        # Exported identifiers in pkg/ are the plugin-author API surface, so
+        # they must carry doc comments. Deliberately *without*
+        # checkPrivateReceivers: a one-line interface accessor on an unexported
+        # pane type is not API surface, and requiring a comment on each of the
+        # sixty-odd of them buys noise rather than documentation.
+        - name: exported
+        - name: package-comments
+    misspell:
+      locale: US
+
+  exclusions:
+    rules:
+      # Table-driven tests get long and repetitive by design.
+      - path: _test\.go
+        linters: [unparam, gocritic]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: [github.com/runlevel-six/binnacle]
+
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0
