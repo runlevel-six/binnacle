@@ -24,7 +24,7 @@ func (f *fakeFleet) Changed() <-chan struct{}  { return f.changed }
 
 func serve(t *testing.T, clusters ...fleet.ClusterView) http.Handler {
 	t.Helper()
-	s, err := New(&fakeFleet{clusters: clusters, changed: make(chan struct{}, 1)}, auth.Open{}, "test")
+	s, err := New(&fakeFleet{clusters: clusters, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestFleetPage_EmptyFleetSaysSo(t *testing.T) {
 // A probe has no session, so gating it would make the deployment
 // unschedulable.
 func TestHealthz_IsNotGated(t *testing.T) {
-	s, err := New(&fakeFleet{changed: make(chan struct{})}, auth.Open{}, "test")
+	s, err := New(&fakeFleet{changed: make(chan struct{})}, auth.Open{}, "test", "site-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,5 +160,61 @@ func TestAgo(t *testing.T) {
 		if got := ago(tc.in); got != tc.want {
 			t.Errorf("%s: got %q want %q", name, got, tc.want)
 		}
+	}
+}
+
+// One binnacle runs per management cluster and sites reuse workload cluster
+// names, so several deployments render pages identical down to the names on the
+// cards. The site has to reach both the header and the browser title, because a
+// tab strip shows only the title.
+func TestFleetPage_SiteNamesTheDeployment(t *testing.T) {
+	body := get(t, serve(t, fleet.ClusterView{Name: "tenant-01"}), "/").Body.String()
+	if !strings.Contains(body, "<title>site-a &middot; Binnacle</title>") {
+		t.Error("the site is not in the browser title")
+	}
+	if !strings.Contains(body, `<span class="site">site-a</span>`) {
+		t.Error("the site is not in the page header")
+	}
+}
+
+// A single local instance has nothing to be confused with, so an unset site is
+// absence rather than an empty badge.
+func TestFleetPage_UnnamedSiteRendersNothingExtra(t *testing.T) {
+	s, err := New(&fakeFleet{changed: make(chan struct{}, 1)}, auth.Open{}, "test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+	if !strings.Contains(body, "<title>Binnacle</title>") {
+		t.Error("an unnamed instance should title plainly")
+	}
+	if strings.Contains(body, `class="site"`) {
+		t.Error("an unnamed instance rendered an empty site badge")
+	}
+}
+
+// A cluster that has not reported yet must not render zeros. They are numbers
+// nobody has observed, and 0/0 in a replica column looks like a cluster with
+// nothing in it rather than one we have not heard from — the milder form of
+// the same mistake as showing counts under a connection error.
+func TestFleetPage_UnreportedClusterShowsNoZeros(t *testing.T) {
+	h := serve(t, fleet.ClusterView{
+		Namespace: "capi", Name: "tenant-05",
+		Status: health.StatusLoading,
+		Cells:  []health.Cell{{Name: "CAPI", Status: health.StatusLoading}},
+		// UpdatedAt deliberately zero: nothing has published.
+	})
+	body := get(t, h, "/").Body.String()
+	if !strings.Contains(body, "Waiting for the first report") {
+		t.Error("an unreported cluster does not say so")
+	}
+	for _, unwanted := range []string{"0/0", "Control plane", `<div class="seen">`} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("an unreported cluster rendered %q", unwanted)
+		}
+	}
+	// Its cells still belong to it: "CAPI, still loading" is real information.
+	if !strings.Contains(body, "CAPI") {
+		t.Error("cells were dropped along with the counts")
 	}
 }

@@ -23,6 +23,11 @@ import (
 //go:embed templates/*.html
 var templateFS embed.FS
 
+// staticFS holds the brand marks, cut from the source artwork in assets/.
+//
+//go:embed static/*.png
+var staticFS embed.FS
+
 // Authenticator decides whether a request may see the fleet.
 //
 // It is an interface so that the local development path and the deployed path
@@ -60,15 +65,23 @@ type Server struct {
 	// version is binnacle's own build, shown in the footer so a reader can say
 	// which binnacle produced a screenshot.
 	version string
+	// site names the management cluster this binnacle watches.
+	//
+	// One binnacle runs per management cluster, and sites reuse workload
+	// cluster names, so several deployments render pages that are identical
+	// down to the cluster names on the cards. Without this the only thing
+	// telling two open tabs apart is the address bar. It is optional because a
+	// single local instance has nothing to be confused with.
+	site string
 }
 
 // New builds the server. It does not listen; use [Server.Handler].
-func New(f Source, auth Authenticator, version string) (*Server, error) {
+func New(f Source, auth Authenticator, version, site string) (*Server, error) {
 	tmpl, err := template.New("").Funcs(funcs()).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
-	return &Server{fleet: f, auth: auth, tmpl: tmpl, version: version}, nil
+	return &Server{fleet: f, auth: auth, tmpl: tmpl, version: version, site: site}, nil
 }
 
 // Handler returns the routed handler.
@@ -81,6 +94,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintln(w, "ok")
 	})
+
+	// The marks sit outside authentication. They are a logo, they reveal
+	// nothing, and the sign-in page wants them too.
+	mux.Handle("GET /static/", http.StripPrefix("/", cacheFor(24*time.Hour, http.FileServer(http.FS(staticFS)))))
 	s.auth.Routes(mux)
 
 	protected := http.NewServeMux()
@@ -94,6 +111,7 @@ type pageData struct {
 	Clusters []fleet.ClusterView
 	Auth     string
 	Version  string
+	Site     string
 	Now      time.Time
 }
 
@@ -102,6 +120,7 @@ func (s *Server) page() pageData {
 		Clusters: s.fleet.View(),
 		Auth:     s.auth.Describe(),
 		Version:  s.version,
+		Site:     s.site,
 		Now:      time.Now(),
 	}
 }
@@ -171,6 +190,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// cacheFor lets a browser keep an asset rather than re-fetching it on every
+// navigation. The marks change only when the brand does.
+func cacheFor(d time.Duration, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", int(d.Seconds())))
+		h.ServeHTTP(w, r)
+	})
 }
 
 func funcs() template.FuncMap {

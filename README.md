@@ -46,16 +46,32 @@ machine only you are on. Binnacle **refuses to start** unauthenticated on any
 other address: it reads every cluster in the fleet with credentials of its own,
 so an open listener is an open window into all of them.
 
-Deployed, it takes in-cluster credentials from a read-only ServiceAccount on the
-management cluster and puts OpenID Connect in front:
+### Deployment shape
+
+**One binnacle per management cluster, running on it.** Each instance discovers
+the clusters its own management cluster owns, takes in-cluster credentials from a
+ServiceAccount there, and is reached through an Ingress on that cluster. Nothing
+has to route between sites.
 
 ```
 binnacle \
   --addr :8080 \
+  --site site-a \
+  --namespace managed-clusters \
   --oidc-issuer https://sso.example/realms/platform \
   --oidc-client-id binnacle \
-  --oidc-redirect-url https://binnacle.example/auth/callback
+  --oidc-redirect-url https://binnacle.site-a.example/auth/callback
 ```
+
+Set `--site`. Sites reuse workload cluster names, so two instances otherwise
+render pages identical down to the names on the cards, and a tab strip shows
+only the title. It is the one thing telling two open tabs apart.
+
+Each deployment is independent, which means each needs its own OIDC redirect URL
+registered with the provider — one client with several redirect URIs, or one
+client per site — and its own `$BINNACLE_SESSION_KEY`. A session from one site
+is not valid at another, which is correct: they are separate services that
+happen to share a name.
 
 The client secret comes from `$BINNACLE_OIDC_CLIENT_SECRET` and the session
 signing key from `$BINNACLE_SESSION_KEY` (base64, at least 32 bytes). Neither is
@@ -79,6 +95,7 @@ person could see with `kubectl` — is the intended next step.
 | `--addr` | Listen address. Default `127.0.0.1:8080`. |
 | `--kubeconfig`, `--management-context` | Management cluster credentials. Omit both to use in-cluster credentials. |
 | `--namespace` | Scope cluster discovery. Empty means every namespace. |
+| `--site` | Names this instance in the header and browser title. Set it whenever more than one binnacle exists. |
 | `--profile` | The sextant site profile describing how these clusters are laid out. |
 | `--os-cloud` | A `clouds.yaml` profile for sextant's OpenStack plugin. |
 | `--oidc-issuer`, `--oidc-client-id`, `--oidc-redirect-url` | Turn on authentication. |
@@ -87,8 +104,11 @@ person could see with `kubectl` — is the intended next step.
 ## Required access
 
 On the management cluster, read on `cluster.x-k8s.io` resources, the Metal3
-kinds, `Secrets` in the namespaces the clusters live in (for the kubeconfigs),
-and Events. On each workload cluster, whatever the sextant plugins you want need
+kinds, and Events, plus `get` on `Secrets` in the namespaces the clusters live
+in — that is where Cluster API keeps each workload cluster's kubeconfig. `list`
+on those Secrets is needed only for the fallback that resolves a cluster whose
+kubeconfig is not at the conventional name; without it, such a cluster reports
+the reason on its card instead of disappearing. On each workload cluster, whatever the sextant plugins you want need
 — nodes, pods and workloads at minimum. A plugin whose subsystem it cannot probe
 contributes nothing rather than failing, so a narrow role degrades the page
 instead of breaking it.

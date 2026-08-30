@@ -8,8 +8,13 @@
 
 # Screenshots taken against a live fleet carry hostnames, IP pools and
 # inventory. Nothing rendered from a real cluster belongs in the tree.
-*.png
-*.jpg
+#
+# Anchored to the repo root rather than matching every PNG anywhere: a
+# screenshot gets dropped where you happen to be standing, while brand artwork
+# and the marks built from it live in assets/ and internal/web/static/ and are
+# tracked on purpose.
+/*.png
+/*.jpg
 
 # Anything holding credentials
 *.kubeconfig

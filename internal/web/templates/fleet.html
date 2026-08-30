@@ -3,13 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Binnacle</title>
+<title>{{if .Site}}{{.Site}} &middot; Binnacle{{else}}Binnacle{{end}}</title>
+<link rel="icon" type="image/png" href="/static/mark-64.png">
+<link rel="apple-touch-icon" href="/static/mark-256.png">
 <style>
   :root {
-    color-scheme: light dark;
-    --bg: #16181d; --panel: #1e2128; --line: #2c313a;
-    --ink: #e6e8ec; --dim: #9aa3b2;
-    --ok: #4ea672; --warn: #d9a441; --err: #d05a5a; --loading: #6b7280;
+    color-scheme: dark;
+    /* Sampled from the artwork, so the mark sits on the page with no seam
+       around it: --bg is literally the logo's own ground. */
+    --bg: #000b1e; --panel: #0a1a2e; --line: #17324d;
+    --ink: #f0e8d8; --dim: #8ba3bd;
+    --brass: #b08040; --teal: #4fc3b5;
+
+    /* Status colors are not brand colors. The logo's brass sits almost on
+       top of a conventional amber, so warn is pushed toward orange and brass
+       is kept to structure — rules and the wordmark — and never put on a card.
+       A subsystem in trouble must not be mistakable for decoration. */
+    --ok: #4fb37a; --warn: #e08a2e; --err: #e05a5a; --loading: #5d7186;
   }
   * { box-sizing: border-box; }
   body {
@@ -17,11 +27,25 @@
     font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   header {
-    display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
-    padding: 1rem 1.5rem; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: .85rem; flex-wrap: wrap;
+    padding: .9rem 1.5rem;
+    border-bottom: 1px solid var(--line);
+    box-shadow: inset 0 -1px 0 0 color-mix(in srgb, var(--brass) 35%, transparent);
   }
-  h1 { margin: 0; font-size: 1.1rem; letter-spacing: .08em; text-transform: uppercase; }
+  .mark { width: 34px; height: 34px; display: block; }
+  /* A serif wordmark, echoing the logo's own lettering. */
+  h1 {
+    margin: 0; font-size: 1.15rem; letter-spacing: .16em; text-transform: uppercase;
+    font-family: Georgia, "Times New Roman", serif; font-weight: 600; color: var(--ink);
+  }
   .sub { color: var(--dim); font-size: .85rem; }
+  /* The site is the one thing distinguishing two otherwise identical pages,
+     so it reads as a peer of the product name rather than as metadata. */
+  .site {
+    font-size: .9rem; font-weight: 600; color: var(--teal);
+    padding: .1rem .55rem; border: 1px solid color-mix(in srgb, var(--teal) 45%, transparent);
+    border-radius: 4px; letter-spacing: .02em;
+  }
   .live { margin-left: auto; color: var(--dim); font-size: .8rem; }
   .live::before {
     content: ""; display: inline-block; width: .5rem; height: .5rem;
@@ -58,12 +82,18 @@
   .problem { color: var(--err); font-size: .82rem; word-break: break-word; }
   .empty { color: var(--dim); }
   .seen { color: var(--dim); font-size: .75rem; margin-top: .6rem; }
-  footer { padding: 1rem 1.5rem; color: var(--dim); font-size: .8rem; border-top: 1px solid var(--line); }
+  footer {
+    padding: 1rem 1.5rem; color: var(--dim); font-size: .8rem;
+    border-top: 1px solid var(--line);
+    box-shadow: inset 0 1px 0 0 color-mix(in srgb, var(--brass) 30%, transparent);
+  }
 </style>
 </head>
 <body>
 <header>
+  <img class="mark" src="/static/mark-64.png" width="34" height="34" alt="">
   <h1>Binnacle</h1>
+  {{if .Site}}<span class="site">{{.Site}}</span>{{end}}
   <span class="sub">{{len .Clusters}} cluster{{if ne (len .Clusters) 1}}s{{end}}</span>
   <span class="live" id="live">live</span>
 </header>

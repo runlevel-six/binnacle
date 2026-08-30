@@ -304,10 +304,6 @@ type ClusterView struct {
 func (c ClusterView) Rolling() bool { return c.Rollout.Active }
 
 // View returns the current state of every cluster, worst first, then by name.
-//
-// Ordering is a deliberate choice rather than a stable list: a fleet page is
-// read top-down under time pressure, and the cluster that needs attention
-// should not be the one that has to be scrolled to.
 func (f *Fleet) View() []ClusterView {
 	f.mu.Lock()
 	tracked := make([]*tracked, 0, len(f.clusters))
@@ -320,16 +316,26 @@ func (f *Fleet) View() []ClusterView {
 	for _, t := range tracked {
 		out = append(out, t.view(f.opts.Profile))
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Status != out[j].Status {
-			return out[i].Status > out[j].Status
-		}
-		if out[i].Namespace != out[j].Namespace {
-			return out[i].Namespace < out[j].Namespace
-		}
-		return out[i].Name < out[j].Name
-	})
+	sortViews(out)
 	return out
+}
+
+// sortViews orders clusters worst first, then by namespace and name.
+//
+// Ordering is a deliberate choice rather than a stable list: a fleet page is
+// read top-down under time pressure, and the cluster that needs attention
+// should not be the one that has to be scrolled to. Ties break on name so the
+// page does not reshuffle itself under a reader between updates.
+func sortViews(views []ClusterView) {
+	sort.Slice(views, func(i, j int) bool {
+		if views[i].Status != views[j].Status {
+			return views[i].Status > views[j].Status
+		}
+		if views[i].Namespace != views[j].Namespace {
+			return views[i].Namespace < views[j].Namespace
+		}
+		return views[i].Name < views[j].Name
+	})
 }
 
 // Len reports how many clusters are being tracked.

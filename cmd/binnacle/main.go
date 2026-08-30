@@ -35,6 +35,8 @@ type options struct {
 	context        string
 	namespace      string
 	profileName    string
+	site           string
+	demo           bool
 	osCloud        string
 	oidcIssuer     string
 	oidcClientID   string
@@ -58,10 +60,12 @@ func run(args []string) error {
 	fs.StringVar(&o.context, "management-context", "", "kubeconfig context for the management cluster")
 	fs.StringVar(&o.namespace, "namespace", "", "namespace to discover clusters in; empty means all")
 	fs.StringVar(&o.profileName, "profile", "", "sextant site profile describing how these clusters are laid out")
+	fs.StringVar(&o.site, "site", "", "name of the management cluster this instance watches, shown in the header and browser title; a label, not the --profile")
 	fs.StringVar(&o.osCloud, "os-cloud", "", "clouds.yaml profile for sextant's OpenStack plugin")
 	fs.StringVar(&o.oidcIssuer, "oidc-issuer", "", "OpenID Connect issuer URL, e.g. a Keycloak realm")
 	fs.StringVar(&o.oidcClientID, "oidc-client-id", "", "OpenID Connect client id")
 	fs.StringVar(&o.oidcRedirect, "oidc-redirect-url", "", "binnacle's callback URL as the browser reaches it")
+	fs.BoolVar(&o.demo, "demo", false, "serve an invented fleet instead of a real one; needs no cluster and no credentials")
 	fs.BoolVar(&o.insecureCookie, "insecure-cookies", false, "send session cookies without the Secure flag; for testing over plain HTTP only")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "binnacle serves a fleet view of Cluster API clusters.")
@@ -89,13 +93,44 @@ func run(args []string) error {
 		}
 	}
 
-	mgmt, err := managementConfig(o)
+	source, describe, err := buildSource(ctx, o)
 	if err != nil {
 		return err
 	}
+
+	srv, err := web.New(source, authenticator, version, o.site)
+	if err != nil {
+		return err
+	}
+	site := o.site
+	if site == "" {
+		site = "unnamed"
+	}
+	log.Printf("binnacle %s watching %s (%s), listening on %s (%s)",
+		version, site, describe, o.addr, authenticator.Describe())
+	return srv.ServeContext(ctx, o.addr)
+}
+
+// buildSource returns what the page renders and a phrase describing it.
+//
+// The demo path deliberately touches no cluster machinery at all: it does not
+// load a profile, resolve credentials, or contact anything. Someone looking at
+// the layout should not need a kubeconfig, and a demo that can fail to start
+// for cluster reasons is not much of a demo.
+func buildSource(ctx context.Context, o options) (web.Source, string, error) {
+	if o.demo {
+		d := fleet.NewDemo()
+		go d.Run(ctx)
+		return d, "an invented fleet", nil
+	}
+
+	mgmt, err := managementConfig(o)
+	if err != nil {
+		return nil, "", err
+	}
 	prof, err := profile.NewLoader().Load(o.profileName)
 	if err != nil {
-		return fmt.Errorf("load profile: %w", err)
+		return nil, "", fmt.Errorf("load profile: %w", err)
 	}
 
 	f, err := fleet.New(fleet.Options{
@@ -105,20 +140,14 @@ func run(args []string) error {
 		OSCloud:    o.osCloud,
 	})
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 	go func() {
 		if err := f.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("cluster discovery stopped: %v", err)
 		}
 	}()
-
-	srv, err := web.New(f, authenticator, version)
-	if err != nil {
-		return err
-	}
-	log.Printf("binnacle %s listening on %s (%s), profile %q", version, o.addr, authenticator.Describe(), prof.Name)
-	return srv.ServeContext(ctx, o.addr)
+	return f, fmt.Sprintf("profile %q", prof.Name), nil
 }
 
 // buildAuth picks the scheme from what was configured.
