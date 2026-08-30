@@ -18,6 +18,7 @@
   <span class="sub">{{len .Clusters}} cluster{{if ne (len .Clusters) 1}}s{{end}}</span>
   <span class="live" id="live">live</span>
 </header>
+{{if .Warning}}<p class="unauth">{{.Warning}}</p>{{end}}
 <main id="grid">{{template "fleet-body.html" .}}</main>
 <footer>binnacle {{.Version}} &middot; {{.Auth}} &middot; verdicts from sextant</footer>
 <script>

@@ -6,6 +6,10 @@
 /docs/plan.md
 /docs/notes/
 
+# Site overlays: real hostnames, real registries, real namespaces. The tracked
+# manifests in deploy/ stay generic; what actually gets applied does not.
+/deploy/sites/
+
 # Screenshots taken against a live fleet carry hostnames, IP pools and
 # inventory. Nothing rendered from a real cluster belongs in the tree.
 #

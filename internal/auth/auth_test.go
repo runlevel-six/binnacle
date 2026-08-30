@@ -26,7 +26,7 @@ func TestRequireOIDCOffLoopback(t *testing.T) {
 		"hostname":              {"binnacle.example:8080", false, true},
 		"authenticated is fine": {"0.0.0.0:8080", true, false},
 	} {
-		err := RequireOIDCOffLoopback(tc.addr, tc.authenticated)
+		err := RequireOIDCOffLoopback(tc.addr, tc.authenticated, false)
 		if tc.wantErr && err == nil {
 			t.Errorf("%s: expected a refusal for %s", name, tc.addr)
 		}
@@ -39,11 +39,11 @@ func TestRequireOIDCOffLoopback(t *testing.T) {
 // The refusal has to say what to do about it. An error a hurried operator
 // cannot act on gets worked around rather than fixed.
 func TestRequireOIDCOffLoopback_MessageIsActionable(t *testing.T) {
-	err := RequireOIDCOffLoopback("0.0.0.0:8080", false)
+	err := RequireOIDCOffLoopback("0.0.0.0:8080", false, false)
 	if err == nil {
 		t.Fatal("expected a refusal")
 	}
-	for _, want := range []string{"--oidc-issuer", "127.0.0.1"} {
+	for _, want := range []string{"--oidc-issuer", "127.0.0.1", "--allow-unauthenticated"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("message does not mention %q: %s", want, err)
 		}
@@ -167,5 +167,34 @@ func TestMiddleware_EventStreamGets401NotRedirect(t *testing.T) {
 func TestSessionTTL(t *testing.T) {
 	if sessionTTL < time.Hour {
 		t.Errorf("sessionTTL = %s, suspiciously short", sessionTTL)
+	}
+}
+
+// The override exists, and it is a separate claim from being authenticated:
+// one says who is looking, the other says nobody checked.
+func TestRequireOIDCOffLoopback_ExplicitOverride(t *testing.T) {
+	if err := RequireOIDCOffLoopback("0.0.0.0:8080", false, true); err != nil {
+		t.Errorf("the override was refused: %v", err)
+	}
+	// And it is genuinely required — the same address without it is still a
+	// refusal, so the flag cannot be arrived at by accident.
+	if err := RequireOIDCOffLoopback("0.0.0.0:8080", false, false); err == nil {
+		t.Error("an unauthenticated listener off loopback was allowed without the flag")
+	}
+}
+
+// An unauthenticated deployment says so on the page. "no authentication" in a
+// footer is honest on a laptop and easy to miss on a shared address.
+func TestUnauthenticated_WarnsVisibly(t *testing.T) {
+	u := Unauthenticated{}
+	if u.Warning() == "" {
+		t.Error("no banner text")
+	}
+	if !strings.Contains(u.Describe(), "NO AUTHENTICATION") {
+		t.Errorf("describe = %q; it should be hard to skim past", u.Describe())
+	}
+	// Open, which is only ever loopback, has nobody to warn.
+	if (Open{}).Warning() != "" {
+		t.Error("loopback should need no banner")
 	}
 }

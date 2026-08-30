@@ -16,6 +16,7 @@
   <a class="backlink" href="/">&larr; all clusters</a>
   <span class="live" id="live">live</span>
 </header>
+{{if .Warning}}<p class="unauth">{{.Warning}}</p>{{end}}
 <main id="body">{{template "cluster-body.html" .}}</main>
 <footer>binnacle {{.Version}} &middot; {{.Auth}} &middot; verdicts from sextant</footer>
 <script>

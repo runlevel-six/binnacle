@@ -38,7 +38,9 @@ spec:
           emptyDir: {medium: Memory, sizeLimit: 1Mi}
       containers:
         - name: binnacle
-          image: binnacle:latest
+          # Published to GHCR by .github/workflows/image.yaml. A registry that
+          # proxies GHCR works too — point this at the proxy.
+          image: ghcr.io/runlevel-six/binnacle:latest
           args:
             - --addr=:8080
             # Names this instance in the header and browser title. Sites reuse
@@ -52,6 +54,9 @@ spec:
             # Per-cluster OpenStack credentials are written here for
             # gophercloud, which reads a file and nothing else.
             - --clouds-dir=/run/binnacle/clouds
+            # Naming an issuer is what turns authentication on. Without one
+            # binnacle refuses to serve anything but loopback, unless you pass
+            # --allow-unauthenticated and accept what that means.
             - --oidc-issuer=https://sso.example/realms/platform
             - --oidc-client-id=binnacle
             - --oidc-redirect-url=https://binnacle.site-a.example/auth/callback

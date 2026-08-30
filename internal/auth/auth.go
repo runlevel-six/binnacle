@@ -48,6 +48,9 @@ func (Open) Routes(*http.ServeMux) {}
 // Describe names the scheme.
 func (Open) Describe() string { return "no authentication" }
 
+// Warning is empty: on loopback there is nobody else to warn.
+func (Open) Warning() string { return "" }
+
 // RequireOIDCOffLoopback reports an error when an unauthenticated binnacle is
 // about to listen somewhere other than loopback.
 //
@@ -57,8 +60,15 @@ func (Open) Describe() string { return "no authentication" }
 // every cluster the service account can see. The failure has to be at startup,
 // because the version of this mistake that gets noticed later is the one
 // somebody else finds first.
-func RequireOIDCOffLoopback(addr string, authenticated bool) error {
-	if authenticated {
+//
+// allowUnauthenticated is the deliberate override, for a network where the
+// operator has decided reachability is itself the control. It is a separate
+// parameter rather than a variant of authenticated because the two are not the
+// same claim: one says who is looking, the other says nobody checked. Callers
+// should make it awkward to set and impossible to set by accident — see
+// [Unauthenticated], which is what the page then tells its readers.
+func RequireOIDCOffLoopback(addr string, authenticated, allowUnauthenticated bool) error {
+	if authenticated || allowUnauthenticated {
 		return nil
 	}
 	host, _, err := net.SplitHostPort(addr)
@@ -80,7 +90,28 @@ func RequireOIDCOffLoopback(addr string, authenticated bool) error {
 	}
 	return fmt.Errorf("refusing to serve %s with no authentication: binnacle reads every cluster "+
 		"in the fleet with its own credentials, so an unauthenticated listener off loopback is an "+
-		"open window into all of them. Configure --oidc-issuer, or bind 127.0.0.1 for local use", addr)
+		"open window into all of them. Configure --oidc-issuer, bind 127.0.0.1 for local use, or "+
+		"pass --allow-unauthenticated if reachability really is the only control you want", addr)
+}
+
+// Unauthenticated is [Open] serving somewhere other than loopback, having been
+// told to.
+//
+// It exists to be visible. Open describes itself as "no authentication", which
+// is honest on a laptop and easy to overlook on a shared address, so this says
+// something a reader cannot mistake for a normal state — the footer carries it,
+// and so does a banner across the top of every page.
+type Unauthenticated struct{ Open }
+
+// Describe names the scheme.
+func (Unauthenticated) Describe() string {
+	return "NO AUTHENTICATION — anyone who can reach this can see every cluster"
+}
+
+// Warning is the banner text, or empty for a scheme that needs no banner.
+func (Unauthenticated) Warning() string {
+	return "This binnacle has no authentication. Anyone who can reach this address " +
+		"sees every cluster it can read."
 }
 
 // OIDCConfig describes the identity provider.
@@ -153,6 +184,9 @@ func NewOIDC(ctx context.Context, cfg OIDCConfig) (*OIDC, error) {
 
 // Describe names the scheme.
 func (a *OIDC) Describe() string { return "signed in via " + a.cfg.Issuer }
+
+// Warning is empty: there is nothing unusual about being asked to sign in.
+func (a *OIDC) Warning() string { return "" }
 
 // Routes registers the login, callback and logout endpoints.
 func (a *OIDC) Routes(mux *http.ServeMux) {

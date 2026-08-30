@@ -47,6 +47,12 @@
   }
   .live.stale::before { background: var(--warn); }
   main { padding: 1.5rem; }
+  /* A page anyone can read says so on itself. Across the full width and above
+     the content, because the footer is where a reader stops looking. */
+  .unauth {
+    margin: 0; padding: .5rem 1.5rem; font-size: .8rem; font-weight: 600;
+    color: var(--bg); background: var(--warn);
+  }
   /* Cards are wide enough for a pool table and grow to fill the row. A fleet
      is read on a wide screen, and two narrow cards stranded at the top left of
      it waste the only thing a browser has that a terminal does not. */

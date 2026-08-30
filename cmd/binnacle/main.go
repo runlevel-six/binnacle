@@ -43,6 +43,7 @@ type options struct {
 	oidcClientID   string
 	oidcRedirect   string
 	insecureCookie bool
+	allowUnauth    bool
 }
 
 func main() {
@@ -68,6 +69,8 @@ func run(args []string) error {
 	fs.StringVar(&o.oidcClientID, "oidc-client-id", "", "OpenID Connect client id")
 	fs.StringVar(&o.oidcRedirect, "oidc-redirect-url", "", "binnacle's callback URL as the browser reaches it")
 	fs.BoolVar(&o.demo, "demo", false, "serve an invented fleet instead of a real one; needs no cluster and no credentials")
+	fs.BoolVar(&o.allowUnauth, "allow-unauthenticated", false,
+		"serve without authentication on a non-loopback address; every reader sees every cluster binnacle can read")
 	fs.BoolVar(&o.insecureCookie, "insecure-cookies", false, "send session cookies without the Secure flag; for testing over plain HTTP only")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "binnacle serves a fleet view of Cluster API clusters.")
@@ -90,8 +93,16 @@ func run(args []string) error {
 		return err
 	}
 	if _, open := authenticator.(auth.Open); open {
-		if err := auth.RequireOIDCOffLoopback(o.addr, false); err != nil {
+		if err := auth.RequireOIDCOffLoopback(o.addr, false, o.allowUnauth); err != nil {
 			return err
+		}
+		if o.allowUnauth {
+			// Swapped for the scheme that says so on the page. Setting the flag
+			// is a decision by whoever ran the process; everyone who opens the
+			// page afterwards is entitled to know it was made.
+			authenticator = auth.Unauthenticated{}
+			log.Println("warning: serving with no authentication. Anyone who can reach " +
+				o.addr + " sees every cluster binnacle can read.")
 		}
 	}
 

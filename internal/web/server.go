@@ -44,6 +44,10 @@ type Authenticator interface {
 	Routes(*http.ServeMux)
 	// Describe names the scheme, for the startup banner and the footer.
 	Describe() string
+	// Warning is text the page shows across the top, or empty when the scheme
+	// needs no warning. A page anyone can read should say so on itself, not
+	// only in the flags that started it.
+	Warning() string
 }
 
 // Source is what the server renders: the current state of the fleet, and a
@@ -120,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 type pageData struct {
 	Clusters []fleet.ClusterView
 	Auth     string
+	Warning  string
 	Version  string
 	Site     string
 	Now      time.Time
@@ -128,6 +133,7 @@ type pageData struct {
 type clusterData struct {
 	Cluster fleet.ClusterDetail
 	Auth    string
+	Warning string
 	Version string
 	Site    string
 }
@@ -136,6 +142,7 @@ func (s *Server) page() pageData {
 	return pageData{
 		Clusters: s.fleet.View(),
 		Auth:     s.auth.Describe(),
+		Warning:  s.auth.Warning(),
 		Version:  s.version,
 		Site:     s.site,
 		Now:      time.Now(),
@@ -147,7 +154,10 @@ func (s *Server) cluster(r *http.Request) (clusterData, bool) {
 	if !ok {
 		return clusterData{}, false
 	}
-	return clusterData{Cluster: d, Auth: s.auth.Describe(), Version: s.version, Site: s.site}, true
+	return clusterData{
+		Cluster: d, Auth: s.auth.Describe(), Warning: s.auth.Warning(),
+		Version: s.version, Site: s.site,
+	}, true
 }
 
 func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
