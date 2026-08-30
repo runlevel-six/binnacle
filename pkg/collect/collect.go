@@ -79,6 +79,14 @@ type Options struct {
 	// OSCloud names the clouds.yaml profile for the OpenStack plugin. Empty
 	// leaves the choice to the profile's own plugin settings.
 	OSCloud string
+	// OSCloudsPath names the clouds.yaml file to read OSCloud from. Empty uses
+	// gophercloud's own search path.
+	//
+	// A caller collecting from several clusters at once needs this: each
+	// cluster is generally a different cloud, and the search path is
+	// process-wide, so the only way one process can hold credentials for more
+	// than one is to point each collector at its own file.
+	OSCloudsPath string
 	// TargetVersion is the Kubernetes version being rolled out, when an
 	// operator has asserted one. It is runtime state rather than
 	// configuration: the OpenStack plugin's mode-aware pane switches on the
@@ -230,6 +238,9 @@ func openStackSettings(opts Options) openstack.Settings {
 	settings := openstack.SettingsFrom(settingsFor(opts.Profile.Plugins, openstack.Name))
 	if opts.OSCloud != "" {
 		settings.Cloud = opts.OSCloud
+	}
+	if opts.OSCloudsPath != "" {
+		settings.CloudsPath = opts.OSCloudsPath
 	}
 	settings.TargetVersion = opts.TargetVersion
 	return settings

@@ -233,7 +233,7 @@ func TestParseClouds_MalformedEntryBecomesAnError(t *testing.T) {
 
 	// Whether this panics or errors is gophercloud's business; what matters is
 	// that it never panics out of here.
-	_, _, _, err := parseClouds("flat")
+	_, _, _, err := parseClouds("flat", "")
 	if err == nil {
 		t.Skip("this gophercloud release accepts the flat layout; nothing to convert")
 	}
@@ -250,7 +250,7 @@ func TestParseClouds_DoesNotPanic(t *testing.T) {
 	t.Setenv("OS_CLIENT_CONFIG_FILE", dir+"/clouds.yaml")
 
 	// The assertion is simply that this returns rather than panicking.
-	if _, _, _, err := parseClouds("anything"); err == nil {
+	if _, _, _, err := parseClouds("anything", ""); err == nil {
 		t.Error("expected an error for an unparseable file")
 	}
 }
@@ -406,5 +406,44 @@ func TestShortHost(t *testing.T) {
 		if got := ShortHost(in); got != want {
 			t.Errorf("ShortHost(%q): got %q want %q", in, got, want)
 		}
+	}
+}
+
+// A named file is read instead of the search path, not in addition to it.
+//
+// Falling through to another cloud's credentials when the named file is wrong
+// would authenticate successfully to the wrong cloud and report its inventory
+// as this one's — a failure that looks like working software.
+func TestParseClouds_NamedFileWinsOverTheSearchPath(t *testing.T) {
+	dir := t.TempDir()
+	onPath := dir + "/on-path.yaml"
+	named := dir + "/named.yaml"
+	write := func(path, cloud, url string) {
+		body := "clouds:\n  " + cloud + ":\n    auth:\n      auth_url: " + url +
+			"\n      username: u\n      password: p\n      project_name: p\n" +
+			"    region_name: r\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(onPath, "shared", "https://on-path.invalid/v3")
+	write(named, "shared", "https://named.invalid/v3")
+	t.Setenv("OS_CLIENT_CONFIG_FILE", onPath)
+
+	ao, _, _, err := parseClouds("shared", named)
+	if err != nil {
+		t.Fatalf("parseClouds: %v", err)
+	}
+	if ao.IdentityEndpoint != "https://named.invalid/v3" {
+		t.Errorf("read %q; the named file should win", ao.IdentityEndpoint)
+	}
+
+	// And with no path named, the search path still applies.
+	ao, _, _, err = parseClouds("shared", "")
+	if err != nil {
+		t.Fatalf("parseClouds: %v", err)
+	}
+	if ao.IdentityEndpoint != "https://on-path.invalid/v3" {
+		t.Errorf("read %q; the search path should still work", ao.IdentityEndpoint)
 	}
 }

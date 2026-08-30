@@ -83,3 +83,32 @@ func TestActivate_EmptyRegistry(t *testing.T) {
 		t.Errorf("got %d results, want none", len(got))
 	}
 }
+
+// A caller collecting from several clusters at once needs each collector
+// pointed at its own clouds.yaml: every cluster is generally a different
+// cloud, and gophercloud's search path is process-wide.
+func TestOpenStackSettings_CloudsPathOverridesProfile(t *testing.T) {
+	pinned := map[string]profile.Settings{
+		"openstack": {"cloud": "from-profile", "clouds_path": "/etc/openstack/clouds.yaml"},
+	}
+	prof := profile.Profile{Plugins: pinned}
+
+	// The profile's own path stands when nothing else names one.
+	if got := openStackSettings(Options{Profile: prof}).CloudsPath; got != "/etc/openstack/clouds.yaml" {
+		t.Errorf("got %q want the profile's path", got)
+	}
+
+	opts := Options{Profile: prof, OSCloud: "my-cloud", OSCloudsPath: "/run/binnacle/tenant-01.yaml"}
+	s := openStackSettings(opts)
+	if s.CloudsPath != "/run/binnacle/tenant-01.yaml" || s.Cloud != "my-cloud" {
+		t.Errorf("got cloud %q path %q", s.Cloud, s.CloudsPath)
+	}
+}
+
+// An unconfigured plugin names no file, so gophercloud searches as it always
+// has and a single-cloud operator notices no change.
+func TestOpenStackSettings_NoPathLeavesTheSearchAlone(t *testing.T) {
+	if got := openStackSettings(Options{}).CloudsPath; got != "" {
+		t.Errorf("got %q want empty", got)
+	}
+}

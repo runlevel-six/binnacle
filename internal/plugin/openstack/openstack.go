@@ -110,6 +110,15 @@ type Settings struct {
 	// Cloud is the clouds.yaml profile name. Required: there is no sensible
 	// default, since the name is chosen by whoever wrote the file.
 	Cloud string
+	// CloudsPath names the clouds.yaml file to read Cloud from. Empty uses
+	// gophercloud's own search — $OS_CLIENT_CONFIG_FILE, then the working
+	// directory, then the usual per-user and system paths.
+	//
+	// It exists for a caller watching several clouds at once. The search path
+	// is process-wide and the environment is not per-goroutine, so pointing
+	// each plugin at its own file is the only way one process can hold
+	// credentials for more than one cloud without them contending.
+	CloudsPath string
 	// Namespace pins where the OpenStack workloads run, for the service-version
 	// view. Empty derives it from the workloads themselves.
 	Namespace string
@@ -125,6 +134,9 @@ func SettingsFrom(raw map[string]any) Settings {
 	var s Settings
 	if v, ok := raw["cloud"].(string); ok {
 		s.Cloud = v
+	}
+	if v, ok := raw["clouds_path"].(string); ok {
+		s.CloudsPath = v
 	}
 	if v, ok := raw["namespace"].(string); ok {
 		s.Namespace = v
@@ -208,7 +220,7 @@ func (p *Plugin) connect(ctx context.Context) (*gophercloud.ProviderClient, goph
 		return p.provider, p.endpoint, nil
 	}
 
-	authOpts, endpointOpts, tlsConfig, err := parseClouds(p.settings.Cloud)
+	authOpts, endpointOpts, tlsConfig, err := parseClouds(p.settings.Cloud, p.settings.CloudsPath)
 	if err != nil {
 		return nil, gophercloud.EndpointOpts{}, err
 	}
@@ -234,7 +246,7 @@ func (p *Plugin) connect(ctx context.Context) (*gophercloud.ProviderClient, goph
 // The native clouds loader is used rather than utils/clientconfig, because
 // clientconfig treats the `cloud:` field as a reference into clouds-public.yaml
 // and fails when the profile is not there.
-func parseClouds(cloud string) (
+func parseClouds(cloud, path string) (
 	ao gophercloud.AuthOptions,
 	eo gophercloud.EndpointOpts,
 	tlsConfig *tls.Config,
@@ -247,7 +259,15 @@ func parseClouds(cloud string) (
 				cloud, r)
 		}
 	}()
-	return clouds.Parse(clouds.WithCloudName(cloud))
+	opts := []clouds.ParseOption{clouds.WithCloudName(cloud)}
+	if path != "" {
+		// Exactly this file, rather than adding it to the search order: a
+		// caller that named a file has said which credentials it means, and
+		// silently falling through to another cloud's would authenticate to
+		// the wrong cloud and report its inventory as this one's.
+		opts = append(opts, clouds.WithLocations(path))
+	}
+	return clouds.Parse(opts...)
 }
 
 // Run polls until ctx is canceled.
