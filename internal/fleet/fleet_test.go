@@ -228,3 +228,161 @@ func TestDiscoveredKey(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// The management side alone produces a completely plausible healthy card:
+// Provisioned, Machines Running, hosts fine. Every signal that could contradict
+// it comes from the workload cluster, and a health cell with no data is
+// omitted rather than shown as missing — so a cluster whose workload side is
+// unreadable would otherwise render green with three badges instead of seven.
+func TestView_UnreadableWorkloadSideCannotRenderHealthy(t *testing.T) {
+	tr := newTracked("capi", "tenant-01")
+	tr.store.Put(model.KeyMgmtClusters, model.Snapshot[model.Cluster]{
+		Items: []model.Cluster{{Namespace: "capi", Name: "tenant-01", Phase: "Provisioned",
+			ControlPlane: model.ReplicaBucket{Desired: 3, Ready: 3}}},
+		UpdatedAt: time.Now(),
+	})
+	tr.store.Put(model.KeyWorkloadNodes, model.Snapshot[model.Node]{
+		Err: errors.New("Get \"https://10.0.0.1:6443/api/v1/nodes\": dial tcp: i/o timeout"),
+	})
+
+	v := fleetOf(tr).View()[0]
+	if v.Status == health.StatusOK {
+		t.Error("a cluster whose workload side cannot be read rendered as healthy")
+	}
+	if v.WorkloadProblem == "" {
+		t.Error("no reason given for the missing workload data")
+	}
+	if v.NodesKnown {
+		t.Error("node counts claimed to be known")
+	}
+}
+
+// A workload cluster that reports an empty node list is not an empty cluster;
+// it is a credential that resolved and a connection that is not working.
+func TestView_EmptyNodeListIsAFault(t *testing.T) {
+	tr := newTracked("capi", "tenant-01")
+	tr.store.Put(model.KeyWorkloadNodes, model.Snapshot[model.Node]{UpdatedAt: time.Now()})
+	if v := fleetOf(tr).View()[0]; v.Status != health.StatusWarn || v.WorkloadProblem == "" {
+		t.Errorf("got status %v problem %q; want a warned row explaining itself", v.Status, v.WorkloadProblem)
+	}
+}
+
+// A source that says it is not ready yet, and why, is reporting a state rather
+// than a fault. Escalating that would paint the whole fleet amber on restart.
+func TestView_WarmingWorkloadIsNotAFault(t *testing.T) {
+	tr := newTracked("capi", "tenant-01")
+	tr.store.Put(model.KeyWorkloadNodes, model.Snapshot[model.Node]{
+		Note: "waiting for the node cache to sync", UpdatedAt: time.Now(),
+	})
+	if v := fleetOf(tr).View()[0]; v.Status == health.StatusWarn {
+		t.Error("a warming source was reported as a fault")
+	}
+}
+
+// A cluster built without a ClusterClass has no .spec.topology and so no
+// version on its Cluster object. The control plane's version is the cluster's
+// version by any useful definition, and "version unknown" on every card is a
+// worse answer than the one we can derive.
+func TestView_VersionFallsBackToTheControlPlane(t *testing.T) {
+	tr := newTracked("capi", "tenant-01")
+	tr.store.Put(model.KeyMgmtClusters, model.Snapshot[model.Cluster]{
+		Items:     []model.Cluster{{Namespace: "capi", Name: "tenant-01", Phase: "Provisioned"}},
+		UpdatedAt: time.Now(),
+	})
+	tr.store.Put(model.KeyMgmtKCPs, model.Snapshot[model.KubeadmControlPlane]{
+		Items: []model.KubeadmControlPlane{{
+			Namespace: "capi", Name: "tenant-01-cp", Version: "v1.36.2",
+			DesiredReplicas: 3, ReadyReplicas: 3, UpToDateReplicas: 3,
+		}},
+		UpdatedAt: time.Now(),
+	})
+
+	v := fleetOf(tr).View()[0]
+	if v.Version != "v1.36.2" {
+		t.Errorf("version = %q, want the control plane's", v.Version)
+	}
+	if v.ControlPlane.Desired != 3 || v.ControlPlane.Ready != 3 {
+		t.Errorf("control plane replicas not derived: %+v", v.ControlPlane)
+	}
+	if len(v.Pools) != 1 || v.Pools[0].Role != "Control Plane" {
+		t.Errorf("pools = %+v", v.Pools)
+	}
+}
+
+// Pools carry their own versions, which during an upgrade is the progress
+// report the cluster-level version cannot give.
+func TestView_PoolsCarryTheirOwnVersions(t *testing.T) {
+	tr := newTracked("capi", "tenant-01")
+	tr.store.Put(model.KeyMgmtKCPs, model.Snapshot[model.KubeadmControlPlane]{
+		Items:     []model.KubeadmControlPlane{{Name: "cp", Version: "v1.36.2", DesiredReplicas: 3, ReadyReplicas: 3}},
+		UpdatedAt: time.Now(),
+	})
+	tr.store.Put(model.KeyMgmtMachineDeployments, model.Snapshot[model.MachineDeployment]{
+		Items: []model.MachineDeployment{
+			{Name: "workers-b", Version: "v1.35.4", DesiredReplicas: 2, ReadyReplicas: 2},
+			{Name: "workers-a", Version: "v1.36.2", DesiredReplicas: 4, ReadyReplicas: 4},
+		},
+		UpdatedAt: time.Now(),
+	})
+
+	v := fleetOf(tr).View()[0]
+	if len(v.Pools) != 3 {
+		t.Fatalf("got %d pools, want 3", len(v.Pools))
+	}
+	// Control plane first: it is the half that has to be healthy for the other
+	// half to matter. Workers then sort by name so the card is stable.
+	if v.Pools[0].Role != "Control Plane" || v.Pools[1].Name != "workers-a" || v.Pools[2].Name != "workers-b" {
+		t.Errorf("pool order wrong: %+v", v.Pools)
+	}
+	if v.Workers.Desired != 6 || v.Workers.Ready != 6 {
+		t.Errorf("worker totals = %+v, want 6/6", v.Workers)
+	}
+}
+
+// Capacity is committed requests against allocatable, summed over the nodes.
+func TestView_CapacityAndWorkloads(t *testing.T) {
+	tr := newTracked("capi", "tenant-01")
+	tr.store.Put(model.KeyWorkloadNodes, model.Snapshot[model.Node]{
+		Items: []model.Node{
+			{Name: "n1", Status: "Ready", AllocatableCPU: 4000, RequestedCPU: 1000,
+				AllocatableMemory: 8 << 30, RequestedMemory: 2 << 30},
+			{Name: "n2", Status: "Ready", AllocatableCPU: 4000, RequestedCPU: 3000,
+				AllocatableMemory: 8 << 30, RequestedMemory: 6 << 30},
+		},
+		UpdatedAt: time.Now(),
+	})
+	tr.store.Put(model.KeyWorkloadWorkloads, model.Snapshot[model.Workload]{
+		Items: []model.Workload{
+			{Kind: "Deployment", Ready: 2, Desired: 2},
+			{Kind: "Deployment", Ready: 1, Desired: 3},
+			{Kind: "DaemonSet", Ready: 5, Desired: 5},
+		},
+		UpdatedAt: time.Now(),
+	})
+	tr.store.Put(model.KeyWorkloadPods, model.Snapshot[model.Pod]{
+		Items: []model.Pod{
+			{Name: "a", IsHealthy: true}, {Name: "b"}, {Name: "c"},
+		},
+		UpdatedAt: time.Now(),
+	})
+
+	v := fleetOf(tr).View()[0]
+	if !v.NodesKnown || v.Nodes.Ready != 2 {
+		t.Errorf("nodes = %+v known=%v", v.Nodes, v.NodesKnown)
+	}
+	if got := v.Capacity.CPUPercent(); got != 50 {
+		t.Errorf("cpu = %d%%, want 50", got)
+	}
+	if got := v.Capacity.MemPercent(); got != 50 {
+		t.Errorf("mem = %d%%, want 50", got)
+	}
+	if len(v.Workloads) != 2 || v.Workloads[0].Kind != "DaemonSet" {
+		t.Fatalf("workloads = %+v", v.Workloads)
+	}
+	if d := v.Workloads[1]; d.Kind != "Deployment" || d.Ready != 1 || d.Total != 2 {
+		t.Errorf("deployments = %+v, want 1/2 ready", d)
+	}
+	if v.UnhealthyPods != 2 {
+		t.Errorf("unhealthy pods = %d, want 2", v.UnhealthyPods)
+	}
+}

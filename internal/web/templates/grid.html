@@ -3,6 +3,7 @@
 {{range .Clusters}}
   <article class="card {{.Status}}">
     <h2>{{.Name}} <span class="ns">{{.Namespace}}</span></h2>
+
     {{if .Problem}}
       <p class="problem">{{.Problem}}</p>
     {{else}}
@@ -12,20 +13,51 @@
         {{if .Paused}} &middot; <span class="frozen">PAUSED</span>{{end}}
         {{if .Rolling}} &middot; <span class="rolling">ROLLING{{if .Rollout.Rolling}} ({{len .Rollout.Rolling}}){{end}}</span>{{end}}
       </div>
-      {{if .UpdatedAt.IsZero}}
-      <p class="empty">Waiting for the first report.</p>
-      {{else}}
+
+      {{if and (not .Pools) (not .NodesKnown) (not .WorkloadProblem)}}
+        <p class="empty">Waiting for the first report.</p>
+      {{end}}
+
+      {{if .Pools}}
+      <table class="pools">
+        <tbody>
+        {{range .Pools}}
+          <tr{{if .Rolling}} class="pool-rolling"{{end}}>
+            <td class="pool-role">{{.Role}}</td>
+            <td class="pool-name">{{.Name}}</td>
+            <td class="pool-n">{{.Ready}}/{{.Desired}}</td>
+            <td class="pool-v">{{.Version}}</td>
+            <td class="pool-flag">{{if .Paused}}<span class="frozen">paused</span>{{else if .Rolling}}<span class="rolling">rolling</span>{{end}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{end}}
+
+      {{if .WorkloadProblem}}
+        <p class="halfblind">Workload cluster: {{.WorkloadProblem}}</p>
+      {{end}}
+
+      {{if .NodesKnown}}
       <div class="nums">
-        <div class="num"><div class="k">Control plane</div>
-          <div class="v">{{.ControlPlane.Ready}}/{{.ControlPlane.Desired}}</div></div>
-        <div class="num"><div class="k">Workers</div>
-          <div class="v">{{.Workers.Ready}}/{{.Workers.Desired}}</div></div>
         <div class="num"><div class="k">Nodes</div>
-          <div class="v">{{.Nodes.Ready}}/{{.Nodes.Total}}{{if .Nodes.Cordoned}} &middot; {{.Nodes.Cordoned}} cordoned{{end}}</div></div>
+          <div class="v">{{.Nodes.Ready}}/{{.Nodes.Total}}{{if .Nodes.Cordoned}} <span class="warnish">{{.Nodes.Cordoned}} cordoned</span>{{end}}</div></div>
+        {{if .Capacity.Known}}
+        <div class="num"><div class="k">CPU committed</div><div class="v">{{.Capacity.CPUPercent}}%</div></div>
+        <div class="num"><div class="k">Memory committed</div><div class="v">{{.Capacity.MemPercent}}%</div></div>
+        {{end}}
       </div>
       {{end}}
+
+      {{if .Workloads}}
+      <div class="workloads">
+        {{range .Workloads}}<span class="wl{{if .Degraded}} degraded{{end}}">{{.Kind}} {{.Ready}}/{{.Total}}</span>{{end}}
+        {{if .UnhealthyPods}}<span class="wl degraded">{{.UnhealthyPods}} unhealthy pod{{if ne .UnhealthyPods 1}}s{{end}}</span>{{end}}
+      </div>
+      {{end}}
+
       <div class="cells">
-        {{range .Cells}}<span class="cell {{.Status}}">{{.Name}}{{if .Detail}} <span class="d">{{.Detail}}</span>{{end}}</span>{{else}}<span class="empty">waiting for data…</span>{{end}}
+        {{range .Cells}}<span class="cell {{.Status}}">{{.Name}}{{if .Detail}} <span class="d">{{.Detail}}</span>{{end}}</span>{{else}}<span class="empty">waiting for data&hellip;</span>{{end}}
       </div>
       {{if not .UpdatedAt.IsZero}}<div class="seen">seen {{ago .UpdatedAt}}</div>{{end}}
     {{end}}

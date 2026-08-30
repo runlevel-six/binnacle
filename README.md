@@ -1,4 +1,4 @@
-# Binnacle
+<img src="assets/lockup.png" alt="Binnacle" width="360">
 
 A fleet view of Cluster API clusters, in a browser.
 

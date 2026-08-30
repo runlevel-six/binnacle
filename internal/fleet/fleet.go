@@ -269,6 +269,56 @@ type NodeCount struct {
 	Cordoned int
 }
 
+// NodePool is one control plane or worker pool as Cluster API reports it.
+type NodePool struct {
+	Name    string
+	Role    string
+	Ready   int32
+	Desired int32
+	Version string
+	Paused  bool
+	Rolling bool
+}
+
+// Capacity is what the workload cluster has committed against what it has.
+//
+// Requests rather than usage: this is what the scheduler has already promised,
+// which is the number deciding whether the next workload fits. Usage would need
+// a metrics pipeline that not every cluster runs, and a figure that is missing
+// on half the fleet is worse than one that is merely conservative.
+type Capacity struct {
+	CPURequested   int64 // millicores
+	CPUAllocatable int64
+	MemRequested   int64 // bytes
+	MemAllocatable int64
+}
+
+// Known reports whether there is anything to show.
+func (c Capacity) Known() bool { return c.CPUAllocatable > 0 || c.MemAllocatable > 0 }
+
+// CPUPercent is committed CPU as a percentage of allocatable.
+func (c Capacity) CPUPercent() int { return percent(c.CPURequested, c.CPUAllocatable) }
+
+// MemPercent is committed memory as a percentage of allocatable.
+func (c Capacity) MemPercent() int { return percent(c.MemRequested, c.MemAllocatable) }
+
+func percent(part, whole int64) int {
+	if whole <= 0 {
+		return 0
+	}
+	return int(float64(part) / float64(whole) * 100)
+}
+
+// WorkloadCount rolls up one workload kind: how many are at full replicas.
+type WorkloadCount struct {
+	Kind  string
+	Ready int
+	Total int
+}
+
+// Degraded reports whether any workload of this kind is short of its replicas.
+func (w WorkloadCount) Degraded() bool { return w.Ready < w.Total }
+
 // ClusterView is one row of the fleet page: everything decided, nothing styled.
 //
 // Every judgement in here was made by sextant — the health cells, the rollout
@@ -289,8 +339,35 @@ type ClusterView struct {
 
 	ControlPlane model.ReplicaBucket
 	Workers      model.ReplicaBucket
-	Nodes        NodeCount
-	Rollout      rollout.State
+
+	// Pools is the control plane and each worker pool, with its own version.
+	// During an upgrade that per-pool version is the progress report: the
+	// cluster-level version says nothing about which pools have moved.
+	Pools []NodePool
+
+	Nodes NodeCount
+	// NodesKnown separates "no nodes" from "we could not read the nodes".
+	// Without it an unreadable workload cluster renders 0/0, which looks like
+	// an empty cluster rather than an unanswered question.
+	NodesKnown bool
+
+	Capacity      Capacity
+	Workloads     []WorkloadCount
+	UnhealthyPods int
+
+	// WorkloadProblem says why the workload cluster could not be read, when the
+	// management side is answering but the workload side is not.
+	//
+	// This is the failure a fleet page most needs to name. Binnacle reads two
+	// clusters per card, and the management side alone produces a plausible,
+	// entirely healthy-looking one: Cluster API says Provisioned, Machines are
+	// Running, hosts are fine. Every signal that could contradict it — nodes,
+	// pods, the CNI, storage — comes from the side that is unreachable, and a
+	// cell with no data is simply omitted rather than shown as missing. Silence
+	// from half the sources must not read as good news.
+	WorkloadProblem string
+
+	Rollout rollout.State
 
 	// Problem is set when the cluster cannot be read at all: no credentials, a
 	// watcher that would not start, an unreachable API server. It is rendered
@@ -368,9 +445,27 @@ func (t *tracked) view(prof profile.Profile) ClusterView {
 	v.Status = health.Worst(v.Cells)
 	v.Rollout = rollout.Detect(t.store, "")
 
-	if snap, ok := store.Get[model.Snapshot[model.Cluster]](t.store, model.KeyMgmtClusters); ok {
+	v.readManagement(t.store)
+
+	// A cluster only half of which can be read must not be able to render as
+	// healthy. The management side alone says Provisioned, Running, fine —
+	// every signal that could contradict it lives on the side we cannot see.
+	//
+	// Not yet having reported is excluded, and the distinction is the whole
+	// point: at startup every cluster is silent, and a fleet that flashed amber
+	// on every restart would teach a reader to ignore amber.
+	if broken := v.readWorkload(t.store, prof); broken {
+		v.Status = v.Status.Worse(health.StatusWarn)
+	}
+	return v
+}
+
+// readManagement fills in what Cluster API reports: the cluster itself, the
+// control plane, and each worker pool.
+func (v *ClusterView) readManagement(s *store.Store) {
+	if snap, ok := store.Get[model.Snapshot[model.Cluster]](s, model.KeyMgmtClusters); ok {
 		for _, c := range snap.Items {
-			if c.Name != t.discovered.Name {
+			if c.Name != v.Name {
 				continue
 			}
 			v.Version, v.Phase, v.Paused = c.Version, c.Phase, c.Paused
@@ -379,23 +474,131 @@ func (t *tracked) view(prof profile.Profile) ClusterView {
 		v.UpdatedAt = snap.UpdatedAt
 	}
 
-	if snap, ok := store.Get[model.Snapshot[model.Node]](t.store, model.KeyWorkloadNodes); ok {
-		for _, n := range snap.Items {
-			v.Nodes.Total++
-			if n.Ready() {
-				v.Nodes.Ready++
+	if snap, ok := store.Get[model.Snapshot[model.KubeadmControlPlane]](s, model.KeyMgmtKCPs); ok {
+		for _, k := range snap.Items {
+			v.Pools = append(v.Pools, NodePool{
+				Name: k.Name, Role: "Control Plane",
+				Ready: k.ReadyReplicas, Desired: k.DesiredReplicas,
+				Version: k.Version, Paused: k.Paused, Rolling: k.Rolling(),
+			})
+			// A cluster built without a ClusterClass has no .spec.topology, so
+			// its Cluster object carries no version at all and the card would
+			// read "version unknown" forever. The control plane's version is
+			// the cluster's version by any useful definition.
+			if v.Version == "" {
+				v.Version = k.Version
 			}
-			// Only a cordon the profile has not declared expected is counted,
-			// for the same reason the health cell ignores the others: a fleet
-			// of permanently cordoned hypervisors would otherwise report a
-			// standing drain.
-			if n.Cordoned && prof.NodeRoles.CordonIsNews(n.Role, n.Ready()) {
-				v.Nodes.Cordoned++
+			if v.ControlPlane.Desired == 0 {
+				v.ControlPlane = model.ReplicaBucket{
+					Desired: k.DesiredReplicas, Ready: k.ReadyReplicas,
+					UpToDate: k.UpToDateReplicas, Available: k.AvailableReplicas,
+				}
 			}
-		}
-		if snap.UpdatedAt.After(v.UpdatedAt) {
-			v.UpdatedAt = snap.UpdatedAt
 		}
 	}
-	return v
+
+	if snap, ok := store.Get[model.Snapshot[model.MachineDeployment]](s, model.KeyMgmtMachineDeployments); ok {
+		var workers model.ReplicaBucket
+		for _, m := range snap.Items {
+			v.Pools = append(v.Pools, NodePool{
+				Name: m.Name, Role: "Workers",
+				Ready: m.ReadyReplicas, Desired: m.DesiredReplicas,
+				Version: m.Version, Paused: m.Paused, Rolling: m.Rolling(),
+			})
+			workers.Desired += m.DesiredReplicas
+			workers.Ready += m.ReadyReplicas
+			workers.UpToDate += m.UpToDateReplicas
+		}
+		if v.Workers.Desired == 0 {
+			v.Workers = workers
+		}
+	}
+	sort.Slice(v.Pools, func(i, j int) bool {
+		if v.Pools[i].Role != v.Pools[j].Role {
+			// Control plane first: it is the half of a cluster that has to be
+			// healthy for the other half to matter.
+			return v.Pools[i].Role == "Control Plane"
+		}
+		return v.Pools[i].Name < v.Pools[j].Name
+	})
+}
+
+// readWorkload fills in what the workload cluster reports, or records why it
+// could not be read.
+//
+// The bool reports whether the workload side is *broken*, as opposed to merely
+// quiet. Both set WorkloadProblem, because a reader deserves to know either
+// way, but only the first is a reason to darken the cluster's status.
+func (v *ClusterView) readWorkload(s *store.Store, prof profile.Profile) bool {
+	nodes, ok := store.Get[model.Snapshot[model.Node]](s, model.KeyWorkloadNodes)
+	switch {
+	case !ok:
+		// Nothing has published. Normal at startup, and indistinguishable from
+		// it at any other time, so it is reported without a verdict.
+		v.WorkloadProblem = "the workload cluster has not reported yet"
+		return false
+	case nodes.Err != nil:
+		v.WorkloadProblem = nodes.Err.Error()
+		return true
+	case len(nodes.Items) == 0 && nodes.Note != "":
+		// The source says it is not ready and why. That is a state, not a fault.
+		v.WorkloadProblem = nodes.Note
+		return false
+	case len(nodes.Items) == 0:
+		// Reachable and genuinely empty is not a thing a Cluster API workload
+		// cluster is, so this is the shape an unusable credential takes when
+		// nothing failed loudly enough to be recorded as an error.
+		v.WorkloadProblem = "the workload cluster reported no nodes"
+		return true
+	}
+
+	v.NodesKnown = true
+	for _, n := range nodes.Items {
+		v.Nodes.Total++
+		if n.Ready() {
+			v.Nodes.Ready++
+		}
+		// Only a cordon the profile has not declared expected is counted, for
+		// the same reason the health cell ignores the others: a fleet of
+		// permanently cordoned hypervisors would otherwise report a standing
+		// drain.
+		if n.Cordoned && prof.NodeRoles.CordonIsNews(n.Role, n.Ready()) {
+			v.Nodes.Cordoned++
+		}
+		v.Capacity.CPUAllocatable += n.AllocatableCPU
+		v.Capacity.CPURequested += n.RequestedCPU
+		v.Capacity.MemAllocatable += n.AllocatableMemory
+		v.Capacity.MemRequested += n.RequestedMemory
+	}
+	if nodes.UpdatedAt.After(v.UpdatedAt) {
+		v.UpdatedAt = nodes.UpdatedAt
+	}
+
+	if snap, ok := store.Get[model.Snapshot[model.Workload]](s, model.KeyWorkloadWorkloads); ok {
+		byKind := map[string]*WorkloadCount{}
+		for _, w := range snap.Items {
+			c, seen := byKind[w.Kind]
+			if !seen {
+				c = &WorkloadCount{Kind: w.Kind}
+				byKind[w.Kind] = c
+			}
+			c.Total++
+			if w.Ready >= w.Desired {
+				c.Ready++
+			}
+		}
+		for _, c := range byKind {
+			v.Workloads = append(v.Workloads, *c)
+		}
+		sort.Slice(v.Workloads, func(i, j int) bool { return v.Workloads[i].Kind < v.Workloads[j].Kind })
+	}
+
+	if snap, ok := store.Get[model.Snapshot[model.Pod]](s, model.KeyWorkloadPods); ok {
+		for _, pod := range snap.Items {
+			if !pod.IsHealthy {
+				v.UnhealthyPods++
+			}
+		}
+	}
+	return false
 }

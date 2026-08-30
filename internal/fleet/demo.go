@@ -83,7 +83,20 @@ func (d *Demo) View() []ClusterView {
 		},
 		ControlPlane: model.ReplicaBucket{Desired: 3, Ready: 3, UpToDate: 3},
 		Workers:      model.ReplicaBucket{Desired: 6, Ready: 6, UpToDate: upToDate},
-		Nodes:        NodeCount{Ready: 9, Total: 9, Cordoned: 1},
+		Pools: []NodePool{
+			{Role: "Control Plane", Name: "tenant-02-cluster-cp", Ready: 3, Desired: 3, Version: "v1.32.0"},
+			{Role: "Workers", Name: "tenant-02-cluster-compute", Ready: 4, Desired: 4, Version: "v1.31.4", Rolling: true},
+			{Role: "Workers", Name: "tenant-02-cluster-mgd", Ready: 2, Desired: 2, Version: "v1.32.0"},
+		},
+		Nodes: NodeCount{Ready: 9, Total: 9, Cordoned: 1}, NodesKnown: true,
+		Capacity: Capacity{CPURequested: 82900, CPUAllocatable: 342000,
+			MemRequested: 356 << 30, MemAllocatable: 1004 << 30},
+		Workloads: []WorkloadCount{
+			{Kind: "DaemonSet", Ready: 31, Total: 31},
+			{Kind: "Deployment", Ready: 147, Total: 148},
+			{Kind: "StatefulSet", Ready: 71, Total: 74},
+		},
+		UnhealthyPods: 11,
 		Rollout: rollout.State{
 			Active:  true,
 			Rolling: []string{"managed-clusters/tenant-02-cluster-md-0 (MachineDeployment)"},
@@ -107,8 +120,20 @@ func (d *Demo) View() []ClusterView {
 			},
 			ControlPlane: model.ReplicaBucket{Desired: 3, Ready: 3, UpToDate: 3},
 			Workers:      model.ReplicaBucket{Desired: 12, Ready: 12, UpToDate: 12},
-			Nodes:        NodeCount{Ready: 15, Total: 15},
-			UpdatedAt:    time.Now().Add(-3 * time.Second),
+			Pools: []NodePool{
+				{Role: "Control Plane", Name: "tenant-01-cp", Ready: 3, Desired: 3, Version: "v1.32.0"},
+				{Role: "Workers", Name: "tenant-01-compute", Ready: 8, Desired: 8, Version: "v1.32.0"},
+				{Role: "Workers", Name: "tenant-01-mgd", Ready: 4, Desired: 4, Version: "v1.32.0"},
+			},
+			Nodes: NodeCount{Ready: 15, Total: 15}, NodesKnown: true,
+			Capacity: Capacity{CPURequested: 61000, CPUAllocatable: 224000,
+				MemRequested: 210 << 30, MemAllocatable: 640 << 30},
+			Workloads: []WorkloadCount{
+				{Kind: "DaemonSet", Ready: 24, Total: 24},
+				{Kind: "Deployment", Ready: 96, Total: 96},
+				{Kind: "StatefulSet", Ready: 40, Total: 40},
+			},
+			UpdatedAt: time.Now().Add(-3 * time.Second),
 		},
 		rolling,
 		{
@@ -125,8 +150,20 @@ func (d *Demo) View() []ClusterView {
 			},
 			ControlPlane: model.ReplicaBucket{Desired: 3, Ready: 3, UpToDate: 3},
 			Workers:      model.ReplicaBucket{Desired: 7, Ready: 6, UpToDate: 7},
-			Nodes:        NodeCount{Ready: 9, Total: 10},
-			UpdatedAt:    time.Now().Add(-11 * time.Second),
+			Pools: []NodePool{
+				{Role: "Control Plane", Name: "tenant-03-cluster-cp", Ready: 3, Desired: 3, Version: "v1.31.4"},
+				{Role: "Workers", Name: "tenant-03-cluster-compute", Ready: 6, Desired: 7, Version: "v1.31.4"},
+			},
+			Nodes: NodeCount{Ready: 9, Total: 10}, NodesKnown: true,
+			Capacity: Capacity{CPURequested: 96000, CPUAllocatable: 168000,
+				MemRequested: 330 << 30, MemAllocatable: 480 << 30},
+			Workloads: []WorkloadCount{
+				{Kind: "DaemonSet", Ready: 21, Total: 22},
+				{Kind: "Deployment", Ready: 88, Total: 91},
+				{Kind: "StatefulSet", Ready: 30, Total: 33},
+			},
+			UnhealthyPods: 7,
+			UpdatedAt:     time.Now().Add(-11 * time.Second),
 		},
 		{
 			Namespace: "managed-clusters", Name: "tenant-04-cluster",
@@ -134,6 +171,24 @@ func (d *Demo) View() []ClusterView {
 			Problem: `no kubeconfig for cluster tenant-04-cluster: no secret named ` +
 				`tenant-04-cluster-kubeconfig, and none labeled ` +
 				`cluster.x-k8s.io/cluster-name=tenant-04-cluster holds a "value" key`,
+		},
+		{
+			Namespace: "managed-clusters", Name: "tenant-06-cluster",
+			Status:  health.StatusWarn,
+			Version: "v1.31.4", Phase: "Provisioned",
+			Cells: []health.Cell{
+				{Name: "CAPI", Status: health.StatusOK},
+				{Name: "Machines", Status: health.StatusOK},
+				{Name: "Hosts", Status: health.StatusOK},
+			},
+			Pools: []NodePool{
+				{Role: "Control Plane", Name: "tenant-06-cluster-cp", Ready: 3, Desired: 3, Version: "v1.31.4"},
+				{Role: "Workers", Name: "tenant-06-cluster-compute", Ready: 3, Desired: 3, Version: "v1.31.4"},
+			},
+			WorkloadProblem: `Get "https://192.0.2.10:6443/api/v1/nodes": dial tcp 192.0.2.10:6443: ` +
+				`i/o timeout — the kubeconfig Cluster API minted points at the cluster's own ` +
+				`endpoint, which is not reachable from here`,
+			UpdatedAt: time.Now().Add(-8 * time.Second),
 		},
 		{
 			Namespace: "managed-clusters", Name: "tenant-05-cluster",

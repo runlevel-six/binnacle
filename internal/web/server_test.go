@@ -45,15 +45,29 @@ func TestFleetPage_RendersClusters(t *testing.T) {
 		Cells:        []health.Cell{{Name: "Nodes", Status: health.StatusOK}},
 		ControlPlane: model.ReplicaBucket{Desired: 3, Ready: 3},
 		Workers:      model.ReplicaBucket{Desired: 5, Ready: 5},
-		Nodes:        fleet.NodeCount{Ready: 8, Total: 8},
-		UpdatedAt:    time.Now(),
+		Pools: []fleet.NodePool{
+			{Role: "Control Plane", Name: "tenant-01-cp", Ready: 3, Desired: 3, Version: "v1.31.4"},
+			{Role: "Workers", Name: "tenant-01-md-0", Ready: 5, Desired: 5, Version: "v1.31.4"},
+		},
+		Nodes:      fleet.NodeCount{Ready: 8, Total: 8},
+		NodesKnown: true,
+		Capacity: fleet.Capacity{
+			CPURequested: 1000, CPUAllocatable: 4000,
+			MemRequested: 1 << 30, MemAllocatable: 4 << 30,
+		},
+		Workloads:     []fleet.WorkloadCount{{Kind: "Deployment", Ready: 9, Total: 10}},
+		UnhealthyPods: 2,
+		UpdatedAt:     time.Now(),
 	})
 	rec := get(t, h, "/")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"tenant-01", "capi", "v1.31.4", "3/3", "5/5", "8/8", "Nodes"} {
+	for _, want := range []string{
+		"tenant-01", "capi", "v1.31.4", "3/3", "5/5", "8/8", "Nodes",
+		"tenant-01-cp", "Control Plane", "25%", "Deployment 9/10", "2 unhealthy pods",
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page does not mention %q", want)
 		}
@@ -81,7 +95,7 @@ func TestFleetPage_ProblemRowShowsNoCounts(t *testing.T) {
 	if !strings.Contains(body, "secret not found") {
 		t.Error("the reason is not on the page")
 	}
-	for _, unwanted := range []string{"Control plane", "Workers", "version unknown", `<div class="seen">`} {
+	for _, unwanted := range []string{"Control Plane", "Workers", "version unknown", `<div class="seen">`} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("an unreadable row still rendered %q", unwanted)
 		}
@@ -208,7 +222,7 @@ func TestFleetPage_UnreportedClusterShowsNoZeros(t *testing.T) {
 	if !strings.Contains(body, "Waiting for the first report") {
 		t.Error("an unreported cluster does not say so")
 	}
-	for _, unwanted := range []string{"0/0", "Control plane", `<div class="seen">`} {
+	for _, unwanted := range []string{"0/0", "Control Plane", `<div class="seen">`} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("an unreported cluster rendered %q", unwanted)
 		}

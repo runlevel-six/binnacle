@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{if .Site}}{{.Site}} &middot; Binnacle{{else}}Binnacle{{end}}</title>
-<link rel="icon" type="image/png" href="/static/mark-64.png">
+<!-- The favicon is the simplified mark: at 16px the detailed one loses its
+     rose, and legibility at that size beats matching the header's brass. -->
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
 <link rel="apple-touch-icon" href="/static/mark-256.png">
 <style>
   :root {
@@ -54,22 +56,49 @@
   }
   .live.stale::before { background: var(--warn); }
   main { padding: 1.5rem; }
-  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr)); }
+  /* Cards are wide enough for a pool table and grow to fill the row. A fleet
+     is read on a wide screen, and two narrow cards stranded at the top left of
+     it waste the only thing a browser has that a terminal does not. */
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(27rem, 1fr)); }
   .card {
     background: var(--panel); border: 1px solid var(--line);
-    border-left: 3px solid var(--loading); border-radius: 6px; padding: .9rem 1rem;
+    border-left: 3px solid var(--loading); border-radius: 6px; padding: .9rem 1.05rem;
   }
   .card.ok   { border-left-color: var(--ok); }
   .card.warn { border-left-color: var(--warn); }
   .card.err  { border-left-color: var(--err); }
-  .card h2 { margin: 0; font-size: 1rem; font-weight: 600; }
+  .card h2 { margin: 0; font-size: 1.02rem; font-weight: 600; }
   .ns { color: var(--dim); font-weight: 400; font-size: .8rem; }
   .meta { color: var(--dim); font-size: .8rem; margin: .15rem 0 .7rem; }
   .rolling { color: var(--warn); font-weight: 600; }
   .frozen  { color: var(--err); font-weight: 600; }
-  .nums { display: flex; gap: 1.25rem; margin-bottom: .7rem; }
-  .num .k { color: var(--dim); font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; }
+  .warnish { color: var(--warn); }
+
+  .pools { width: 100%; border-collapse: collapse; font-size: .8rem; margin-bottom: .7rem; }
+  .pools td { padding: .12rem .4rem .12rem 0; white-space: nowrap; }
+  .pool-role { color: var(--dim); text-transform: uppercase; font-size: .68rem; letter-spacing: .05em; }
+  .pool-name { color: var(--ink); width: 99%; overflow: hidden; text-overflow: ellipsis; max-width: 0; }
+  .pool-n, .pool-v { font-variant-numeric: tabular-nums; text-align: right; }
+  .pool-v { color: var(--dim); }
+  .pool-rolling .pool-n { color: var(--warn); }
+
+  /* The workload cluster is unreadable while the management side answers
+     happily. Stated in words, because the absence of six health cells is not
+     something a reader can be expected to notice. */
+  .halfblind {
+    margin: 0 0 .7rem; padding: .35rem .55rem; font-size: .78rem;
+    color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, transparent);
+    border-left: 2px solid var(--warn); border-radius: 0 3px 3px 0; word-break: break-word;
+  }
+
+  .nums { display: flex; gap: 1.25rem; margin-bottom: .7rem; flex-wrap: wrap; }
+  .num .k { color: var(--dim); font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; }
   .num .v { font-variant-numeric: tabular-nums; }
+
+  .workloads { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .7rem; }
+  .wl { font-size: .75rem; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .wl.degraded { color: var(--warn); }
+
   .cells { display: flex; flex-wrap: wrap; gap: .35rem; }
   .cell {
     font-size: .75rem; padding: .1rem .45rem; border-radius: 3px;
