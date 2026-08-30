@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/runlevel-six/sextant/pkg/profile"
 	"github.com/runlevel-six/sextant/pkg/rollout"
 	"github.com/runlevel-six/sextant/pkg/store"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
 
@@ -52,13 +54,26 @@ type tracked struct {
 	registry   *plugin.Registry
 	cancel     context.CancelFunc
 
+	// startedAt is when this cluster's collector began. Silence needs a clock
+	// against it: without one, "has not reported yet" is indistinguishable
+	// from "will never report", and the second is a fault.
+	startedAt time.Time
+
 	mu       sync.Mutex
 	watchErr error
 	// reachable is nil until the management watcher has reported, so "not
 	// heard from yet" stays distinguishable from "unreachable".
-	reachable  *bool
-	serverErr  error
-	kubeVerion string
+	reachable   *bool
+	serverErr   error
+	kubeVersion string
+	// workloadErr is the workload API server's own answer to a direct probe.
+	//
+	// sextant reports reachability for the management cluster only, and the
+	// workload watcher on failure simply never publishes — so without asking
+	// the workload API server ourselves, an unreachable one is silence, and
+	// silence carries no reason a reader can act on.
+	workloadErr   error
+	workloadProbe bool
 }
 
 // Fleet keeps one sextant collector per discovered cluster and answers what the
@@ -182,6 +197,7 @@ func (f *Fleet) start(ctx context.Context, d Discovered) {
 		store:      store.New(),
 		registry:   plugin.NewRegistry(),
 		cancel:     cancel,
+		startedAt:  time.Now(),
 	}
 
 	f.mu.Lock()
@@ -193,6 +209,17 @@ func (f *Fleet) start(ctx context.Context, d Discovered) {
 	if d.Config == nil {
 		return
 	}
+
+	// Probe the workload API server directly, alongside the collectors. It is
+	// the only way an unreachable workload cluster produces a sentence rather
+	// than an absence.
+	go func() {
+		err := probe(cctx, d.Config)
+		t.mu.Lock()
+		t.workloadErr, t.workloadProbe = err, true
+		t.mu.Unlock()
+		f.notify()
+	}()
 
 	go func() {
 		err := collect.Watch(cctx, collect.Options{
@@ -210,7 +237,7 @@ func (f *Fleet) start(ctx context.Context, d Discovered) {
 		}, func(version string, err error) {
 			t.mu.Lock()
 			ok := err == nil
-			t.reachable, t.serverErr, t.kubeVerion = &ok, err, version
+			t.reachable, t.serverErr, t.kubeVersion = &ok, err, version
 			t.mu.Unlock()
 			f.notify()
 		})
@@ -240,6 +267,35 @@ func (f *Fleet) start(ctx context.Context, d Discovered) {
 			}
 		}
 	}()
+}
+
+// workloadGrace is how long a workload cluster may stay silent before silence
+// is treated as a fault.
+//
+// Informers sync in seconds, so this is generous. It exists only to cover
+// startup: the cost of it being too short is a page that flashes amber on
+// restart, and the cost of having none at all is a cluster that is
+// permanently unreachable rendering permanently green.
+const workloadGrace = 45 * time.Second
+
+// probe asks the workload API server for its version.
+func probe(ctx context.Context, cfg *rest.Config) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	// A copy: the collectors share this config and must not inherit a timeout
+	// meant for one probe.
+	probeCfg := rest.CopyConfig(cfg)
+	probeCfg.Timeout = 15 * time.Second
+	client, err := kubernetes.NewForConfig(probeCfg)
+	if err != nil {
+		return err
+	}
+	_, err = client.Discovery().ServerVersion()
+	if ctxErr := ctx.Err(); ctxErr != nil && err != nil {
+		return fmt.Errorf("%w", err)
+	}
+	return err
 }
 
 func (f *Fleet) stop(key string) {
@@ -454,7 +510,17 @@ func (t *tracked) view(prof profile.Profile) ClusterView {
 	// Not yet having reported is excluded, and the distinction is the whole
 	// point: at startup every cluster is silent, and a fleet that flashed amber
 	// on every restart would teach a reader to ignore amber.
-	if broken := v.readWorkload(t.store, prof); broken {
+	t.mu.Lock()
+	probeErr, probed := t.workloadErr, t.workloadProbe
+	t.mu.Unlock()
+
+	// A zero startedAt means the age is unknown, not infinite. Treating unknown
+	// as "long past the grace period" would make every such cluster a fault.
+	var age time.Duration
+	if !t.startedAt.IsZero() {
+		age = time.Since(t.startedAt)
+	}
+	if broken := v.readWorkload(t.store, prof, probeErr, probed, age); broken {
 		v.Status = v.Status.Worse(health.StatusWarn)
 	}
 	return v
@@ -529,12 +595,25 @@ func (v *ClusterView) readManagement(s *store.Store) {
 // The bool reports whether the workload side is *broken*, as opposed to merely
 // quiet. Both set WorkloadProblem, because a reader deserves to know either
 // way, but only the first is a reason to darken the cluster's status.
-func (v *ClusterView) readWorkload(s *store.Store, prof profile.Profile) bool {
+func (v *ClusterView) readWorkload(
+	s *store.Store, prof profile.Profile, probeErr error, probed bool, age time.Duration,
+) bool {
 	nodes, ok := store.Get[model.Snapshot[model.Node]](s, model.KeyWorkloadNodes)
 	switch {
+	case !ok && probed && probeErr != nil:
+		// The workload API server was asked directly and said why. This is the
+		// answer worth having: "dial tcp ...: i/o timeout" tells an operator
+		// what to fix, where silence tells them nothing.
+		v.WorkloadProblem = probeErr.Error()
+		return true
+	case !ok && age > workloadGrace:
+		// Silence past the grace period is a fault even without a reason.
+		// Reporting it as "still starting up" would be a card that stays green
+		// for as long as the process runs.
+		v.WorkloadProblem = fmt.Sprintf(
+			"nothing has been read from the workload cluster in %s", age.Round(time.Second))
+		return true
 	case !ok:
-		// Nothing has published. Normal at startup, and indistinguishable from
-		// it at any other time, so it is reported without a verdict.
 		v.WorkloadProblem = "the workload cluster has not reported yet"
 		return false
 	case nodes.Err != nil:

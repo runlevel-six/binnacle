@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ func newTracked(ns, name string) *tracked {
 		store:      store.New(),
 		registry:   plugin.NewRegistry(),
 		cancel:     func() {},
+		startedAt:  time.Now(),
 	}
 }
 
@@ -384,5 +386,65 @@ func TestView_CapacityAndWorkloads(t *testing.T) {
 	}
 	if v.UnhealthyPods != 2 {
 		t.Errorf("unhealthy pods = %d, want 2", v.UnhealthyPods)
+	}
+}
+
+// Silence needs a clock against it. A workload cluster that will never report —
+// because nothing can reach it — otherwise sits in the startup branch for the
+// life of the process, and renders a permanently green card carrying a note
+// nobody reads as a failure.
+func TestView_SilenceBecomesAFaultAfterTheGracePeriod(t *testing.T) {
+	tr := newTracked("capi", "tenant-01")
+	tr.startedAt = time.Now().Add(-2 * workloadGrace)
+
+	v := fleetOf(tr).View()[0]
+	if v.Status != health.StatusWarn {
+		t.Errorf("status = %v; a cluster silent past the grace period is not healthy", v.Status)
+	}
+	if !strings.Contains(v.WorkloadProblem, "nothing has been read") {
+		t.Errorf("problem = %q", v.WorkloadProblem)
+	}
+}
+
+// Inside the grace period the same silence is just a cluster starting up.
+func TestView_SilenceInsideTheGracePeriodIsNotAFault(t *testing.T) {
+	tr := newTracked("capi", "tenant-01")
+	if v := fleetOf(tr).View()[0]; v.Status == health.StatusWarn {
+		t.Error("a cluster that has only just started was reported as a fault")
+	}
+}
+
+// A probe that came back with a reason beats waiting out the grace period: the
+// reason is what an operator can act on, and it is available immediately.
+func TestView_WorkloadProbeErrorIsReportedAtOnce(t *testing.T) {
+	tr := newTracked("capi", "tenant-01")
+	tr.workloadErr = errors.New(`Get "https://192.0.2.10:6443/version": dial tcp: i/o timeout`)
+	tr.workloadProbe = true
+
+	v := fleetOf(tr).View()[0]
+	if v.Status != health.StatusWarn {
+		t.Errorf("status = %v, want warn", v.Status)
+	}
+	if !strings.Contains(v.WorkloadProblem, "i/o timeout") {
+		t.Errorf("problem = %q; want the probe's own reason", v.WorkloadProblem)
+	}
+}
+
+// Once the workload cluster is actually reporting, a stale probe error must not
+// keep contradicting the data on the card.
+func TestView_ProbeErrorIsIgnoredOnceNodesArrive(t *testing.T) {
+	tr := newTracked("capi", "tenant-01")
+	tr.workloadErr, tr.workloadProbe = errors.New("transient failure at startup"), true
+	tr.store.Put(model.KeyWorkloadNodes, model.Snapshot[model.Node]{
+		Items:     []model.Node{{Name: "n1", Status: "Ready"}},
+		UpdatedAt: time.Now(),
+	})
+
+	v := fleetOf(tr).View()[0]
+	if v.WorkloadProblem != "" {
+		t.Errorf("problem = %q; nodes arrived, so the probe error is stale", v.WorkloadProblem)
+	}
+	if !v.NodesKnown || v.Status != health.StatusOK {
+		t.Errorf("got status %v known=%v", v.Status, v.NodesKnown)
 	}
 }
