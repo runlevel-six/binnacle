@@ -144,7 +144,13 @@
     border-bottom: 1px solid var(--line); white-space: nowrap;
   }
   .pane td { padding: .16rem .5rem .16rem 0; vertical-align: top; }
-  .pane td.r, .pane th.r { text-align: right; font-variant-numeric: tabular-nums; padding-right: 0; }
+  /* Right-aligned cells keep their gutter unless they are last in the row.
+     Without the exception for :last-child a right-aligned number butts
+     straight into the next column and the two fuse: "3/3v1.36.2", "3/4Running",
+     "388ovn-ovsdb-nb-0". The trailing column is the only one that can safely
+     lose the padding, because nothing follows it. */
+  .pane td.r, .pane th.r { text-align: right; font-variant-numeric: tabular-nums; }
+  .pane td.r:last-child, .pane th.r:last-child { padding-right: 0; }
   .dim { color: var(--dim); }
   .errish { color: var(--err); }
   .row-err td { background: color-mix(in srgb, var(--err) 7%, transparent); }
