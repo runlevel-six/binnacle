@@ -158,6 +158,12 @@
   /* Messages are the one unbounded column; let it take the slack and wrap
      rather than pushing the numeric columns off the pane. */
   .msg { width: 99%; word-break: break-word; }
+  /* An age is two short tokens and reads as one; letting "1m ago" wrap costs a
+     second line on every row of the longest table on the page. */
+  .nowrap { white-space: nowrap; }
+  /* How many objects reported one grouped event. Dimmer than the kind it
+     follows, because the kind is the identity and this is the arithmetic. */
+  .tally { color: var(--dim); font-variant-numeric: tabular-nums; }
   .summary {
     margin: 0; font-size: .76rem; color: var(--ink);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;

@@ -327,7 +327,7 @@
   </section>
 
   <section class="pane wide">
-    <h3>Events{{if .EventsTruncated}} <span class="count">{{len .Events}} of {{add (len .Events) .EventsTruncated}}</span>{{end}}</h3>
+    <h3>Events{{if .Events}} <span class="count">{{len .Events}}{{if .EventsTruncated}} of {{add (len .Events) .EventsTruncated}}{{end}} group{{if ne (add (len .Events) .EventsTruncated) 1}}s{{end}} &middot; {{.EventsTotal}} event{{if ne .EventsTotal 1}}s{{end}}</span>{{end}}</h3>
     {{if .Events}}
     <table>
       <thead><tr><th>TYPE</th><th>REASON</th><th>OBJECT</th><th>MESSAGE</th><th class="r">COUNT</th><th class="r">AGE</th></tr></thead>
@@ -335,14 +335,16 @@
       {{range .Events}}
         <tr><td{{if eq .Type "Warning"}} class="warnish"{{else}} class="dim"{{end}}>{{.Type}}</td>
           <td>{{.Reason}}</td>
-          <td class="dim">{{.ObjectKind}}/{{.ObjectName}}</td>
+          {{/* One object means the name is the whole story. Several means it is
+               only a sample, and the count of objects is the useful part. */}}
+          <td class="dim">{{.ObjectKind}}{{if eq .Objects 1}}/{{.ObjectName}}{{else}} <span class="tally">&times;{{.Objects}} objects</span>{{end}}</td>
           <td class="msg">{{.Message}}</td>
-          <td class="r">{{.Count}}</td>
-          <td class="r dim">{{ago .LastTimestamp}}</td></tr>
+          <td class="r">{{.Occurrences}}</td>
+          <td class="r dim nowrap">{{ago .LastTimestamp}}</td></tr>
       {{end}}
       </tbody>
     </table>
-    {{if .EventsTruncated}}<p class="empty">{{.EventsTruncated}} more not shown.</p>{{end}}
+    {{if .EventsTruncated}}<p class="empty">{{.EventsTruncated}} more group{{if ne .EventsTruncated 1}}s{{end}} not shown.</p>{{end}}
     {{else}}<p class="empty">No events reported.</p>{{end}}
   </section>
 </div>

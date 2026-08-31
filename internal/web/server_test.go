@@ -279,10 +279,21 @@ func TestClusterPage_RendersTheCorePanes(t *testing.T) {
 		}},
 		UnhealthyPods: []model.Pod{{Namespace: "example-system", Name: "api-1",
 			ReadyTotal: 1, Status: "CrashLoopBackOff", Restarts: 441}},
-		Events: []model.Event{{Type: "Warning", Reason: "Unhealthy", ObjectKind: "Pod",
-			ObjectName: "api-1", Message: "Readiness probe failed", Count: 9148,
-			LastTimestamp: time.Now().Add(-time.Minute)}},
-		Summaries: []fleet.SummaryBlock{{Title: "Ceph", Lines: []string{"health  HEALTH_OK"}}},
+		Events: fleet.GroupEvents([]model.Event{
+			{Type: "Warning", Reason: "Unhealthy", ObjectKind: "Pod",
+				ObjectName: "api-1", Message: "Readiness probe failed", Count: 9148,
+				LastTimestamp: time.Now().Add(-time.Minute)},
+			// Two objects reporting one policy violation: the row should name
+			// the kind and the tally, not either object.
+			{Type: "Warning", Reason: "PolicyViolation", ObjectKind: "ReplicaSet",
+				ObjectName: "batch-1", Message: "HostPath volumes are forbidden", Count: 3,
+				LastTimestamp: time.Now().Add(-2 * time.Minute)},
+			{Type: "Warning", Reason: "PolicyViolation", ObjectKind: "ReplicaSet",
+				ObjectName: "batch-2", Message: "HostPath volumes are forbidden", Count: 4,
+				LastTimestamp: time.Now().Add(-3 * time.Minute)},
+		}),
+		EventsTotal: 9155,
+		Summaries:   []fleet.SummaryBlock{{Title: "Ceph", Lines: []string{"health  HEALTH_OK"}}},
 	}
 
 	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
@@ -293,6 +304,9 @@ func TestClusterPage_RendersTheCorePanes(t *testing.T) {
 		"Nodes", "node-1.site-a.example", "28%", "41%",
 		"Unhealthy pods", "CrashLoopBackOff", "441",
 		"Events", "Readiness probe failed", "9148",
+		// Grouped: one row for the two replica sets, counting both.
+		"HostPath volumes are forbidden", "&times;2 objects", "7",
+		"2 groups", "9155 events",
 		"Subsystems", "HEALTH_OK",
 	} {
 		if !strings.Contains(body, want) {

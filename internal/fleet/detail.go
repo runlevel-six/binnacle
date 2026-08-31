@@ -15,6 +15,10 @@ import (
 // that renders all of them stops being readable long before it stops being
 // correct. Both lists are ordered worst-first, so the cap drops the least
 // interesting rows rather than an arbitrary tail.
+//
+// maxEvents counts groups, not events: see GroupEvents. Sixty distinct groups
+// is sixty distinct problems, where sixty raw events was routinely one problem
+// reported sixty times.
 const (
 	maxEvents        = 60
 	maxUnhealthyPods = 60
@@ -67,8 +71,13 @@ type ClusterDetail struct {
 	// that silently truncates reports the first when it means the second.
 	PodsTruncated int
 
-	Events          []model.Event
+	// Events is grouped, not raw: see GroupEvents. EventsTruncated counts the
+	// groups that did not fit, and EventsTotal the raw events behind all of
+	// them, so the header can say "12 of 47 groups, 1,384 events" rather than
+	// implying the cluster only produced what fits on the page.
+	Events          []EventGroup
 	EventsTruncated int
+	EventsTotal     int
 
 	Summaries []SummaryBlock
 
@@ -194,6 +203,102 @@ func (d *ClusterDetail) readPods(s *store.Store) {
 	d.UnhealthyPods = unhealthy
 }
 
+// EventGroup is a set of identical events collapsed into one row.
+//
+// Kubernetes already reports a repeated event against a single object as one
+// record with a count. What it does not collapse is the same event fired by
+// many objects at once — one admission policy rejecting forty ReplicaSets
+// produces forty records that differ only in the name. Ungrouped, those forty
+// fill the whole page and, worse, fill the cap: a real event gets truncated
+// away by duplicates of a single problem. Grouping runs before the cap for
+// exactly that reason.
+type EventGroup struct {
+	// Event is the most recent member of the group, and supplies everything the
+	// group shares: type, reason, kind, message, and the timestamp to show.
+	model.Event
+	// Occurrences totals the reported counts across the group. An event that
+	// reports no count still happened once.
+	Occurrences int
+	// Objects is how many distinct objects reported it. One means ObjectName is
+	// the whole story; more means the name is only a sample.
+	Objects int
+}
+
+// GroupEvents collapses identical events and orders them worst-first.
+//
+// Identical means same type, reason, object kind and message: the object's own
+// name is deliberately not part of the key, because "which objects" is the
+// thing being summarized. Ordering keeps the ungrouped rule — warnings first,
+// then most recent — so a reader moving between binnacle and sextant is not
+// re-learning it.
+func GroupEvents(events []model.Event) []EventGroup {
+	type key struct{ typ, reason, kind, message string }
+
+	index := make(map[key]int, len(events))
+	var groups []EventGroup
+	seen := make(map[key]map[string]bool, len(events))
+
+	for _, e := range events {
+		k := key{e.Type, e.Reason, e.ObjectKind, e.Message}
+		// A count of zero still describes one occurrence: the events API only
+		// fills the field in once an event repeats.
+		n := int(e.Count)
+		if n < 1 {
+			n = 1
+		}
+
+		i, ok := index[k]
+		if !ok {
+			index[k] = len(groups)
+			seen[k] = map[string]bool{e.ObjectName: true}
+			groups = append(groups, EventGroup{Event: e, Occurrences: n, Objects: 1})
+			continue
+		}
+
+		g := &groups[i]
+		g.Occurrences += n
+		if names := seen[k]; !names[e.ObjectName] {
+			names[e.ObjectName] = true
+			g.Objects++
+		}
+		// Keep the newest member as the group's representative, so the age
+		// column reports when this last happened rather than when it started.
+		// The group's own FirstTimestamp outlives whichever member supplies the
+		// rest of the fields, so it is merged either way.
+		first := earliest(g.FirstTimestamp, e.FirstTimestamp)
+		if e.LastTimestamp.After(g.LastTimestamp) {
+			g.Event = e
+		}
+		g.FirstTimestamp = first
+	}
+
+	sort.SliceStable(groups, func(i, j int) bool {
+		// Warnings first, then most recent. A Normal event from a second ago is
+		// worth less of the top of the list than a Warning from a minute ago.
+		wi, wj := groups[i].Type == "Warning", groups[j].Type == "Warning"
+		if wi != wj {
+			return wi
+		}
+		return groups[i].LastTimestamp.After(groups[j].LastTimestamp)
+	})
+	return groups
+}
+
+// earliest returns the older of two timestamps, ignoring zero values: an event
+// with no FirstTimestamp has not reported one, which is not the same as having
+// happened at the zero time.
+func earliest(a, b time.Time) time.Time {
+	switch {
+	case a.IsZero():
+		return b
+	case b.IsZero():
+		return a
+	case b.Before(a):
+		return b
+	}
+	return a
+}
+
 func (d *ClusterDetail) readEvents(s *store.Store) {
 	var all []model.Event
 	for _, key := range []string{model.KeyWorkloadEvents, model.KeyMgmtEvents} {
@@ -201,20 +306,23 @@ func (d *ClusterDetail) readEvents(s *store.Store) {
 			all = append(all, snap.Items...)
 		}
 	}
-	sort.Slice(all, func(i, j int) bool {
-		// Warnings first, then most recent. A Normal event from a second ago is
-		// worth less of the top of the list than a Warning from a minute ago.
-		wi, wj := all[i].Type == "Warning", all[j].Type == "Warning"
-		if wi != wj {
-			return wi
-		}
-		return all[i].LastTimestamp.After(all[j].LastTimestamp)
-	})
-	if len(all) > maxEvents {
-		d.EventsTruncated = len(all) - maxEvents
-		all = all[:maxEvents]
+
+	d.setEvents(GroupEvents(all))
+}
+
+// setEvents stores grouped events, applying the cap and recording the totals.
+// Shared with the demo profile so that the fixture and the real reader agree
+// about what the header is counting.
+func (d *ClusterDetail) setEvents(groups []EventGroup) {
+	d.EventsTotal = 0
+	for _, g := range groups {
+		d.EventsTotal += g.Occurrences
 	}
-	d.Events = all
+	if len(groups) > maxEvents {
+		d.EventsTruncated = len(groups) - maxEvents
+		groups = groups[:maxEvents]
+	}
+	d.Events = groups
 }
 
 // Compact renders a duration the way the tables do: one unit, no decimals.

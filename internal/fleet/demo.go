@@ -279,7 +279,7 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 	}
 
 	now := time.Now()
-	detail.Events = []model.Event{
+	raw := []model.Event{
 		{Namespace: "example-system", Type: "Warning", Reason: "Unhealthy",
 			ObjectKind: "Pod", ObjectName: "api-1-5f9c8", Count: 9148,
 			Message:       "Readiness probe failed: HTTP probe failed with statuscode: 503",
@@ -294,8 +294,20 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 			LastTimestamp: now.Add(-14 * time.Minute)},
 	}
 	if view.Status != health.StatusErr {
-		detail.Events = detail.Events[2:]
+		raw = raw[2:]
+	} else {
+		// One admission policy rejecting every replica set it sees. This is the
+		// shape grouping exists for: ungrouped it is twenty-three rows that
+		// differ only in a hash, and it crowds out everything else on the page.
+		for i := 0; i < 23; i++ {
+			raw = append(raw, model.Event{
+				Namespace: "example-system", Type: "Warning", Reason: "PolicyViolation",
+				ObjectKind: "ReplicaSet", ObjectName: "batch-worker-" + itoa(6000+i),
+				Message:       "policy disallow-host-path/autogen-host-path fail: HostPath volumes are forbidden",
+				LastTimestamp: now.Add(-time.Duration(i) * time.Minute)})
+		}
 	}
+	detail.setEvents(GroupEvents(raw))
 
 	detail.Subsystems = Subsystems{
 		Cilium: &cilium.State{
