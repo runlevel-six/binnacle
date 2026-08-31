@@ -72,55 +72,38 @@
   {{end}}
 
   <section class="pane wide">
-    <h3>Machines &amp; hosts</h3>
-    {{if .Machines}}
-    <table>
-      <thead><tr><th>MACHINE</th><th>PHASE</th><th>VERSION</th><th>NODE</th><th class="r">AGE</th></tr></thead>
-      <tbody>
-      {{range .Machines}}
-        <tr><td>{{.Name}}</td>
-          <td{{if ne .Phase "Running"}} class="warnish"{{end}}>{{.Phase}}</td>
-          <td class="dim">{{.Version}}</td><td class="dim">{{.NodeName}}</td>
-          <td class="r dim">{{age .Age}}</td></tr>
-      {{end}}
-      </tbody>
-    </table>
+    <h3>Machines &amp; hosts{{if .Machines.Total}} <span class="count">{{.Machines.Total}} machines &middot; {{.Hosts.Total}} hosts</span>{{end}}</h3>
+    {{if .Machines.Shown}}{{template "machine-table" .Machines.Shown}}
+    {{else if .Machines.Total}}<p class="empty">Every machine is Running.</p>
     {{else}}<p class="empty">No machines reported.</p>{{end}}
+    {{if .Machines.Quiet}}
+    <details class="quiet">
+      <summary>{{len .Machines.Quiet}} machines Running</summary>
+      {{template "machine-table" .Machines.Quiet}}
+    </details>
+    {{end}}
 
-    {{if .Hosts}}
-    <table class="spaced">
-      <thead><tr><th>HOST</th><th>STATE</th><th>STATUS</th><th>CONSUMER</th><th class="r">AGE</th></tr></thead>
-      <tbody>
-      {{range .Hosts}}
-        <tr{{if .ErrorMessage}} class="row-err"{{end}}>
-          <td>{{.Name}}</td><td class="dim">{{.State}}</td>
-          <td{{if .ErrorMessage}} class="errish"{{end}}>{{.OperationalStatus}}</td>
-          <td class="dim">{{.ConsumerName}}</td><td class="r dim">{{age .Age}}</td></tr>
-        {{if .ErrorMessage}}<tr class="row-err"><td colspan="5" class="errish indent">{{.ErrorMessage}}</td></tr>{{end}}
-      {{end}}
-      </tbody>
-    </table>
+    {{if .Hosts.Shown}}<div class="spaced">{{template "host-table" .Hosts.Shown}}</div>
+    {{else if .Hosts.Total}}<p class="empty spaced">Every host is provisioned without error.</p>{{end}}
+    {{if .Hosts.Quiet}}
+    <details class="quiet">
+      <summary>{{len .Hosts.Quiet}} hosts provisioned without error</summary>
+      {{template "host-table" .Hosts.Quiet}}
+    </details>
     {{end}}
   </section>
 
   <section class="pane wide">
-    <h3>Nodes</h3>
-    {{if .NodeRows}}
-    <table>
-      <thead><tr><th>NODE</th><th>ROLE</th><th>STATUS</th><th>VERSION</th><th class="r">CPU</th><th class="r">MEM</th><th class="r">AGE</th></tr></thead>
-      <tbody>
-      {{range .NodeRows}}
-        <tr>
-          <td>{{.Name}}</td><td class="dim">{{.Role}}</td>
-          <td{{if not .Ready}} class="errish"{{else if .Cordoned}} class="warnish"{{end}}>
-            {{.Status}}{{if .Cordoned}} &middot; cordoned{{end}}{{if .Pressure}} &middot; <span class="warnish">pressure</span>{{end}}</td>
-          <td class="dim">{{.Version}}</td>
-          <td class="r">{{.CPUPercent}}%</td><td class="r">{{.MemPercent}}%</td>
-          <td class="r dim">{{age .Age}}</td></tr>
-      {{end}}
-      </tbody>
-    </table>
+    <h3>Nodes{{if .NodeRows.Total}} <span class="count">{{.NodeRows.Total}}</span>{{end}}</h3>
+    {{if .NodeRows.Shown}}{{template "node-table" .NodeRows.Shown}}
+    {{else if .NodeRows.Total}}<p class="empty">Every node is Ready and schedulable.</p>
     {{else}}<p class="empty">No nodes reported.</p>{{end}}
+    {{if .NodeRows.Quiet}}
+    <details class="quiet">
+      <summary>{{len .NodeRows.Quiet}} nodes Ready and schedulable</summary>
+      {{template "node-table" .NodeRows.Quiet}}
+    </details>
+    {{end}}
   </section>
 
 
@@ -350,4 +333,54 @@
 </div>
 {{end}}
 {{end}}
+{{end}}
+
+{{/* The three big tables render twice: once for the rows that need reading and
+     once inside the disclosure holding the quiet remainder. Defining each row
+     shape once keeps the two halves from drifting apart. */}}
+
+{{define "machine-table"}}
+<table>
+  <thead><tr><th>MACHINE</th><th>PHASE</th><th>VERSION</th><th>NODE</th><th class="r">AGE</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr><td>{{.Name}}</td>
+      <td{{if ne .Phase "Running"}} class="warnish"{{end}}>{{.Phase}}</td>
+      <td class="dim">{{.Version}}</td><td class="dim">{{.NodeName}}</td>
+      <td class="r dim nowrap">{{age .Age}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{define "host-table"}}
+<table>
+  <thead><tr><th>HOST</th><th>STATE</th><th>STATUS</th><th>CONSUMER</th><th class="r">AGE</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr{{if .ErrorMessage}} class="row-err"{{end}}>
+      <td>{{.Name}}</td><td class="dim">{{.State}}</td>
+      <td{{if .ErrorMessage}} class="errish"{{end}}>{{.OperationalStatus}}</td>
+      <td class="dim">{{.ConsumerName}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
+    {{if .ErrorMessage}}<tr class="row-err"><td colspan="5" class="errish indent">{{.ErrorMessage}}</td></tr>{{end}}
+  {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{define "node-table"}}
+<table>
+  <thead><tr><th>NODE</th><th>ROLE</th><th>STATUS</th><th>VERSION</th><th class="r">CPU</th><th class="r">MEM</th><th class="r">AGE</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td>{{.Name}}</td><td class="dim">{{.Role}}</td>
+      <td{{if not .Ready}} class="errish"{{else if .Cordoned}} class="warnish"{{end}}>
+        {{.Status}}{{if .Cordoned}} &middot; cordoned{{end}}{{if .Pressure}} &middot; <span class="warnish">pressure</span>{{end}}</td>
+      <td class="dim">{{.Version}}</td>
+      <td class="r">{{.CPUPercent}}%</td><td class="r">{{.MemPercent}}%</td>
+      <td class="r dim nowrap">{{age .Age}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
 {{end}}

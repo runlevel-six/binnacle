@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -269,14 +270,14 @@ func TestClusterPage_RendersTheCorePanes(t *testing.T) {
 			Nodes: fleet.NodeCount{Ready: 5, Total: 5}, NodesKnown: true,
 			UpdatedAt: time.Now(),
 		},
-		Machines: []model.Machine{{Name: "tenant-01-machine-1", Phase: "Running",
-			Version: "v1.36.2", NodeName: "node-1.site-a.example", Age: 31 * 24 * time.Hour}},
-		Hosts: []model.BareMetalHost{{Name: "host-1.site-a.example", State: "provisioned",
-			OperationalStatus: "error", ErrorMessage: "timed out waiting for the deploy image"}},
-		NodeRows: []fleet.NodeRow{{
+		Machines: fleet.Split[model.Machine]{Shown: []model.Machine{{Name: "tenant-01-machine-1", Phase: "Running",
+			Version: "v1.36.2", NodeName: "node-1.site-a.example", Age: 31 * 24 * time.Hour}}},
+		Hosts: fleet.Split[model.BareMetalHost]{Shown: []model.BareMetalHost{{Name: "host-1.site-a.example", State: "provisioned",
+			OperationalStatus: "error", ErrorMessage: "timed out waiting for the deploy image"}}},
+		NodeRows: fleet.Split[fleet.NodeRow]{Shown: []fleet.NodeRow{{
 			Node:       model.Node{Name: "node-1.site-a.example", Role: "control-plane", Status: "Ready", Version: "v1.36.2"},
 			CPUPercent: 28, MemPercent: 41,
-		}},
+		}}},
 		UnhealthyPods: []model.Pod{{Namespace: "example-system", Name: "api-1",
 			ReadyTotal: 1, Status: "CrashLoopBackOff", Restarts: 441}},
 		Events: fleet.GroupEvents([]model.Event{
@@ -477,5 +478,45 @@ func TestClusterPage_ReducedTierIsStated(t *testing.T) {
 	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
 	if !strings.Contains(body, "below full detail") || !strings.Contains(body, "no permission to exec") {
 		t.Error("a reduced tier rendered thin without saying why")
+	}
+}
+
+// A production-sized cluster folds its quiet rows away, and the rows that
+// matter stay on the page. The whole point of the fold is that it never hides
+// a problem, so the assertions are about what survives it.
+func TestDetail_FoldsQuietRowsButKeepsProblems(t *testing.T) {
+	// The split itself is decided and tested in the fleet package; what this
+	// asserts is that the template renders both halves and puts them in the
+	// right place.
+	var quiet []fleet.NodeRow
+	for i := 0; i < 60; i++ {
+		quiet = append(quiet, fleet.NodeRow{Node: model.Node{
+			Name: fmt.Sprintf("compute-%02d.site-a.example", i), Role: "compute", Status: "Ready",
+		}})
+	}
+	d := fleet.ClusterDetail{
+		ClusterView: fleet.ClusterView{Namespace: "capi", Name: "big", NodesKnown: true},
+		NodeRows: fleet.Split[fleet.NodeRow]{
+			Shown: []fleet.NodeRow{{Node: model.Node{
+				Name: "broken.site-a.example", Role: "compute", Status: "NotReady",
+			}}},
+			Quiet: quiet,
+		},
+	}
+
+	body := get(t, serveDetail(t, d), "/cluster/capi/big").Body.String()
+	for _, want := range []string{
+		"broken.site-a.example", // the problem is on the page
+		"<details",              // the rest is behind a disclosure
+		"60 nodes Ready and schedulable",
+		"compute-59.site-a.example", // folded, not dropped
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rendered page is missing %q", want)
+		}
+	}
+	// The problem must not itself be inside the disclosure.
+	if i, j := strings.Index(body, "broken.site-a.example"), strings.Index(body, "<details"); i > j {
+		t.Error("the NotReady node was rendered inside the fold")
 	}
 }

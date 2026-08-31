@@ -137,7 +137,7 @@
   .pane h4 { margin: .6rem 0 .2rem; font-size: .78rem; color: var(--ink); }
   .count { color: var(--dim); font-weight: 400; letter-spacing: 0; text-transform: none; }
   .pane table { width: 100%; border-collapse: collapse; font-size: .78rem; }
-  .pane table.spaced { margin-top: .9rem; }
+  .pane table.spaced, .pane .spaced { margin-top: .9rem; }
   .pane th {
     text-align: left; font-weight: 600; font-size: .66rem; letter-spacing: .06em;
     color: var(--dim); text-transform: uppercase; padding: 0 .5rem .25rem 0;
@@ -164,6 +164,19 @@
   /* How many objects reported one grouped event. Dimmer than the kind it
      follows, because the kind is the identity and this is the arithmetic. */
   .tally { color: var(--dim); font-variant-numeric: tabular-nums; }
+  /* The quiet half of a big table. A production undercloud's healthy nodes and
+     the datacenter's other hosts are real answers to questions nobody is asking
+     yet, so they stay one click away rather than off the page: <details> does
+     that with no script, and prints expanded. */
+  .quiet { margin-top: .55rem; }
+  .quiet > summary {
+    cursor: pointer; color: var(--teal); font-size: .75rem;
+    padding: .15rem 0; width: fit-content;
+  }
+  .quiet > summary:hover { text-decoration: underline; }
+  .quiet > table { margin-top: .4rem; }
+  @media print { .quiet > table { display: table; } }
+
   .summary {
     margin: 0; font-size: .76rem; color: var(--ink);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;

@@ -56,14 +56,18 @@ type SummaryBlock struct {
 type ClusterDetail struct {
 	ClusterView
 
-	Machines []model.Machine
-	Hosts    []model.BareMetalHost
+	// The three big tables are ordered worst-first and folded: on a production
+	// undercloud these run to forty machines, seventy nodes and a datacenter's
+	// worth of hosts, and alphabetical order buries the rows that matter. See
+	// Split and collapseAfter.
+	Machines Split[model.Machine]
+	Hosts    Split[model.BareMetalHost]
 	// NodeRows is the per-node table. Named for the rows rather than for the
 	// nodes because ClusterView already has a Nodes field holding the counts,
 	// and an embedded field that shadows its parent's is a silent trap: a
 	// template asking for .Nodes.Ready would resolve to this slice and fail at
 	// render time, halfway down an already-written page.
-	NodeRows []NodeRow
+	NodeRows Split[NodeRow]
 
 	UnhealthyPods []model.Pod
 	// PodsTruncated is how many unhealthy pods are not listed. Shown, because
@@ -118,20 +122,12 @@ func (f *Fleet) Cluster(namespace, name string) (ClusterDetail, bool) {
 
 	s := t.store
 	if snap, ok := store.Get[model.Snapshot[model.Machine]](s, model.KeyMgmtMachines); ok {
-		d.Machines = append(d.Machines, snap.Items...)
-		sort.Slice(d.Machines, func(i, j int) bool { return d.Machines[i].Name < d.Machines[j].Name })
+		d.Machines = splitMachines(snap.Items)
 	}
 	if snap, ok := store.Get[model.Snapshot[model.BareMetalHost]](s, model.KeyMgmtBareMetalHosts); ok {
-		d.Hosts = append(d.Hosts, snap.Items...)
-		sort.Slice(d.Hosts, func(i, j int) bool {
-			// Errored hosts first: a rollout stalls on them more often than on
-			// anything else, which is why sextant gives them their own cell.
-			ei, ej := d.Hosts[i].ErrorMessage != "", d.Hosts[j].ErrorMessage != ""
-			if ei != ej {
-				return ei
-			}
-			return d.Hosts[i].Name < d.Hosts[j].Name
-		})
+		// Errored hosts first: a rollout stalls on them more often than on
+		// anything else, which is why sextant gives them their own cell.
+		d.Hosts = splitHosts(snap.Items)
 	}
 
 	d.readNodes(s)
@@ -159,21 +155,15 @@ func (d *ClusterDetail) readNodes(s *store.Store) {
 	if !ok {
 		return
 	}
+	rows := make([]NodeRow, 0, len(snap.Items))
 	for _, n := range snap.Items {
-		d.NodeRows = append(d.NodeRows, NodeRow{
+		rows = append(rows, NodeRow{
 			Node:       n,
 			CPUPercent: percent(n.RequestedCPU, n.AllocatableCPU),
 			MemPercent: percent(n.RequestedMemory, n.AllocatableMemory),
 		})
 	}
-	sort.Slice(d.NodeRows, func(i, j int) bool {
-		// Role then name, the same ordering the pools table uses, so a reader
-		// moving between the two is not re-learning it.
-		if d.NodeRows[i].Role != d.NodeRows[j].Role {
-			return d.NodeRows[i].Role < d.NodeRows[j].Role
-		}
-		return d.NodeRows[i].Name < d.NodeRows[j].Name
-	})
+	d.NodeRows = splitNodes(rows)
 }
 
 func (d *ClusterDetail) readPods(s *store.Store) {

@@ -3,6 +3,7 @@ package fleet
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -227,7 +228,38 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 		return detail, true
 	}
 
-	roles := []string{"control-plane", "control-plane", "control-plane", "compute", "compute"}
+	// Roles come from the cluster's own pools rather than a fixed list, so the
+	// detail page agrees with the card above it and a fixture declaring fifteen
+	// nodes renders fifteen. It also gives the fold something to fold.
+	var roles []string
+	for _, pool := range view.Pools {
+		role := "compute"
+		switch {
+		case pool.Role == "Control Plane":
+			role = "control-plane"
+		case strings.Contains(pool.Name, "-mgd"):
+			role = "managed-services"
+		}
+		for i := int32(0); i < pool.Desired; i++ {
+			roles = append(roles, role)
+		}
+	}
+
+	// One cordoned compute, not every compute: a cluster where the whole worker
+	// pool is unschedulable is not a state worth designing the page around.
+	cordon := -1
+	for i, role := range roles {
+		if role == "compute" {
+			cordon = i
+			break
+		}
+	}
+
+	var (
+		nodeRows []NodeRow
+		machines []model.Machine
+		hosts    []model.BareMetalHost
+	)
 	for i, role := range roles {
 		n := model.Node{
 			Name: fmt.Sprintf("%s-node-%d.site-a.example", name, i+1),
@@ -238,19 +270,19 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 			AllocatableMemory: 192 << 30,
 			RequestedMemory:   int64(64+i*12) << 30,
 		}
-		if role == "compute" {
+		if i == cordon {
 			n.Cordoned = true
 		}
 		if i == len(roles)-1 && view.Status == health.StatusErr {
 			n.Status = "NotReady"
 			n.MemoryPressure = true
 		}
-		detail.NodeRows = append(detail.NodeRows, NodeRow{
+		nodeRows = append(nodeRows, NodeRow{
 			Node:       n,
 			CPUPercent: percent(n.RequestedCPU, n.AllocatableCPU),
 			MemPercent: percent(n.RequestedMemory, n.AllocatableMemory),
 		})
-		detail.Machines = append(detail.Machines, model.Machine{
+		machines = append(machines, model.Machine{
 			Namespace: namespace, Name: fmt.Sprintf("%s-machine-%d", name, i+1),
 			ClusterName: name, NodeName: n.Name, Phase: "Running",
 			Version: view.Version, InfraKind: "Metal3Machine",
@@ -265,15 +297,22 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 		if i == len(roles)-1 && view.Status == health.StatusErr {
 			host.OperationalStatus = "error"
 			host.ErrorMessage = "provisioning failed: timed out waiting for the deploy image"
+			// The machine on that host is stuck behind it, which is the whole
+			// story the three tables tell together: errored host, machine that
+			// never finished provisioning, node that never came Ready.
+			machines[len(machines)-1].Phase = "Provisioning"
 		}
-		detail.Hosts = append(detail.Hosts, host)
+		hosts = append(hosts, host)
 	}
+	detail.NodeRows = splitNodes(nodeRows)
+	detail.Machines = splitMachines(machines)
+	detail.Hosts = splitHosts(hosts)
 
 	for i := 0; i < view.UnhealthyPods; i++ {
 		detail.UnhealthyPods = append(detail.UnhealthyPods, model.Pod{
 			Namespace: "example-system", Name: fmt.Sprintf("api-%d-5f9c8", i+1),
 			ReadyReady: 0, ReadyTotal: 1, Status: "CrashLoopBackOff",
-			Restarts: int32(441 - i*7), Node: detail.NodeRows[i%len(detail.NodeRows)].Name,
+			Restarts: int32(441 - i*7), Node: nodeRows[i%len(nodeRows)].Name,
 			Age: 26 * time.Hour, Phase: "Running",
 		})
 	}
