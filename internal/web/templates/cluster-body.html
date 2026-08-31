@@ -93,7 +93,7 @@
     {{end}}
   </section>
 
-  <section class="pane wide">
+  <section class="pane wide" id="nodes">
     <h3>Nodes{{if .NodeRows.Total}} <span class="count">{{.NodeRows.Total}}</span>{{end}}</h3>
     {{if .NodeRows.Shown}}{{template "node-table" .NodeRows.Shown}}
     {{else if .NodeRows.Total}}<p class="empty">Every node is Ready and schedulable.</p>
@@ -289,7 +289,7 @@
   </section>
   {{end}}
 
-  <section class="pane wide">
+  <section class="pane wide" id="pods">
     <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
     {{if .UnhealthyPods}}
     <table>

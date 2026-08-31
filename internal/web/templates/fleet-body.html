@@ -1,6 +1,8 @@
 {{define "fleet-body.html"}}
 <div class="grid">
-{{range .Clusters}}
+{{/* $c names the cluster because the pod list below is a nested range, where
+     "." is a pod and "$" is the whole page rather than this card. */}}
+{{range $c := .Clusters}}
   <article class="card {{.Status}}">
     <a class="card-link" href="/cluster/{{.Namespace}}/{{.Name}}">
       <h2>{{.Name}} <span class="ns">{{.Namespace}}</span></h2>
@@ -54,16 +56,55 @@
       </div>
       {{end}}
 
+      {{/* Nodes by role. A single 69/70 is reassuring right up until the
+           missing one is a control plane, and this is bounded: a role count
+           does not grow with the cluster the way a node list would. */}}
+      {{if .NodesByRole}}
+      <div class="roles">
+        {{range .NodesByRole}}<span class="role{{if .Degraded}} degraded{{end}}"><span class="role-k">{{.Role}}</span> {{.Ready}}/{{.Total}}</span>{{end}}
+      </div>
+      {{end}}
+
       {{if .Workloads}}
       <div class="workloads">
         {{range .Workloads}}<span class="wl{{if .Degraded}} degraded{{end}}">{{.Kind}} {{.Ready}}/{{.Total}}</span>{{end}}
-        {{if .UnhealthyPods}}<span class="wl degraded">{{.UnhealthyPods}} unhealthy pod{{if ne .UnhealthyPods 1}}s{{end}}</span>{{end}}
+        {{if .UnhealthyPods}}<a class="wl degraded problem-link" href="/cluster/{{.Namespace}}/{{.Name}}#pods">{{.UnhealthyPods}} unhealthy pod{{if ne .UnhealthyPods 1}}s{{end}}</a>{{end}}
       </div>
       {{end}}
 
       <div class="cells">
         {{range .Cells}}<span class="cell {{.Status}}">{{.Name}}{{if .Detail}} <span class="d">{{.Detail}}</span>{{end}}</span>{{else}}<span class="empty">waiting for data&hellip;</span>{{end}}
       </div>
+
+      {{/* Everything below is the expanded tier. It is shown by a container
+           query on the card's own width, not the viewport's: with two clusters
+           a card is twice as wide as with four on the same screen, so the
+           viewport cannot answer whether this fits. */}}
+      <div class="expanded">
+        {{if .TopUnhealthyPods}}
+        <div class="ex-block">
+          <div class="ex-k">Unhealthy pods</div>
+          <ul class="podlist">
+            {{range .TopUnhealthyPods}}
+            <li><a class="problem-link" href="/cluster/{{$c.Namespace}}/{{$c.Name}}#pods">{{.Namespace}}/{{.Name}}</a>
+              <span class="dim">{{.Status}}{{if .Restarts}} &middot; {{.Restarts}} restarts{{end}}</span></li>
+            {{end}}
+          </ul>
+          {{if gt .UnhealthyPods (len .TopUnhealthyPods)}}
+          <div class="dim more">and {{sub .UnhealthyPods (len .TopUnhealthyPods)}} more</div>
+          {{end}}
+        </div>
+        {{end}}
+
+        {{range .Summaries}}
+        <div class="ex-block">
+          <div class="ex-k">{{.Title}}</div>
+          <pre class="summary">{{range .Lines}}{{.}}
+{{end}}</pre>
+        </div>
+        {{end}}
+      </div>
+
       {{if not .UpdatedAt.IsZero}}<div class="seen">seen {{ago .UpdatedAt}}</div>{{end}}
     {{end}}
   </article>

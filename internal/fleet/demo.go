@@ -3,6 +3,7 @@ package fleet
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -202,8 +203,67 @@ func (d *Demo) View() []ClusterView {
 			Cells:  []health.Cell{{Name: "CAPI", Status: health.StatusLoading}},
 		},
 	}
+	for i := range out {
+		fillCard(&out[i])
+	}
 	sortViews(out)
 	return out
+}
+
+// fillCard derives a fixture's expanded tier from what it already declares.
+//
+// Derived rather than written out per fixture for the same reason the detail
+// page's node table is: six literals maintained by hand drift, and a card that
+// disagrees with the page it links to is worse than one that says less.
+func fillCard(v *ClusterView) {
+	if v.Problem != "" || !v.NodesKnown {
+		return
+	}
+
+	byRole := map[string]*RoleCount{}
+	var order []string
+	for _, pool := range v.Pools {
+		role := "compute"
+		switch {
+		case pool.Role == "Control Plane":
+			role = "control-plane"
+		case strings.Contains(pool.Name, "-mgd"):
+			role = "managed-services"
+		}
+		rc, seen := byRole[role]
+		if !seen {
+			rc = &RoleCount{Role: role}
+			byRole[role] = rc
+			order = append(order, role)
+		}
+		rc.Ready += int(pool.Ready)
+		rc.Total += int(pool.Desired)
+	}
+	for _, role := range order {
+		v.NodesByRole = append(v.NodesByRole, *byRole[role])
+	}
+	sort.Slice(v.NodesByRole, func(i, j int) bool { return v.NodesByRole[i].Role < v.NodesByRole[j].Role })
+
+	// The same pods the detail page invents, so following the link does not
+	// land on a different set of names.
+	for i := 0; i < v.UnhealthyPods && i < maxCardPods; i++ {
+		v.TopUnhealthyPods = append(v.TopUnhealthyPods, PodRef{
+			Namespace: "example-system", Name: fmt.Sprintf("api-%d-5f9c8", i+1),
+			Status: "CrashLoopBackOff", Restarts: int32(441 - i*7),
+		})
+	}
+
+	for _, c := range v.Cells {
+		if c.Name == "Ceph" {
+			health := "HEALTH_OK"
+			if c.Detail != "" {
+				health = c.Detail
+			}
+			v.Summaries = append(v.Summaries, SummaryBlock{Title: "Ceph", Lines: []string{
+				"health   " + health, "osds     36/36 up, 36 in", "capacity 13% used",
+			}})
+		}
+	}
 }
 
 // Cluster satisfies the same contract as [Fleet.Cluster], with invented detail

@@ -427,6 +427,34 @@ type WorkloadCount struct {
 // Degraded reports whether any workload of this kind is short of its replicas.
 func (w WorkloadCount) Degraded() bool { return w.Ready < w.Total }
 
+// maxCardPods is how many unhealthy pods a fleet card names before it stops.
+// The count beside them is never capped, so four names under a count of forty
+// reads as a sample rather than as the whole story.
+const maxCardPods = 4
+
+// RoleCount is one node role's readiness.
+//
+// The card carries these instead of a node list because a production undercloud
+// runs forty to seventy nodes: a list would make the card grow with the cluster,
+// and the card is the one thing on the page that must not.
+type RoleCount struct {
+	Role  string
+	Ready int
+	Total int
+}
+
+// Degraded reports whether this role is short of nodes, which is the only
+// reason a reader needs to look twice at the row.
+func (r RoleCount) Degraded() bool { return r.Ready < r.Total }
+
+// PodRef names one unhealthy pod on a fleet card.
+type PodRef struct {
+	Namespace string
+	Name      string
+	Status    string
+	Restarts  int32
+}
+
 // ClusterView is one row of the fleet page: everything decided, nothing styled.
 //
 // Every judgement in here was made by sextant — the health cells, the rollout
@@ -462,6 +490,22 @@ type ClusterView struct {
 	Capacity      Capacity
 	Workloads     []WorkloadCount
 	UnhealthyPods int
+
+	// The fleet card's expanded tier. All of it is aggregate or capped, because
+	// a card must render the same size for a seventy-node production undercloud
+	// as for a six-node development one. A per-node list would not.
+	//
+	// NodesByRole is the readiness a single Nodes count cannot express: 69/70
+	// is reassuring right up until the missing one is a control plane.
+	NodesByRole []RoleCount
+	// TopUnhealthyPods is the worst few, by the same rule the detail pane uses.
+	// Enough to recognize a pattern; not enough to become the pod pane.
+	TopUnhealthyPods []PodRef
+	// Summaries is each subsystem's own headline, as its plugin renders it.
+	// Lives here rather than on ClusterDetail so both pages read one field:
+	// a second Summaries on the detail type would shadow this one, and the
+	// template asking for it would silently get the wrong side.
+	Summaries []SummaryBlock
 
 	// WorkloadProblem says why the workload cluster could not be read, when the
 	// management side is answering but the workload side is not.
@@ -558,6 +602,9 @@ func (t *tracked) view(prof profile.Profile) ClusterView {
 		return v
 	}
 
+	for _, b := range t.registry.Summaries(t.store) {
+		v.Summaries = append(v.Summaries, SummaryBlock{Title: b.Title, Lines: b.Lines})
+	}
 	v.Cells = append(health.CoreCells(t.store, prof.NodeRoles), t.registry.BannerCells(t.store)...)
 	v.Status = health.Worst(v.Cells)
 	v.Rollout = rollout.Detect(t.store, "")
@@ -696,10 +743,22 @@ func (v *ClusterView) readWorkload(
 	}
 
 	v.NodesKnown = true
+	byRole := map[string]*RoleCount{}
 	for _, n := range nodes.Items {
 		v.Nodes.Total++
+		role := n.Role
+		if role == "" {
+			role = "unlabelled"
+		}
+		rc, seen := byRole[role]
+		if !seen {
+			rc = &RoleCount{Role: role}
+			byRole[role] = rc
+		}
+		rc.Total++
 		if n.Ready() {
 			v.Nodes.Ready++
+			rc.Ready++
 		}
 		// Only a cordon the profile has not declared expected is counted, for
 		// the same reason the health cell ignores the others: a fleet of
@@ -713,6 +772,12 @@ func (v *ClusterView) readWorkload(
 		v.Capacity.MemAllocatable += n.AllocatableMemory
 		v.Capacity.MemRequested += n.RequestedMemory
 	}
+	for _, rc := range byRole {
+		v.NodesByRole = append(v.NodesByRole, *rc)
+	}
+	// By role name, the ordering the pools and nodes tables already use.
+	sort.Slice(v.NodesByRole, func(i, j int) bool { return v.NodesByRole[i].Role < v.NodesByRole[j].Role })
+
 	if nodes.UpdatedAt.After(v.UpdatedAt) {
 		v.UpdatedAt = nodes.UpdatedAt
 	}
@@ -737,10 +802,31 @@ func (v *ClusterView) readWorkload(
 	}
 
 	if snap, ok := store.Get[model.Snapshot[model.Pod]](s, model.KeyWorkloadPods); ok {
+		var unhealthy []model.Pod
 		for _, pod := range snap.Items {
 			if !pod.IsHealthy {
 				v.UnhealthyPods++
+				unhealthy = append(unhealthy, pod)
 			}
+		}
+		// Most restarts first, the same rule the detail pane sorts by, so the
+		// pods named on the card are the ones at the top of the pane it links
+		// to rather than a different arbitrary few.
+		sort.Slice(unhealthy, func(i, j int) bool {
+			if unhealthy[i].Restarts != unhealthy[j].Restarts {
+				return unhealthy[i].Restarts > unhealthy[j].Restarts
+			}
+			return unhealthy[i].Namespace+"/"+unhealthy[i].Name <
+				unhealthy[j].Namespace+"/"+unhealthy[j].Name
+		})
+		if len(unhealthy) > maxCardPods {
+			unhealthy = unhealthy[:maxCardPods]
+		}
+		for _, pod := range unhealthy {
+			v.TopUnhealthyPods = append(v.TopUnhealthyPods, PodRef{
+				Namespace: pod.Namespace, Name: pod.Name,
+				Status: pod.Status, Restarts: pod.Restarts,
+			})
 		}
 	}
 	return false

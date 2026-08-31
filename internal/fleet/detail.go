@@ -83,8 +83,6 @@ type ClusterDetail struct {
 	EventsTruncated int
 	EventsTotal     int
 
-	Summaries []SummaryBlock
-
 	// Subsystems is whatever optional subsystems this cluster runs. Absent ones
 	// are nil rather than empty, so a cluster without Ceph gets no Ceph section
 	// instead of an empty one.
@@ -133,10 +131,6 @@ func (f *Fleet) Cluster(namespace, name string) (ClusterDetail, bool) {
 	d.readNodes(s)
 	d.readPods(s)
 	d.readEvents(s)
-
-	for _, b := range t.registry.Summaries(s) {
-		d.Summaries = append(d.Summaries, SummaryBlock{Title: b.Title, Lines: b.Lines})
-	}
 
 	d.Subsystems = readSubsystems(s)
 	if m := d.Subsystems.Migrations; m != nil {

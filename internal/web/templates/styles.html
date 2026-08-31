@@ -15,9 +15,14 @@
     --ok: #4fb37a; --warn: #e08a2e; --err: #e05a5a; --loading: #5d7186;
   }
   * { box-sizing: border-box; }
+  /* Every size on the page is a rem, and the root is the only absolute one.
+     That is what lets a wall display scale the whole thing by setting a single
+     value: an absolute size on body would leave anything inheriting it — the
+     card's own headline numbers among them — at 14px while the rest grew. */
+  html { font-size: 14px; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font: 1rem/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   header {
     display: flex; align-items: center; gap: .85rem; flex-wrap: wrap;
@@ -25,7 +30,7 @@
     border-bottom: 1px solid var(--line);
     box-shadow: inset 0 -1px 0 0 color-mix(in srgb, var(--brass) 35%, transparent);
   }
-  .mark { width: 34px; height: 34px; display: block; }
+  .mark { width: 2.43rem; height: 2.43rem; display: block; }
   /* A serif wordmark, echoing the logo's own lettering. */
   h1 {
     margin: 0; font-size: 1.15rem; letter-spacing: .16em; text-transform: uppercase;
@@ -60,6 +65,11 @@
   .card {
     background: var(--panel); border: 1px solid var(--line);
     border-left: 3px solid var(--loading); border-radius: 6px; padding: .9rem 1.05rem;
+    /* The card is the query container for its own contents. A datacenter with
+       two clusters gives each card twice the width four clusters would, on the
+       same screen — so how much detail fits is a question about the card, not
+       about the viewport, and only a container query can ask it. */
+    container-type: inline-size;
   }
   .card.ok   { border-left-color: var(--ok); }
   .card.warn { border-left-color: var(--warn); }
@@ -105,14 +115,68 @@
   .cell.warn { color: var(--warn); border-color: var(--warn); }
   .cell.err  { color: var(--err); border-color: var(--err); }
   .cell .d { opacity: .85; }
+
+  /* Node readiness per role. Bounded by the number of roles, not the number of
+     nodes, which is what lets it sit on a card for a seventy-node cluster. */
+  .roles { display: flex; flex-wrap: wrap; gap: .1rem .9rem; margin-bottom: .7rem; }
+  .role { font-size: .75rem; font-variant-numeric: tabular-nums; }
+  .role-k { color: var(--dim); }
+  .role.degraded, .role.degraded .role-k { color: var(--warn); }
+
+  /* A problem on a card is a place to go, not just a number to read. Underlined
+     on hover only: a card full of permanently underlined links reads as
+     decoration and stops signaling anything. */
+  .problem-link { color: inherit; text-decoration: none; }
+  .problem-link:hover { text-decoration: underline; }
+
+  /* The expanded tier. Hidden by default so the narrow case — four clusters on
+     a 1080p screen, or a wall display — never pays for it, and revealed once
+     the card is wide enough to hold it without crowding the core. */
+  .expanded { display: none; }
+  @container (min-width: 34rem) {
+    .expanded { display: block; margin-top: .15rem; }
+  }
+  .ex-block { margin-bottom: .55rem; }
+  .ex-k {
+    color: var(--teal); font-size: .66rem; text-transform: uppercase;
+    letter-spacing: .08em; font-weight: 700; margin-bottom: .15rem;
+  }
+  .podlist { list-style: none; margin: 0; padding: 0; }
+  .podlist li { font-size: .75rem; }
+  .more { font-size: .72rem; }
   .problem { color: var(--err); font-size: .82rem; word-break: break-word; }
   .empty { color: var(--dim); }
+  .card .summary {
+    margin: 0; font-size: .73rem; color: var(--ink);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
+  }
   .seen { color: var(--dim); font-size: .75rem; margin-top: .6rem; }
   footer {
     padding: 1rem 1.5rem; color: var(--dim); font-size: .8rem;
     border-top: 1px solid var(--line);
     box-shadow: inset 0 1px 0 0 color-mix(in srgb, var(--brass) 30%, transparent);
   }
+
+  /* Wall mode: a display read from across a room rather than from a desk.
+     Every size on the page is a rem, so one root value scales all of it. */
+  html.wall { font-size: 24px; }
+  /* Televisions still overscan by a few percent. 1.5rem is barely 1% of a
+     1080p width, which is not enough cushion for the header's right edge or the
+     footer to survive it. */
+  html.wall header, html.wall main, html.wall footer { padding-left: 3rem; padding-right: 3rem; }
+  /* Core tier only. At wall scale four clusters land as a two-by-two, which
+     leaves each card roughly seventeen lines: enough for the core, not enough
+     for the core and the expanded block. A board read in a two-second glance
+     from across the room wants less on it than a desk does, not more. */
+  html.wall .expanded { display: none; }
+  /* Nobody reads the corner of a wall display. A stale connection has to be the
+     loudest thing on the page, because a frozen board that still looks healthy
+     is worse than a blank screen. */
+  html.wall .live.stale {
+    background: var(--warn); color: var(--bg); font-weight: 700;
+    padding: .15rem .6rem; border-radius: 4px; font-size: .9rem;
+  }
+  html.wall .live.stale::before { background: var(--bg); }
 </style>
 <style>
   /* Cluster detail. Panes are a masonry-ish grid rather than sextant's packed
@@ -130,6 +194,10 @@
     border-radius: 6px; padding: .8rem 1rem 1rem; min-width: 0;
   }
   .pane.wide { grid-column: 1 / -1; }
+  /* A pane arrived at from a card's deep link should not sit flush against the
+     top of the viewport with its heading half under the browser chrome. */
+  .pane[id] { scroll-margin-top: 1rem; }
+  .pane[id]:target { border-color: color-mix(in srgb, var(--teal) 55%, var(--line)); }
   .pane h3 {
     margin: 0 0 .6rem; font-size: .72rem; text-transform: uppercase;
     letter-spacing: .1em; color: var(--brass); font-weight: 700;

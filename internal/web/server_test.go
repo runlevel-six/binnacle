@@ -268,6 +268,7 @@ func TestClusterPage_RendersTheCorePanes(t *testing.T) {
 				{Role: "Control Plane", Name: "tenant-01-kcp", Ready: 3, Desired: 3, Version: "v1.36.2"},
 			},
 			Nodes: fleet.NodeCount{Ready: 5, Total: 5}, NodesKnown: true,
+			Summaries: []fleet.SummaryBlock{{Title: "Ceph", Lines: []string{"health  HEALTH_OK"}}},
 			UpdatedAt: time.Now(),
 		},
 		Machines: fleet.Split[model.Machine]{Shown: []model.Machine{{Name: "tenant-01-machine-1", Phase: "Running",
@@ -294,7 +295,6 @@ func TestClusterPage_RendersTheCorePanes(t *testing.T) {
 				LastTimestamp: time.Now().Add(-3 * time.Minute)},
 		}),
 		EventsTotal: 9155,
-		Summaries:   []fleet.SummaryBlock{{Title: "Ceph", Lines: []string{"health  HEALTH_OK"}}},
 	}
 
 	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
@@ -518,5 +518,53 @@ func TestDetail_FoldsQuietRowsButKeepsProblems(t *testing.T) {
 	// The problem must not itself be inside the disclosure.
 	if i, j := strings.Index(body, "broken.site-a.example"), strings.Index(body, "<details"); i > j {
 		t.Error("the NotReady node was rendered inside the fold")
+	}
+}
+
+// The expanded tier is markup the container query reveals, so it has to be in
+// the response whether or not a given viewer's card is wide enough for it.
+func TestFleetPage_CarriesTheExpandedTier(t *testing.T) {
+	d := fleet.ClusterView{
+		Namespace: "capi", Name: "tenant-01", NodesKnown: true,
+		Nodes:         fleet.NodeCount{Ready: 69, Total: 70},
+		UnhealthyPods: 12,
+		NodesByRole: []fleet.RoleCount{
+			{Role: "compute", Ready: 61, Total: 62},
+			{Role: "control-plane", Ready: 3, Total: 3},
+		},
+		TopUnhealthyPods: []fleet.PodRef{
+			{Namespace: "openstack", Name: "octavia-api", Status: "CrashLoopBackOff", Restarts: 441},
+		},
+		Summaries: []fleet.SummaryBlock{{Title: "Ceph", Lines: []string{"health  HEALTH_WARN"}}},
+	}
+
+	body := get(t, serve(t, d), "/").Body.String()
+	for _, want := range []string{
+		"compute", "61/62", "control-plane", "3/3", // nodes by role
+		"openstack/octavia-api", "CrashLoopBackOff", // named pods
+		"and 11 more",                         // the count is not capped even though the names are
+		"HEALTH_WARN",                         // the subsystem headline
+		`href="/cluster/capi/tenant-01#pods"`, // the deep link
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("fleet page is missing %q", want)
+		}
+	}
+}
+
+// Wall mode is opt-in and must not leak into an ordinary page load.
+func TestFleetPage_WallModeIsOptIn(t *testing.T) {
+	d := fleet.ClusterView{Namespace: "capi", Name: "tenant-01", NodesKnown: true}
+	srv := serve(t, d)
+
+	if body := get(t, srv, "/").Body.String(); strings.Contains(body, `class="wall"`) {
+		t.Error("an ordinary page load came back in wall mode")
+	}
+	if body := get(t, srv, "/?display=wall").Body.String(); !strings.Contains(body, `class="wall"`) {
+		t.Error("?display=wall did not scale the page")
+	}
+	// Any other value is not wall mode, rather than an error.
+	if body := get(t, srv, "/?display=desk").Body.String(); strings.Contains(body, `class="wall"`) {
+		t.Error("an unrecognized display mode was treated as wall")
 	}
 }

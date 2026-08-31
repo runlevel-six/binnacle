@@ -128,6 +128,13 @@ type pageData struct {
 	Version  string
 	Site     string
 	Now      time.Time
+	// Wall scales the page up for a display read from across a room. Opt-in
+	// through ?display=wall rather than inferred: a 1920-pixel viewport is as
+	// likely to be a laptop at arm's length as a television at ten feet, and no
+	// media query can tell those apart. A wall display is also set up once and
+	// left for months, which is why this is in the URL — it survives a browser
+	// restart and a kiosk relaunch, where a stored preference may not.
+	Wall bool
 }
 
 type clusterData struct {
@@ -204,7 +211,9 @@ func (s *Server) handleClusterEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFleet(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "fleet.html", s.page())
+	d := s.page()
+	d.Wall = r.URL.Query().Get("display") == "wall"
+	s.render(w, "fleet.html", d)
 }
 
 // handleEvents streams a re-rendered cluster grid whenever the fleet changes.
@@ -321,6 +330,7 @@ func funcs() template.FuncMap {
 		// age renders a model duration the way the tables do: one unit.
 		"age": fleet.Compact,
 		"add": func(a, b int) int { return a + b },
+		"sub": func(a, b int) int { return a - b },
 		// Migration status vocabulary is OpenStack's and its abbreviations are
 		// sextant's. Both come from the same place the dashboard reads them,
 		// so the two cannot describe the same migration differently.
