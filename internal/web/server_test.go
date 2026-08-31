@@ -613,6 +613,14 @@ func TestClusterPage_ProblemsComeBeforeInventory(t *testing.T) {
 	if pods > machines {
 		t.Error("unhealthy pods rendered below the machine inventory")
 	}
+	// Machines & hosts and Nodes share a row: both pack to about a quarter of a
+	// full-width pane, so neither earns one.
+	if !strings.Contains(body, `<section class="pane half">`) {
+		t.Error("the machines pane did not take a half")
+	}
+	if !strings.Contains(body, `<section class="pane half" id="nodes">`) {
+		t.Error("the nodes pane did not take a half")
+	}
 	if machines > events {
 		t.Error("events rendered above the inventory")
 	}

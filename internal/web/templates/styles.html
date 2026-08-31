@@ -103,7 +103,10 @@
     border-left: 2px solid var(--warn); border-radius: 0 3px 3px 0; word-break: break-word;
   }
 
-  .nums { display: flex; gap: 1.25rem; margin-bottom: .7rem; flex-wrap: wrap; }
+  /* The top margin matters where .nums follows a table directly, as it does in
+     the node pools pane: without it the labels sit against the last row and
+     read as a fourth column of it. */
+  .nums { display: flex; gap: 1.25rem; margin: .8rem 0 .7rem; flex-wrap: wrap; }
   .num .k { color: var(--dim); font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; }
   .num .v { font-variant-numeric: tabular-nums; }
 

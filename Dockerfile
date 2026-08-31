@@ -2,7 +2,14 @@
 # Pinned to go.mod's exact version. golang:1.26 could be any patch release, and
 # a builder older than go.mod's target makes Go download a toolchain mid-build —
 # slower, and a network dependency the build does not otherwise have.
-FROM golang:1.26.1 AS build
+#
+# --platform=$BUILDPLATFORM pins the builder to the machine doing the building,
+# not to the image being built. Without it, buildx runs the whole arm64 leg —
+# including the Go compile — under QEMU emulation, which took twenty minutes of
+# every push for a binary that cross-compiles in under one. CGO is off, so there
+# is nothing to emulate for: Go targets arm64 from an amd64 host natively, and
+# GOARCH below is what makes it.
+FROM --platform=$BUILDPLATFORM golang:1.26.1 AS build
 WORKDIR /src
 
 # Dependencies first, so a source-only change does not re-download the module
@@ -12,7 +19,10 @@ RUN go mod download
 
 COPY . .
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath \
+# TARGETOS and TARGETARCH are supplied by buildx per platform being built.
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/binnacle ./cmd/binnacle
 

@@ -94,7 +94,11 @@
     {{else}}<p class="empty">Not reported.</p>{{end}}
   </section>
 
-  <section class="pane wide">
+  {{/* Both of these pack to roughly a quarter of a full-width pane, and at
+       production scale both fold most of their rows away, so they are short as
+       well as narrow. Side by side they waste half as much width and a whole
+       screen less height. */}}
+  <section class="pane half">
     <h3>Machines &amp; hosts{{if .Machines.Total}} <span class="count">{{.Machines.Total}} machines &middot; {{.Hosts.Total}} host{{if ne .Hosts.Total 1}}s{{end}}</span>{{end}}</h3>
     {{if .Machines.Shown}}{{template "machine-table" .Machines.Shown}}
     {{else if .Machines.Total}}<p class="empty">Every machine is Running.</p>
@@ -123,7 +127,7 @@
     {{end}}
   </section>
 
-  <section class="pane wide" id="nodes">
+  <section class="pane half" id="nodes">
     <h3>Nodes{{if .NodeRows.Total}} <span class="count">{{.NodeRows.Total}}</span>{{end}}</h3>
     {{if .NodeRows.Shown}}{{template "node-table" .NodeRows.Shown}}
     {{else if .NodeRows.Total}}<p class="empty">Every node is Ready and schedulable.</p>
