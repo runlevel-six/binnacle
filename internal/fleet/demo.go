@@ -346,13 +346,15 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 			Namespace: namespace, Name: fmt.Sprintf("%s-machine-%d", name, i+1),
 			ClusterName: name, NodeName: n.Name, Phase: "Running",
 			Version: view.Version, InfraKind: "Metal3Machine",
-			Age: n.Age,
+			InfraName: fmt.Sprintf("%s-machine-%d", name, i+1),
+			Age:       n.Age,
 		})
 		host := model.BareMetalHost{
 			Namespace: namespace, Name: fmt.Sprintf("host-%d.site-a.example", i+1),
 			State: "provisioned", OperationalStatus: "OK", PoweredOn: true, Online: true,
-			ConsumerKind: "Metal3Machine", ConsumerName: fmt.Sprintf("%s-machine-%d", name, i+1),
-			Age: n.Age,
+			ConsumerKind: "Metal3Machine", ConsumerNamespace: namespace,
+			ConsumerName: fmt.Sprintf("%s-machine-%d", name, i+1),
+			Age:          n.Age,
 		}
 		if i == len(roles)-1 && view.Status == health.StatusErr {
 			host.OperationalStatus = "error"
@@ -364,9 +366,33 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 		}
 		hosts = append(hosts, host)
 	}
+
+	// The rest of the datacenter: another cluster's hardware and the Ceph nodes
+	// that belong to no cluster at all. Present so the fixture exercises the
+	// scoping — a snapshot containing only this cluster's hosts would let a
+	// filter that does nothing look correct.
+	for i := 0; i < 9; i++ {
+		hosts = append(hosts, model.BareMetalHost{
+			Namespace: namespace, Name: fmt.Sprintf("neighbor-%d.site-a.example", i+1),
+			State: "provisioned", OperationalStatus: "OK", PoweredOn: true, Online: true,
+			ConsumerKind: "Metal3Machine", ConsumerNamespace: namespace,
+			ConsumerName: fmt.Sprintf("tenant-99-cluster-machine-%d", i+1),
+			Age:          900 * 24 * time.Hour,
+		})
+	}
+	for i := 0; i < 6; i++ {
+		hosts = append(hosts, model.BareMetalHost{
+			Namespace: namespace, Name: fmt.Sprintf("cephosd-%d.site-a.example", i+1),
+			State: "provisioned", OperationalStatus: "OK", PoweredOn: true, Online: true,
+			Age: 900 * 24 * time.Hour,
+		})
+	}
+
 	detail.NodeRows = splitNodes(nodeRows)
 	detail.Machines = splitMachines(machines)
-	detail.Hosts = splitHosts(hosts)
+	mine, elsewhere := hostsFor(hosts, detail.Machines.All())
+	detail.HostsElsewhere = elsewhere
+	detail.Hosts = splitHosts(mine)
 
 	for i := 0; i < view.UnhealthyPods; i++ {
 		detail.UnhealthyPods = append(detail.UnhealthyPods, model.Pod{

@@ -95,7 +95,7 @@
   </section>
 
   <section class="pane wide">
-    <h3>Machines &amp; hosts{{if .Machines.Total}} <span class="count">{{.Machines.Total}} machines &middot; {{.Hosts.Total}} hosts</span>{{end}}</h3>
+    <h3>Machines &amp; hosts{{if .Machines.Total}} <span class="count">{{.Machines.Total}} machines &middot; {{.Hosts.Total}} host{{if ne .Hosts.Total 1}}s{{end}}</span>{{end}}</h3>
     {{if .Machines.Shown}}{{template "machine-table" .Machines.Shown}}
     {{else if .Machines.Total}}<p class="empty">Every machine is Running.</p>
     {{else}}<p class="empty">No machines reported.</p>{{end}}
@@ -107,12 +107,19 @@
     {{end}}
 
     {{if .Hosts.Shown}}<div class="spaced">{{template "host-table" .Hosts.Shown}}</div>
-    {{else if .Hosts.Total}}<p class="empty spaced">Every host is provisioned without error.</p>{{end}}
+    {{else if .Hosts.Total}}<p class="empty spaced">Every host is provisioned without error.</p>
+    {{else if .Machines.Total}}<p class="empty spaced">No hosts are claimed by this cluster's machines.</p>{{end}}
     {{if .Hosts.Quiet}}
     <details class="quiet">
       <summary>{{len .Hosts.Quiet}} hosts provisioned without error</summary>
       {{template "host-table" .Hosts.Quiet}}
     </details>
+    {{end}}
+    {{/* The snapshot is datacenter-wide. Saying so is the difference between a
+         pane that shows this cluster's hosts and one that appears to show every
+         host there is. */}}
+    {{if .HostsElsewhere}}
+    <p class="empty footnote">{{.HostsElsewhere}} further host{{if ne .HostsElsewhere 1}}s{{end}} in this datacenter belong to other clusters or to no cluster at all, and are not listed here.</p>
     {{end}}
   </section>
 

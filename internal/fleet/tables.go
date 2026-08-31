@@ -42,6 +42,19 @@ type Split[T any] struct {
 // Total is every row, folded or not: what a pane heading counts.
 func (s Split[T]) Total() int { return len(s.Shown) + len(s.Quiet) }
 
+// All is every row, folded or not.
+//
+// For callers that need the whole set rather than the reading order — matching
+// hosts to machines, say, where using Shown alone would silently drop every
+// machine that was healthy enough to be folded.
+func (s Split[T]) All() []T {
+	if len(s.Quiet) == 0 {
+		return s.Shown
+	}
+	out := make([]T, 0, len(s.Shown)+len(s.Quiet))
+	return append(append(out, s.Shown...), s.Quiet...)
+}
+
 // split orders rows worst-first and folds away the quiet tail.
 //
 // rank gives a row's severity and less breaks ties within one rank. Ordering
@@ -143,4 +156,41 @@ func splitMachines(rows []model.Machine) Split[model.Machine] {
 
 func splitHosts(rows []model.BareMetalHost) Split[model.BareMetalHost] {
 	return split(rows, hostRank, func(a, b model.BareMetalHost) bool { return a.Name < b.Name }, hostQuiet)
+}
+
+// hostsFor keeps the hosts this cluster is actually running on.
+//
+// The BareMetalHost snapshot is datacenter-wide — one namespace on the
+// management cluster holding every machine in the building. On a four-cluster
+// datacenter three quarters of it describes hardware this page is not about,
+// and the Ceph nodes in it belong to no undercloud at all.
+//
+// The link is the host's consumerRef, which points at the provider machine
+// (a Metal3Machine) rather than at the CAPI Machine. Machine.InfraName carries
+// exactly that reference, so it is what this matches on; the machine's own name
+// is accepted too, because providers commonly name the pair alike and a host
+// wrongly dropped from this pane is worse than one wrongly kept.
+//
+// Returns the kept hosts and how many were left in the datacenter, because a
+// pane that quietly shows six of two hundred and fifty rows is a pane that has
+// answered a different question than the one it appears to answer.
+func hostsFor(hosts []model.BareMetalHost, machines []model.Machine) (mine []model.BareMetalHost, elsewhere int) {
+	claimed := make(map[string]bool, len(machines)*2)
+	for _, m := range machines {
+		if m.InfraName != "" {
+			claimed[m.Namespace+"/"+m.InfraName] = true
+		}
+		claimed[m.Namespace+"/"+m.Name] = true
+	}
+
+	for _, h := range hosts {
+		// A host with no consumer is unclaimed hardware: a datacenter spare, or
+		// a Ceph node. Neither is this cluster's.
+		if h.ConsumerName != "" && claimed[h.ConsumerNamespace+"/"+h.ConsumerName] {
+			mine = append(mine, h)
+			continue
+		}
+		elsewhere++
+	}
+	return mine, elsewhere
 }

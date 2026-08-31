@@ -62,6 +62,11 @@ type ClusterDetail struct {
 	// Split and collapseAfter.
 	Machines Split[model.Machine]
 	Hosts    Split[model.BareMetalHost]
+	// HostsElsewhere is how many hosts in the datacenter-wide snapshot belong
+	// to something other than this cluster. Reported rather than silently
+	// dropped: the pane used to list every host in the building, and a reader
+	// who knew that needs to be told where they went.
+	HostsElsewhere int
 	// NodeRows is the per-node table. Named for the rows rather than for the
 	// nodes because ClusterView already has a Nodes field holding the counts,
 	// and an embedded field that shadows its parent's is a silent trap: a
@@ -123,9 +128,13 @@ func (f *Fleet) Cluster(namespace, name string) (ClusterDetail, bool) {
 		d.Machines = splitMachines(snap.Items)
 	}
 	if snap, ok := store.Get[model.Snapshot[model.BareMetalHost]](s, model.KeyMgmtBareMetalHosts); ok {
+		// Scoped to this cluster before ranking: see hostsFor. Machines are read
+		// first because they carry the reference the hosts are matched on.
+		mine, elsewhere := hostsFor(snap.Items, d.Machines.All())
+		d.HostsElsewhere = elsewhere
 		// Errored hosts first: a rollout stalls on them more often than on
 		// anything else, which is why sextant gives them their own cell.
-		d.Hosts = splitHosts(snap.Items)
+		d.Hosts = splitHosts(mine)
 	}
 
 	d.readNodes(s)

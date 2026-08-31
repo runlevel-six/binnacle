@@ -196,3 +196,112 @@ func TestSplit_DoesNotReorderTheCaller(t *testing.T) {
 		t.Errorf("Shown[0] = %q, want the failed machine", got.Shown[0].Name)
 	}
 }
+
+// The snapshot is datacenter-wide. Only the hosts this cluster's machines have
+// claimed belong on its page.
+func TestHostsFor_KeepsOnlyThisClustersHosts(t *testing.T) {
+	machines := []model.Machine{
+		{Namespace: "capi", Name: "ours-kcp-aaa", InfraName: "ours-kcp-aaa", InfraKind: "Metal3Machine"},
+	}
+	hosts := []model.BareMetalHost{
+		{Name: "a03-17-controller", ConsumerNamespace: "capi", ConsumerName: "ours-kcp-aaa"},
+		{Name: "a03-20-compute", ConsumerNamespace: "capi", ConsumerName: "theirs-kcp-bbb"},
+		{Name: "a03-05-cephosd"}, // no consumer at all
+	}
+
+	mine, elsewhere := hostsFor(hosts, machines)
+	if len(mine) != 1 || mine[0].Name != "a03-17-controller" {
+		t.Fatalf("kept %+v, want only a03-17-controller", mine)
+	}
+	if elsewhere != 2 {
+		t.Errorf("elsewhere = %d, want 2 (another cluster's host, and a Ceph node)", elsewhere)
+	}
+}
+
+// consumerRef points at the provider machine, not the CAPI Machine, so
+// InfraName is the reference that must match.
+func TestHostsFor_MatchesOnInfraName(t *testing.T) {
+	machines := []model.Machine{
+		{Namespace: "capi", Name: "ours-md-xyz", InfraName: "ours-metal3-xyz"},
+	}
+	hosts := []model.BareMetalHost{
+		{Name: "host-a", ConsumerNamespace: "capi", ConsumerName: "ours-metal3-xyz"},
+	}
+	mine, elsewhere := hostsFor(hosts, machines)
+	if len(mine) != 1 {
+		t.Fatalf("kept %d hosts, want 1 matched through InfraName", len(mine))
+	}
+	if elsewhere != 0 {
+		t.Errorf("elsewhere = %d, want 0", elsewhere)
+	}
+}
+
+// A host claimed by a machine in another namespace under the same name is not
+// ours.
+func TestHostsFor_NamespaceIsPartOfTheMatch(t *testing.T) {
+	machines := []model.Machine{{Namespace: "capi", Name: "kcp-aaa", InfraName: "kcp-aaa"}}
+	hosts := []model.BareMetalHost{
+		{Name: "host-a", ConsumerNamespace: "other-capi", ConsumerName: "kcp-aaa"},
+	}
+	mine, elsewhere := hostsFor(hosts, machines)
+	if len(mine) != 0 {
+		t.Errorf("kept %+v, want none — that host belongs to another namespace", mine)
+	}
+	if elsewhere != 1 {
+		t.Errorf("elsewhere = %d, want 1", elsewhere)
+	}
+}
+
+// The regression this nearly shipped with: at production scale almost every
+// machine is folded into Quiet, so matching against Shown alone would drop
+// almost every host the cluster is running on.
+func TestHostsFor_CountsFoldedMachines(t *testing.T) {
+	var machines []model.Machine
+	for i := 0; i < 40; i++ {
+		n := "ours-md-" + itoa(i)
+		machines = append(machines, model.Machine{
+			Namespace: "capi", Name: n, InfraName: n, Phase: "Running",
+		})
+	}
+	machines = append(machines, model.Machine{
+		Namespace: "capi", Name: "ours-broken", InfraName: "ours-broken", Phase: "Failed",
+	})
+
+	var hosts []model.BareMetalHost
+	for _, m := range machines {
+		hosts = append(hosts, model.BareMetalHost{
+			Name: "host-" + m.Name, ConsumerNamespace: "capi", ConsumerName: m.InfraName,
+		})
+	}
+
+	split := splitMachines(machines)
+	if len(split.Quiet) == 0 {
+		t.Fatal("the fixture did not fold any machines, so this proves nothing")
+	}
+	mine, elsewhere := hostsFor(hosts, split.All())
+	if len(mine) != len(machines) {
+		t.Errorf("kept %d hosts, want %d — folded machines were not counted", len(mine), len(machines))
+	}
+	if elsewhere != 0 {
+		t.Errorf("elsewhere = %d, want 0", elsewhere)
+	}
+}
+
+// All returns every row in reading order, and does not alias Shown.
+func TestSplit_AllIsEveryRow(t *testing.T) {
+	var rows []model.Machine
+	for i := 0; i < 12; i++ {
+		rows = append(rows, model.Machine{Name: "m-" + itoa(i), Phase: "Running"})
+	}
+	rows = append(rows, model.Machine{Name: "z-failed", Phase: "Failed"})
+
+	got := splitMachines(rows)
+	if len(got.All()) != got.Total() {
+		t.Errorf("All() = %d rows, Total() = %d", len(got.All()), got.Total())
+	}
+	all := got.All()
+	all[0].Name = "clobbered"
+	if got.Shown[0].Name == "clobbered" {
+		t.Error("All() aliased Shown; a caller mutating it would corrupt the split")
+	}
+}
