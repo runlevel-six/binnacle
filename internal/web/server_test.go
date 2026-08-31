@@ -568,3 +568,52 @@ func TestFleetPage_WallModeIsOptIn(t *testing.T) {
 		t.Error("an unrecognized display mode was treated as wall")
 	}
 }
+
+// The first row has to fill whether or not a cluster reports subsystems.
+// Three panes at a third each, or two at a half — never two thirds and a gap.
+func TestClusterPage_FirstRowFillsEitherWay(t *testing.T) {
+	base := fleet.ClusterView{
+		Namespace: "capi", Name: "tenant-01", NodesKnown: true,
+		Nodes: fleet.NodeCount{Ready: 3, Total: 3},
+	}
+
+	withCeph := base
+	withCeph.Summaries = []fleet.SummaryBlock{{Title: "Ceph", Lines: []string{"health  HEALTH_OK"}}}
+	body := get(t, serveDetail(t, fleet.ClusterDetail{ClusterView: withCeph}), "/cluster/capi/tenant-01").Body.String()
+	// The closing bracket matters: without it this also counts the pods pane,
+	// whose attribute begins with the same text.
+	if n := strings.Count(body, `class="pane third">`); n != 2 {
+		t.Errorf(`got %d bare "pane third" sections, want 2 (node pools, subsystems)`, n)
+	}
+	if !strings.Contains(body, `class="pane third" id="pods"`) {
+		t.Error("the pods pane did not take a third alongside subsystems")
+	}
+
+	body = get(t, serveDetail(t, fleet.ClusterDetail{ClusterView: base}), "/cluster/capi/tenant-01").Body.String()
+	if strings.Contains(body, `class="pane third"`) {
+		t.Error("without subsystems the row should be two halves, not thirds with a gap")
+	}
+	if !strings.Contains(body, `class="pane half" id="pods"`) {
+		t.Error("the pods pane did not widen to a half when subsystems were absent")
+	}
+}
+
+// What is broken belongs where a reader lands, not below five healthy panes.
+func TestClusterPage_ProblemsComeBeforeInventory(t *testing.T) {
+	d := fleet.ClusterDetail{ClusterView: fleet.ClusterView{
+		Namespace: "capi", Name: "tenant-01", NodesKnown: true,
+	}}
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+	pods := strings.Index(body, `id="pods"`)
+	machines := strings.Index(body, "Machines &amp; hosts")
+	events := strings.Index(body, "<h3>Events")
+	if pods < 0 || machines < 0 || events < 0 {
+		t.Fatal("a pane is missing from the page")
+	}
+	if pods > machines {
+		t.Error("unhealthy pods rendered below the machine inventory")
+	}
+	if machines > events {
+		t.Error("events rendered above the inventory")
+	}
+}

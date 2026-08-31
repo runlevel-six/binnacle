@@ -28,14 +28,17 @@
 {{end}}
 
 <div class="panes">
-  <section class="pane">
+  {{/* Three across when there are subsystems to show, two when there are not,
+       so the row fills either way rather than stranding a gap. */}}
+  {{$col := "third"}}{{if not .Summaries}}{{$col = "half"}}{{end}}
+  <section class="pane {{$col}}">
     <h3>Node pools</h3>
     {{if .Pools}}
     <table>
       <thead><tr><th>ROLE</th><th>NAME</th><th class="r">READY</th><th>VERSION</th><th></th></tr></thead>
       <tbody>
       {{range .Pools}}
-        <tr><td class="dim">{{.Role}}</td><td>{{.Name}}</td>
+        <tr><td class="dim">{{.Role}}</td><td class="grow">{{.Name}}</td>
           <td class="r{{if .Rolling}} warnish{{end}}">{{.Ready}}/{{.Desired}}</td>
           <td class="dim">{{.Version}}</td>
           <td>{{if .Paused}}<span class="frozen">paused</span>{{else if .Rolling}}<span class="rolling">rolling</span>{{end}}</td></tr>
@@ -61,7 +64,7 @@
   </section>
 
   {{if .Summaries}}
-  <section class="pane">
+  <section class="pane third">
     <h3>Subsystems</h3>
     {{range .Summaries}}
       <h4>{{.Title}}</h4>
@@ -70,6 +73,26 @@
     {{end}}
   </section>
   {{end}}
+
+  <section class="pane {{$col}}" id="pods">
+    <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
+    {{if .UnhealthyPods}}
+    <table>
+      <thead><tr><th>POD</th><th class="r">READY</th><th>STATUS</th><th class="r">RESTARTS</th><th>NODE</th><th class="r">AGE</th></tr></thead>
+      <tbody>
+      {{range .UnhealthyPods}}
+        <tr><td class="grow-2">{{.Namespace}}/{{.Name}}</td>
+          <td class="r">{{.ReadyReady}}/{{.ReadyTotal}}</td>
+          <td class="errish">{{.Status}}</td>
+          <td class="r">{{.Restarts}}</td>
+          <td class="dim grow-2">{{.Node}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{if .PodsTruncated}}<p class="empty">{{.PodsTruncated}} more not shown.</p>{{end}}
+    {{else if .NodesKnown}}<p class="empty">Every pod is healthy.</p>
+    {{else}}<p class="empty">Not reported.</p>{{end}}
+  </section>
 
   <section class="pane wide">
     <h3>Machines &amp; hosts{{if .Machines.Total}} <span class="count">{{.Machines.Total}} machines &middot; {{.Hosts.Total}} hosts</span>{{end}}</h3>
@@ -241,7 +264,7 @@
           <thead><tr><th>SERVICE</th><th class="r">AGENTS</th><th class="r">DISABLED</th></tr></thead>
           <tbody>
           {{range .Services}}
-            <tr><td>{{.Service}}</td>
+            <tr><td class="grow">{{.Service}}</td>
               <td class="r{{if lt .Up .Total}} errish{{end}}">{{.Up}}/{{.Total}}</td>
               <td class="r{{if .Disabled}} warnish{{end}}">{{if .Disabled}}{{.Disabled}}{{else}}&ndash;{{end}}</td></tr>
           {{end}}
@@ -258,7 +281,7 @@
         <table>
           <tbody>
           {{range .Counts}}
-            <tr><td class="dim">{{.Label}}</td>
+            <tr><td class="dim nowrap">{{.Label}}</td>
               {{if .Absent}}<td colspan="2" class="empty">not deployed</td>
               {{else if .Err}}<td colspan="2" class="errish">unreadable</td>
               {{else}}<td class="r">{{.Total}}</td>
@@ -289,25 +312,6 @@
   </section>
   {{end}}
 
-  <section class="pane wide" id="pods">
-    <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
-    {{if .UnhealthyPods}}
-    <table>
-      <thead><tr><th>POD</th><th class="r">READY</th><th>STATUS</th><th class="r">RESTARTS</th><th>NODE</th><th class="r">AGE</th></tr></thead>
-      <tbody>
-      {{range .UnhealthyPods}}
-        <tr><td>{{.Namespace}}/{{.Name}}</td>
-          <td class="r">{{.ReadyReady}}/{{.ReadyTotal}}</td>
-          <td class="errish">{{.Status}}</td>
-          <td class="r">{{.Restarts}}</td>
-          <td class="dim">{{.Node}}</td><td class="r dim">{{age .Age}}</td></tr>
-      {{end}}
-      </tbody>
-    </table>
-    {{if .PodsTruncated}}<p class="empty">{{.PodsTruncated}} more not shown.</p>{{end}}
-    {{else if .NodesKnown}}<p class="empty">Every pod is healthy.</p>
-    {{else}}<p class="empty">Not reported.</p>{{end}}
-  </section>
 
   <section class="pane wide">
     <h3>Events{{if .Events}} <span class="count">{{len .Events}}{{if .EventsTruncated}} of {{add (len .Events) .EventsTruncated}}{{end}} group{{if ne (add (len .Events) .EventsTruncated) 1}}s{{end}} &middot; {{.EventsTotal}} event{{if ne .EventsTotal 1}}s{{end}}</span>{{end}}</h3>
@@ -320,7 +324,7 @@
           <td>{{.Reason}}</td>
           {{/* One object means the name is the whole story. Several means it is
                only a sample, and the count of objects is the useful part. */}}
-          <td class="dim">{{.ObjectKind}}{{if eq .Objects 1}}/{{.ObjectName}}{{else}} <span class="tally">&times;{{.Objects}} objects</span>{{end}}</td>
+          <td class="dim ident">{{.ObjectKind}}{{if eq .Objects 1}}/{{.ObjectName}}{{else}} <span class="tally">&times;{{.Objects}} objects</span>{{end}}</td>
           <td class="msg">{{.Message}}</td>
           <td class="r">{{.Occurrences}}</td>
           <td class="r dim nowrap">{{ago .LastTimestamp}}</td></tr>
@@ -344,9 +348,9 @@
   <thead><tr><th>MACHINE</th><th>PHASE</th><th>VERSION</th><th>NODE</th><th class="r">AGE</th></tr></thead>
   <tbody>
   {{range .}}
-    <tr><td>{{.Name}}</td>
+    <tr><td class="grow-2">{{.Name}}</td>
       <td{{if ne .Phase "Running"}} class="warnish"{{end}}>{{.Phase}}</td>
-      <td class="dim">{{.Version}}</td><td class="dim">{{.NodeName}}</td>
+      <td class="dim">{{.Version}}</td><td class="dim grow-2">{{.NodeName}}</td>
       <td class="r dim nowrap">{{age .Age}}</td></tr>
   {{end}}
   </tbody>
@@ -359,9 +363,9 @@
   <tbody>
   {{range .}}
     <tr{{if .ErrorMessage}} class="row-err"{{end}}>
-      <td>{{.Name}}</td><td class="dim">{{.State}}</td>
+      <td class="grow-2">{{.Name}}</td><td class="dim">{{.State}}</td>
       <td{{if .ErrorMessage}} class="errish"{{end}}>{{.OperationalStatus}}</td>
-      <td class="dim">{{.ConsumerName}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
+      <td class="dim grow-2">{{.ConsumerName}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
     {{if .ErrorMessage}}<tr class="row-err"><td colspan="5" class="errish indent">{{.ErrorMessage}}</td></tr>{{end}}
   {{end}}
   </tbody>
@@ -374,7 +378,7 @@
   <tbody>
   {{range .}}
     <tr>
-      <td>{{.Name}}</td><td class="dim">{{.Role}}</td>
+      <td class="grow">{{.Name}}</td><td class="dim">{{.Role}}</td>
       <td{{if not .Ready}} class="errish"{{else if .Cordoned}} class="warnish"{{end}}>
         {{.Status}}{{if .Cordoned}} &middot; cordoned{{end}}{{if .Pressure}} &middot; <span class="warnish">pressure</span>{{end}}</td>
       <td class="dim">{{.Version}}</td>

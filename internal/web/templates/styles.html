@@ -188,12 +188,30 @@
   }
   .dh-left { flex: 1 1 22rem; }
   .detail-head h2 { margin: 0; font-size: 1.15rem; }
-  .panes { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr)); }
+  /* Twelve explicit columns, with each pane declaring its own span.
+     auto-fit cannot be used here: it only collapses tracks that no item
+     occupies, and a full-width pane spanning 1/-1 occupies all of them. So the
+     wide panes pinned the grid open at six tracks and the two narrow panes at
+     the top each got one of them, leaving four tracks — most of the screen —
+     empty beside a pool name wrapped onto two lines. */
+  .panes { display: grid; gap: 1rem; grid-template-columns: repeat(12, 1fr); }
   .pane {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 6px; padding: .8rem 1rem 1rem; min-width: 0;
   }
-  .pane.wide { grid-column: 1 / -1; }
+  /* Full width is the default. A pane earns a narrower span by asking, which
+     means a new pane is never accidentally squeezed. */
+  .pane { grid-column: span 12; }
+  .pane.wide { grid-column: span 12; }
+  /* Two across once a half-pane has room to be useful, three once a third
+     does. The spans are chosen to fill the row exactly in both arrangements:
+     a pane left holding a gap beside it is the bug this replaced. */
+  @media (min-width: 52rem) {
+    .pane.half, .pane.third { grid-column: span 6; }
+  }
+  @media (min-width: 78rem) {
+    .pane.third { grid-column: span 4; }
+  }
   /* A pane arrived at from a card's deep link should not sit flush against the
      top of the viewport with its heading half under the browser chrome. */
   .pane[id] { scroll-margin-top: 1rem; }
@@ -223,9 +241,20 @@
   .errish { color: var(--err); }
   .row-err td { background: color-mix(in srgb, var(--err) 7%, transparent); }
   .indent { padding-left: 1rem; font-size: .74rem; }
-  /* Messages are the one unbounded column; let it take the slack and wrap
-     rather than pushing the numeric columns off the pane. */
+  /* Slack in a wide table has to be claimed, or auto layout spreads it evenly
+     across every column: on a 2300-pixel screen that puts six hundred pixels
+     between a machine's name and its phase, and no eye tracks a row across
+     that. A column that claims nearly the whole width leaves the rest at their
+     content width, which is what the short ones want anyway.
+     grow-2 is the same trick where two columns are both unbounded — a machine
+     and the node it runs on — and should share what is going spare. */
   .msg { width: 99%; word-break: break-word; }
+  .grow { width: 99%; }
+  .grow-2 { width: 49%; }
+  /* An identifier is one token and reads as one. Given a floor it stops
+     wrapping a replica set name onto three lines while the message column beside
+     it keeps the slack. */
+  .ident { min-width: 15rem; }
   /* An age is two short tokens and reads as one; letting "1m ago" wrap costs a
      second line on every row of the longest table on the page. */
   .nowrap { white-space: nowrap; }
