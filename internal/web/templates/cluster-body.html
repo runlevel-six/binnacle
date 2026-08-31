@@ -34,11 +34,11 @@
   <section class="pane {{$col}}">
     <h3>Node pools</h3>
     {{if .Pools}}
-    <table>
+    <table class="packed">
       <thead><tr><th>ROLE</th><th>NAME</th><th class="r">READY</th><th>VERSION</th><th></th></tr></thead>
       <tbody>
       {{range .Pools}}
-        <tr><td class="dim">{{.Role}}</td><td class="grow">{{.Name}}</td>
+        <tr><td class="dim nowrap">{{.Role}}</td><td>{{.Name}}</td>
           <td class="r{{if .Rolling}} warnish{{end}}">{{.Ready}}/{{.Desired}}</td>
           <td class="dim">{{.Version}}</td>
           <td>{{if .Paused}}<span class="frozen">paused</span>{{else if .Rolling}}<span class="rolling">rolling</span>{{end}}</td></tr>
@@ -77,15 +77,15 @@
   <section class="pane {{$col}}" id="pods">
     <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
     {{if .UnhealthyPods}}
-    <table>
+    <table class="packed">
       <thead><tr><th>POD</th><th class="r">READY</th><th>STATUS</th><th class="r">RESTARTS</th><th>NODE</th><th class="r">AGE</th></tr></thead>
       <tbody>
       {{range .UnhealthyPods}}
-        <tr><td class="grow-2">{{.Namespace}}/{{.Name}}</td>
+        <tr><td>{{.Namespace}}/{{.Name}}</td>
           <td class="r">{{.ReadyReady}}/{{.ReadyTotal}}</td>
           <td class="errish">{{.Status}}</td>
           <td class="r">{{.Restarts}}</td>
-          <td class="dim grow-2">{{.Node}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
+          <td class="dim">{{.Node}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
       {{end}}
       </tbody>
     </table>
@@ -267,11 +267,11 @@
       <div class="sub">
         <h4>Services</h4>
         {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
-        <table>
+        <table class="packed">
           <thead><tr><th>SERVICE</th><th class="r">AGENTS</th><th class="r">DISABLED</th></tr></thead>
           <tbody>
           {{range .Services}}
-            <tr><td class="grow">{{.Service}}</td>
+            <tr><td>{{.Service}}</td>
               <td class="r{{if lt .Up .Total}} errish{{end}}">{{.Up}}/{{.Total}}</td>
               <td class="r{{if .Disabled}} warnish{{end}}">{{if .Disabled}}{{.Disabled}}{{else}}&ndash;{{end}}</td></tr>
           {{end}}
@@ -351,13 +351,13 @@
      shape once keeps the two halves from drifting apart. */}}
 
 {{define "machine-table"}}
-<table>
+<table class="packed">
   <thead><tr><th>MACHINE</th><th>PHASE</th><th>VERSION</th><th>NODE</th><th class="r">AGE</th></tr></thead>
   <tbody>
   {{range .}}
-    <tr><td class="grow-2">{{.Name}}</td>
+    <tr><td>{{.Name}}</td>
       <td{{if ne .Phase "Running"}} class="warnish"{{end}}>{{.Phase}}</td>
-      <td class="dim">{{.Version}}</td><td class="dim grow-2">{{.NodeName}}</td>
+      <td class="dim">{{.Version}}</td><td class="dim">{{.NodeName}}</td>
       <td class="r dim nowrap">{{age .Age}}</td></tr>
   {{end}}
   </tbody>
@@ -365,14 +365,14 @@
 {{end}}
 
 {{define "host-table"}}
-<table>
+<table class="packed">
   <thead><tr><th>HOST</th><th>STATE</th><th>STATUS</th><th>CONSUMER</th><th class="r">AGE</th></tr></thead>
   <tbody>
   {{range .}}
     <tr{{if .ErrorMessage}} class="row-err"{{end}}>
-      <td class="grow-2">{{.Name}}</td><td class="dim">{{.State}}</td>
+      <td>{{.Name}}</td><td class="dim">{{.State}}</td>
       <td{{if .ErrorMessage}} class="errish"{{end}}>{{.OperationalStatus}}</td>
-      <td class="dim grow-2">{{.ConsumerName}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
+      <td class="dim">{{.ConsumerName}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
     {{if .ErrorMessage}}<tr class="row-err"><td colspan="5" class="errish indent">{{.ErrorMessage}}</td></tr>{{end}}
   {{end}}
   </tbody>
@@ -380,13 +380,13 @@
 {{end}}
 
 {{define "node-table"}}
-<table>
+<table class="packed">
   <thead><tr><th>NODE</th><th>ROLE</th><th>STATUS</th><th>VERSION</th><th class="r">CPU</th><th class="r">MEM</th><th class="r">AGE</th></tr></thead>
   <tbody>
   {{range .}}
     <tr>
-      <td class="grow">{{.Name}}</td><td class="dim">{{.Role}}</td>
-      <td{{if not .Ready}} class="errish"{{else if .Cordoned}} class="warnish"{{end}}>
+      <td>{{.Name}}</td><td class="dim nowrap">{{.Role}}</td>
+      <td class="nowrap{{if not .Ready}} errish{{else if .Cordoned}} warnish{{end}}">
         {{.Status}}{{if .Cordoned}} &middot; cordoned{{end}}{{if .Pressure}} &middot; <span class="warnish">pressure</span>{{end}}</td>
       <td class="dim">{{.Version}}</td>
       <td class="r">{{.CPUPercent}}%</td><td class="r">{{.MemPercent}}%</td>

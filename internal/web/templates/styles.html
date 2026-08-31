@@ -81,10 +81,15 @@
   .frozen  { color: var(--err); font-weight: 600; }
   .warnish { color: var(--warn); }
 
-  .pools { width: 100%; border-collapse: collapse; font-size: .8rem; margin-bottom: .7rem; }
+  /* Sized to its content, not to the card. Stretching it put a pool's ready
+     count seven hundred pixels from the pool it belongs to, which reads as two
+     unrelated columns rather than one row. */
+  .pools { width: auto; max-width: 100%; border-collapse: collapse; font-size: .8rem; margin-bottom: .7rem; }
   .pools td { padding: .12rem .4rem .12rem 0; white-space: nowrap; }
   .pool-role { color: var(--dim); text-transform: uppercase; font-size: .68rem; letter-spacing: .05em; }
-  .pool-name { color: var(--ink); width: 99%; overflow: hidden; text-overflow: ellipsis; max-width: 0; }
+  /* A pool name long enough to overflow a narrow card wraps rather than being
+     clipped: the tail of these names is the part that identifies them. */
+  .pool-name { color: var(--ink); white-space: normal; word-break: break-word; }
   .pool-n, .pool-v { font-variant-numeric: tabular-nums; text-align: right; }
   .pool-v { color: var(--dim); }
   .pool-rolling .pool-n { color: var(--warn); }
@@ -241,16 +246,18 @@
   .errish { color: var(--err); }
   .row-err td { background: color-mix(in srgb, var(--err) 7%, transparent); }
   .indent { padding-left: 1rem; font-size: .74rem; }
-  /* Slack in a wide table has to be claimed, or auto layout spreads it evenly
-     across every column: on a 2300-pixel screen that puts six hundred pixels
-     between a machine's name and its phase, and no eye tracks a row across
-     that. A column that claims nearly the whole width leaves the rest at their
-     content width, which is what the short ones want anyway.
-     grow-2 is the same trick where two columns are both unbounded — a machine
-     and the node it runs on — and should share what is going spare. */
+  /* Messages are the one genuinely unbounded column; let it take the slack and
+     wrap rather than pushing the numeric columns off the pane. */
   .msg { width: 99%; word-break: break-word; }
-  .grow { width: 99%; }
-  .grow-2 { width: 49%; }
+  /* A table of short columns must not be stretched across the pane at all.
+     Auto layout spreads the slack evenly between the columns; handing one
+     column 99% only moves the same slack inside it, and left-aligned text
+     leaves the whole gap trailing — a node name against a role heading eighteen
+     hundred pixels away. Both are the same mistake. What a reader wants is the
+     columns beside each other, with the leftover space out at the edge of the
+     pane where it does no harm. Only a table with an unbounded column of its
+     own — events, and its message — should fill the width. */
+  .pane table.packed { width: auto; max-width: 100%; }
   /* An identifier is one token and reads as one. Given a floor it stops
      wrapping a replica set name onto three lines while the message column beside
      it keeps the slack. */

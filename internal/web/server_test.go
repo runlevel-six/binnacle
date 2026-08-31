@@ -617,3 +617,44 @@ func TestClusterPage_ProblemsComeBeforeInventory(t *testing.T) {
 		t.Error("events rendered above the inventory")
 	}
 }
+
+// Tables of short columns are sized to their content. Stretching them across
+// the pane spreads the slack between the columns; handing one column 99% moves
+// the same slack inside it and leaves a node name eighteen hundred pixels from
+// its role. Only the events table, which has a genuinely unbounded message
+// column, should fill the width.
+func TestClusterPage_IdentifierTablesArePacked(t *testing.T) {
+	d := fleet.ClusterDetail{
+		ClusterView: fleet.ClusterView{
+			Namespace: "capi", Name: "tenant-01", NodesKnown: true,
+			Pools: []fleet.NodePool{{Role: "Control Plane", Name: "tenant-01-kcp", Ready: 3, Desired: 3}},
+		},
+		Machines: fleet.Split[model.Machine]{Shown: []model.Machine{{Name: "m-1", Phase: "Running"}}},
+		Hosts:    fleet.Split[model.BareMetalHost]{Shown: []model.BareMetalHost{{Name: "h-1", State: "provisioned"}}},
+		NodeRows: fleet.Split[fleet.NodeRow]{Shown: []fleet.NodeRow{{
+			Node: model.Node{Name: "node-1.site-a.example", Role: "control-plane", Status: "Ready"},
+		}}},
+		UnhealthyPods: []model.Pod{{Namespace: "ns", Name: "api-1", Status: "CrashLoopBackOff"}},
+		Events: fleet.GroupEvents([]model.Event{{
+			Type: "Warning", Reason: "Unhealthy", ObjectKind: "Pod", ObjectName: "api-1",
+			Message: "probe failed", LastTimestamp: time.Now(),
+		}}),
+	}
+
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+
+	// Node pools, machines, hosts, nodes, unhealthy pods.
+	if n := strings.Count(body, `<table class="packed">`); n != 5 {
+		t.Errorf("got %d packed tables, want 5", n)
+	}
+	// The growth columns that caused the regression must not come back.
+	for _, gone := range []string{`class="grow"`, `class="grow-2"`, `grow-2">`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("a growth column class is back on the page: %s", gone)
+		}
+	}
+	// Events still fills, and still claims its message column.
+	if !strings.Contains(body, `<td class="msg">probe failed</td>`) {
+		t.Error("the events message column lost its growth claim")
+	}
+}
