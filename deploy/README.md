@@ -53,9 +53,10 @@ kubectl -n binnacle create secret generic binnacle-oidc \
   --from-literal=session-key="$(head -c32 /dev/urandom | base64)"
 ```
 
-Set `session-key` explicitly rather than letting binnacle generate one. A
-generated key does not survive a restart, and sign-in then loops for anyone
-whose session predates it.
+`session-key` is any secret of at least 32 characters; base64 is what the line
+above produces but is not required. Set it explicitly rather than letting
+binnacle generate one — a generated key does not survive a restart, and sign-in
+then loops for anyone whose session predates it.
 
 Each deployment is independent, so each needs its own redirect URL registered
 with the identity provider — one client with several redirect URIs, or one

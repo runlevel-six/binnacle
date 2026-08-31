@@ -76,7 +76,8 @@ func run(args []string) error {
 		fmt.Fprintln(fs.Output(), "binnacle serves a fleet view of Cluster API clusters.")
 		fmt.Fprintln(fs.Output())
 		fmt.Fprintln(fs.Output(), "The OIDC client secret is read from $BINNACLE_OIDC_CLIENT_SECRET, and the")
-		fmt.Fprintln(fs.Output(), "session signing key from $BINNACLE_SESSION_KEY (base64, 32 bytes). Neither")
+		fmt.Fprintln(fs.Output(), "session signing key from $BINNACLE_SESSION_KEY (any secret of 32+ characters,")
+		fmt.Fprintln(fs.Output(), "or base64 of 32+ bytes). Neither")
 		fmt.Fprintln(fs.Output(), "is a flag: a command line is visible in the process table.")
 		fmt.Fprintln(fs.Output())
 		fs.PrintDefaults()
@@ -191,28 +192,46 @@ func buildAuth(ctx context.Context, o options) (web.Authenticator, error) {
 
 // sessionKey reads the cookie signing key, generating one if none was given.
 //
+// The value may be base64 or it may be the key itself. Base64 is what the
+// documented one-liner produces and what gets tried first, but a signing key is
+// opaque bytes, and rejecting a perfectly good random secret because it happens
+// not to be valid base64 is an implementation detail in an operator's way. The
+// error that produced — "illegal base64 data at input byte 0" — said nothing
+// about what to do next.
+//
 // A generated key works for a single replica and logs why it is not enough for
 // two: sessions signed by one pod are rejected by the other, and the symptom is
 // a login that loops rather than an error anyone can read.
 func sessionKey() ([]byte, error) {
-	if raw := os.Getenv("BINNACLE_SESSION_KEY"); raw != "" {
-		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
+	raw := strings.TrimSpace(os.Getenv("BINNACLE_SESSION_KEY"))
+	if raw == "" {
+		key, err := auth.NewSessionKey()
 		if err != nil {
-			return nil, fmt.Errorf("BINNACLE_SESSION_KEY is not valid base64: %w", err)
+			return nil, err
 		}
-		if len(key) < 32 {
-			return nil, fmt.Errorf("BINNACLE_SESSION_KEY is %d bytes; want at least 32", len(key))
-		}
+		log.Println("warning: BINNACLE_SESSION_KEY is unset, so a random key was generated. " +
+			"Sessions will not survive a restart, and with more than one replica sign-in will loop.")
 		return key, nil
 	}
-	key, err := auth.NewSessionKey()
-	if err != nil {
-		return nil, err
+
+	// Decoded base64, when that is what it is and it carries enough entropy.
+	// The length check matters: a 32-character secret that happens to be valid
+	// base64 decodes to 24 bytes, and the raw form is the better key.
+	if key, err := base64.StdEncoding.DecodeString(raw); err == nil && len(key) >= minSessionKey {
+		return key, nil
 	}
-	log.Println("warning: BINNACLE_SESSION_KEY is unset, so a random key was generated. " +
-		"Sessions will not survive a restart, and with more than one replica sign-in will loop.")
-	return key, nil
+	if len(raw) < minSessionKey {
+		return nil, fmt.Errorf(
+			"BINNACLE_SESSION_KEY is %d characters; want at least %d, or base64 of at least %d bytes",
+			len(raw), minSessionKey, minSessionKey)
+	}
+	return []byte(raw), nil
 }
+
+// minSessionKey is the shortest key accepted, in bytes. It is the size of the
+// HMAC-SHA256 block the key feeds, below which the extra length buys nothing
+// and above which a shorter secret is simply a weaker one.
+const minSessionKey = 32
 
 // managementConfig resolves credentials for the management cluster.
 //

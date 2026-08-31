@@ -76,8 +76,9 @@ is not valid at another, which is correct: they are separate services that
 happen to share a name.
 
 The client secret comes from `$BINNACLE_OIDC_CLIENT_SECRET` and the session
-signing key from `$BINNACLE_SESSION_KEY` (base64, at least 32 bytes). Neither is
-a flag, because a command line is visible in the process table. Set the session
+signing key from `$BINNACLE_SESSION_KEY` — any secret of at least 32 characters,
+or base64 of at least 32 bytes. Neither is a flag, because a command line is
+visible in the process table. Set the session
 key explicitly for more than one replica: sessions signed by one pod are
 rejected by the others, and the symptom is a sign-in that loops rather than an
 error anyone can read.
