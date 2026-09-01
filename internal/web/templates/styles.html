@@ -457,8 +457,19 @@
   .quiet > table { margin-top: .4rem; }
   @media print { .quiet > table { display: table; } }
 
+  /* A subsystem's headline, and the one block on the page that is not sized to
+     fit something else.
+     
+     It arrives as pre-formatted text — the plugin lays its own columns out with
+     spaces, the way it does in a terminal — so it cannot wrap, spread or share
+     a row, and at .76rem it read as cramped no matter how much room the pane
+     had around it. Wall mode was the tell: the same block at the same width is
+     comfortable there, and the only thing wall mode changes is the root font
+     size. So the fix is type, not layout. Larger than the tables around it
+     because it is a heading's worth of content, and open enough in the leading
+     that three dense monospace lines do not read as one. */
   .summary {
-    margin: 0; font-size: .76rem; color: var(--ink);
+    margin: .35rem 0 0; font-size: .85rem; line-height: 1.7; color: var(--ink);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
   }
   /* Network and Cloud hold several subsystems each. Nesting a grid inside the
