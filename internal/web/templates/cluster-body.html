@@ -27,135 +27,24 @@
   <p class="halfblind">OpenStack credentials: {{.CloudsProblem}}</p>
 {{end}}
 
-{{/* Two regions, and the split is about what each pane needs from the width.
+{{/* Two columns, each packing its own panes, and which pane goes where is a
+     decision rather than an outcome.
 
-     These five are lists of rows: node pools, the subsystem summary, unhealthy
-     pods, machines and hosts, nodes. Every one of them is content that reads
-     fine at half the page and whose height depends entirely on the data, which
-     is exactly what a grid handles worst — the row is as tall as its tallest
-     pane and the rest is a hole. They flow instead, packing down two columns.
+     Column one is what the workload cluster reports about itself: its nodes,
+     its subsystems, its network, its cloud, and the pods that are unwell.
+     Column two is what Cluster API reports about it: the pools it is built
+     from, the machines and hardware underneath them, and the events both sides
+     emit.
 
-     The panes below need width rather than packing: the network pane's three
-     sections, the cloud pane's tables, the events message column. Those stay in
-     the twelve-column grid. */}}
-<div class="panes flow">
-  <section class="pane">
-    <h3>Node pools</h3>
-    {{if .Pools}}
-    {{/* Four columns, not five: the paused/rolling flag qualifies the version
-         and belongs in the same cell as it. As a column of its own it was
-         spread a quarter of a pane away from the thing it describes, and read
-         as an unrelated word floating in the row. */}}
-    <table class="packed cols-4 spread">
-      <thead><tr><th>ROLE</th><th>NAME</th><th class="r">READY</th><th>VERSION</th></tr></thead>
-      <tbody>
-      {{range .Pools}}
-        <tr><td class="dim nowrap">{{.Role}}</td><td>{{.Name}}</td>
-          <td class="r{{if .Rolling}} warnish{{end}}">{{.Ready}}/{{.Desired}}</td>
-          <td class="dim nowrap">{{.Version}}{{if .Paused}} <span class="frozen">paused</span>{{else if .Rolling}} <span class="rolling">rolling</span>{{end}}</td></tr>
-      {{end}}
-      </tbody>
-    </table>
-    {{else}}<p class="empty">Nothing reported.</p>{{end}}
-
-    {{if .NodesKnown}}
-    <div class="nums">
-      <div class="num"><div class="k">Nodes</div><div class="v">{{.Nodes.Ready}}/{{.Nodes.Total}}{{if .Nodes.Cordoned}} <span class="warnish">{{.Nodes.Cordoned}} cordoned</span>{{end}}</div></div>
-      {{if .Capacity.Known}}
-      <div class="num"><div class="k">CPU committed</div><div class="v">{{.Capacity.CPUPercent}}%</div></div>
-      <div class="num"><div class="k">Memory committed</div><div class="v">{{.Capacity.MemPercent}}%</div></div>
-      {{end}}
-    </div>
-    {{end}}
-    {{if .Workloads}}
-    <div class="workloads">
-      {{range .Workloads}}<span class="wl{{if .Degraded}} degraded{{end}}">{{.Kind}} {{.Ready}}/{{.Total}}</span>{{end}}
-    </div>
-    {{end}}
-  </section>
-
-  {{if .Summaries}}
-  <section class="pane">
-    <h3>Subsystems</h3>
-    {{range .Summaries}}
-      <h4>{{.Title}}</h4>
-      <pre class="summary">{{range .Lines}}{{.}}
-{{end}}</pre>
-    {{end}}
-  </section>
-  {{end}}
-
-  <section class="pane" id="pods">
-    <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
-    {{if .UnhealthyPods}}
-    <table class="packed cols-6 spread">
-      <thead><tr><th>POD</th><th class="r">READY</th><th>STATUS</th><th class="r">RESTARTS</th><th>NODE</th><th class="r">AGE</th></tr></thead>
-      <tbody>
-      {{range .UnhealthyPods}}
-        <tr><td>{{.Namespace}}/{{.Name}}</td>
-          <td class="r">{{.ReadyReady}}/{{.ReadyTotal}}</td>
-          <td class="errish">{{.Status}}</td>
-          <td class="r">{{.Restarts}}</td>
-          <td class="dim">{{.Node}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
-      {{end}}
-      </tbody>
-    </table>
-    {{if .PodsTruncated}}<p class="empty">{{.PodsTruncated}} more not shown.</p>{{end}}
-    {{else if .NodesKnown}}<p class="empty">Every pod is healthy.</p>
-    {{else}}<p class="empty">Not reported.</p>{{end}}
-  </section>
-
-  {{/* Both of these pack to roughly a quarter of a full-width pane, and at
-       production scale both fold most of their rows away, so they are short as
-       well as narrow. Side by side they waste half as much width and a whole
-       screen less height. */}}
-  <section class="pane">
-    <h3>Machines &amp; hosts{{if .Machines.Total}} <span class="count">{{.Machines.Total}} machines &middot; {{.Hosts.Total}} host{{if ne .Hosts.Total 1}}s{{end}}</span>{{end}}</h3>
-    {{if .Machines.Shown}}{{template "machine-table" .Machines.Shown}}
-    {{else if .Machines.Total}}<p class="empty">Every machine is Running.</p>
-    {{else}}<p class="empty">No machines reported.</p>{{end}}
-    {{if .Machines.Quiet}}
-    <details class="quiet" id="quiet-machines">
-      <summary>{{len .Machines.Quiet}} machines Running</summary>
-      {{template "machine-table" .Machines.Quiet}}
-    </details>
-    {{end}}
-
-    {{if .Hosts.Shown}}<div class="spaced">{{template "host-table" .Hosts.Shown}}</div>
-    {{else if .Hosts.Total}}<p class="empty spaced">Every host is provisioned without error.</p>
-    {{else if .Machines.Total}}<p class="empty spaced">No hosts are claimed by this cluster's machines.</p>{{end}}
-    {{if .Hosts.Quiet}}
-    <details class="quiet" id="quiet-hosts">
-      <summary>{{len .Hosts.Quiet}} hosts provisioned without error</summary>
-      {{template "host-table" .Hosts.Quiet}}
-    </details>
-    {{end}}
-    {{/* The snapshot is datacenter-wide. Saying so is the difference between a
-         pane that shows this cluster's hosts and one that appears to show every
-         host there is. */}}
-    {{if .HostsElsewhere}}
-    <p class="empty footnote">{{.HostsElsewhere}} further host{{if ne .HostsElsewhere 1}}s{{end}} in this datacenter belong to other clusters or to no cluster at all, and are not listed here.</p>
-    {{end}}
-  </section>
-
-  <section class="pane" id="nodes">
-    <h3>Nodes{{if .NodeRows.Total}} <span class="count">{{.NodeRows.Total}}</span>{{end}}</h3>
-    {{if .NodeRows.Shown}}{{template "node-table" .NodeRows.Shown}}
-    {{else if .NodeRows.Total}}<p class="empty">Every node is Ready and schedulable.</p>
-    {{else}}<p class="empty">No nodes reported.</p>{{end}}
-    {{if .NodeRows.Quiet}}
-    <details class="quiet" id="quiet-nodes">
-      <summary>{{len .NodeRows.Quiet}} nodes Ready and schedulable</summary>
-      {{template "node-table" .NodeRows.Quiet}}
-    </details>
-    {{end}}
-  </section>
-
-
-</div>
-
+     Within a column the order is fixed except for one rule: the two panes whose
+     height is decided by whatever is happening right now — unhealthy pods and
+     events — go last. During maintenance either can run to sixty rows, and last
+     is the only place where that costs nothing. Everything above them keeps its
+     position however the day is going. */}}
+{{/* Above the columns, and full width: what a reader is *not* being shown is
+     not a column's worth of news, and it qualifies everything below it. */}}
+{{if .Subsystems.Reduced}}
 <div class="panes">
-  {{if .Subsystems.Reduced}}
   <section class="pane wide">
     <h3>Reporting below full detail</h3>
     <table>
@@ -166,212 +55,321 @@
       </tbody>
     </table>
   </section>
-  {{end}}
+</div>
+{{end}}
 
-  {{/* $pair is set only when both panes exist. A single paired pane would sit
-       in half a row with a gap beside it, which is the bug the explicit grid
-       replaced. */}}
-  {{$pair := "wide"}}{{if and .Subsystems.Network .Subsystems.Cloud}}{{$pair = "wide paired"}}{{end}}
-  {{if .Subsystems.Network}}
-  <section class="pane {{$pair}}">
-    <h3>Network</h3>
-    <div class="panes inner">
-
-      {{with .Subsystems.Cilium}}
-      <div class="sub">
-        <h4>Cilium</h4>
-        {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
-        <table>
-          <tbody>
-            <tr><td class="dim">agents</td><td>{{.AgentsReady}}/{{.AgentsDesired}}</td>
-              <td>{{if not .Rollout.Converged}}<span class="rolling">{{.Rollout.Updated}}/{{.Rollout.Desired}} updated{{if .Rollout.Manual}} &middot; manual{{end}}</span>{{end}}</td></tr>
-            {{if .Status.Version}}<tr><td class="dim">version</td><td colspan="2">{{.Status.Version}}</td></tr>{{end}}
-            {{if .Status.State}}<tr><td class="dim">state</td><td colspan="2">{{.Status.State}}</td></tr>{{end}}
-            {{if .Status.KubeProxyReplacement}}<tr><td class="dim">kube-proxy</td><td colspan="2">{{.Status.KubeProxyText}}</td></tr>{{end}}
-            {{if .Status.EncryptionMode}}<tr><td class="dim">encryption</td><td colspan="2">{{.Status.EncryptionMode}}</td></tr>{{end}}
-            {{if .Status.IPAM.ExhaustionKnown}}
-            <tr><td class="dim">ipam</td>
-              <td{{if gt .Status.IPAM.Percent 85}} class="warnish"{{end}}>{{.Status.IPAM.Percent}}%</td>
-              <td class="dim">{{.Status.IPAM.Used}}/{{.Status.IPAM.Total}}{{if .Pod}} on {{.Pod}}{{end}}</td></tr>
-            {{end}}
-            {{if .Status.Controllers.Failing}}<tr><td class="dim">controllers</td>
-              <td class="errish">{{.Status.Controllers.Failing}} failing</td><td class="dim">of {{.Status.Controllers.Total}}</td></tr>{{end}}
-          </tbody>
-        </table>
-        {{if .Status.Unreadable}}<p class="empty">unreadable: {{range $i, $u := .Status.Unreadable}}{{if $i}}, {{end}}{{$u}}{{end}}</p>{{end}}
-        {{end}}
-      </div>
+<div class="columns">
+  <div class="col">
+    <section class="pane" id="nodes">
+      <h3>Nodes{{if .NodeRows.Total}} <span class="count">{{.NodeRows.Total}}</span>{{end}}</h3>
+      {{if .NodeRows.Shown}}{{template "node-table" .NodeRows.Shown}}
+      {{else if .NodeRows.Total}}<p class="empty">Every node is Ready and schedulable.</p>
+      {{else}}<p class="empty">No nodes reported.</p>{{end}}
+      {{if .NodeRows.Quiet}}
+      <details class="quiet" id="quiet-nodes">
+        <summary>{{len .NodeRows.Quiet}} nodes Ready and schedulable</summary>
+        {{template "node-table" .NodeRows.Quiet}}
+      </details>
       {{end}}
+    </section>
 
-      {{with .Subsystems.OVN}}
-      <div class="sub">
-        <h4>OVN</h4>
-        {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
-        {{if .Statuses}}
-        <table>
-          <thead><tr><th>DB</th><th>ROLE</th><th class="r">TERM</th><th>LEADER</th><th class="r">MEMBERS</th></tr></thead>
-          <tbody>
-          {{range .Statuses}}
-            <tr><td>{{.Database}}</td>
-              <td{{if .IsLeader}} class="okish"{{end}}>{{.Role}}</td>
-              <td class="r dim">{{.Term}}</td>
-              <td class="dim">{{.LeaderName}}</td>
-              <td class="r">{{len .Servers}}</td></tr>
-          {{end}}
-          </tbody>
-        </table>
-        {{else}}<p class="empty">Raft status not readable.</p>{{end}}
-        {{if .Components}}
-        <table class="spaced">
-          <thead><tr><th>COMPONENT</th><th class="r">UPDATED</th><th></th></tr></thead>
-          <tbody>
-          {{range .Components}}
-            <tr><td>{{.Name}}</td>
-              <td class="r{{if not .Converged}} warnish{{end}}">{{.Updated}}/{{.Desired}}</td>
-              <td>{{if .Manual}}<span class="warnish">manual</span>{{end}}</td></tr>
-          {{end}}
-          </tbody>
-        </table>
-        {{end}}
-        {{end}}
-      </div>
+    {{if .Summaries}}
+    <section class="pane">
+      <h3>Subsystems</h3>
+      {{range .Summaries}}
+        <h4>{{.Title}}</h4>
+        <pre class="summary">{{range .Lines}}{{.}}
+  {{end}}</pre>
       {{end}}
+    </section>
+    {{end}}
 
-      {{with .Subsystems.MetalLB}}
-      <div class="sub">
-        <h4>MetalLB</h4>
-        {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
-        <table>
-          <thead><tr><th>POOL</th><th>ADDRESSES</th><th>ADVERTISED</th><th class="r">IN USE</th></tr></thead>
-          <tbody>
-          {{range .Pools}}
-            <tr><td>{{.Name}}</td>
-              <td class="dim wrap">{{range $i, $a := .Addresses}}{{if $i}}, {{end}}{{$a}}{{end}}</td>
-              <td{{if not .Advertised}} class="errish"{{end}}>{{if .Advertised}}{{range $i, $a := .Advertised}}{{if $i}}/{{end}}{{$a}}{{end}}{{else}}none{{end}}</td>
-              <td class="r">{{.Assigned}}{{if .Available}}/{{add .Assigned .Available}}{{end}}</td></tr>
+    {{if .Subsystems.Network}}
+    <section class="pane">
+      <h3>Network</h3>
+      <div class="panes inner">
+
+        {{with .Subsystems.Cilium}}
+        <div class="sub">
+          <h4>Cilium</h4>
+          {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
+          <table>
+            <tbody>
+              <tr><td class="dim">agents</td><td>{{.AgentsReady}}/{{.AgentsDesired}}</td>
+                <td>{{if not .Rollout.Converged}}<span class="rolling">{{.Rollout.Updated}}/{{.Rollout.Desired}} updated{{if .Rollout.Manual}} &middot; manual{{end}}</span>{{end}}</td></tr>
+              {{if .Status.Version}}<tr><td class="dim">version</td><td colspan="2">{{.Status.Version}}</td></tr>{{end}}
+              {{if .Status.State}}<tr><td class="dim">state</td><td colspan="2">{{.Status.State}}</td></tr>{{end}}
+              {{if .Status.KubeProxyReplacement}}<tr><td class="dim">kube-proxy</td><td colspan="2">{{.Status.KubeProxyText}}</td></tr>{{end}}
+              {{if .Status.EncryptionMode}}<tr><td class="dim">encryption</td><td colspan="2">{{.Status.EncryptionMode}}</td></tr>{{end}}
+              {{if .Status.IPAM.ExhaustionKnown}}
+              <tr><td class="dim">ipam</td>
+                <td{{if gt .Status.IPAM.Percent 85}} class="warnish"{{end}}>{{.Status.IPAM.Percent}}%</td>
+                <td class="dim">{{.Status.IPAM.Used}}/{{.Status.IPAM.Total}}{{if .Pod}} on {{.Pod}}{{end}}</td></tr>
+              {{end}}
+              {{if .Status.Controllers.Failing}}<tr><td class="dim">controllers</td>
+                <td class="errish">{{.Status.Controllers.Failing}} failing</td><td class="dim">of {{.Status.Controllers.Total}}</td></tr>{{end}}
+            </tbody>
+          </table>
+          {{if .Status.Unreadable}}<p class="empty">unreadable: {{range $i, $u := .Status.Unreadable}}{{if $i}}, {{end}}{{$u}}{{end}}</p>{{end}}
           {{end}}
-          </tbody>
-        </table>
-        <div class="nums">
-          <div class="num"><div class="k">Speakers</div><div class="v">{{.SpeakerReady}}/{{.SpeakerDesired}}</div></div>
-          {{if .PendingServices}}<div class="num"><div class="k">Pending services</div><div class="v warnish">{{.PendingServices}}</div></div>{{end}}
         </div>
-        {{if .UnadvertisedPools}}<p class="halfblind">Pools handing out addresses nothing announces: {{range $i, $p := .UnadvertisedPools}}{{if $i}}, {{end}}{{$p}}{{end}}</p>{{end}}
         {{end}}
-      </div>
-      {{end}}
 
-    </div>
-  </section>
-  {{end}}
-
-  {{if .Subsystems.Cloud}}
-  <section class="pane {{$pair}}">
-    <h3>Cloud</h3>
-
-    {{if .Drains}}
-    <h4>Draining hosts</h4>
-    <table class="packed cols-4">
-      <thead><tr><th>HOST</th><th class="r">REMAINING</th><th class="r">MOVING</th><th class="r">STUCK</th></tr></thead>
-      <tbody>
-      {{range .Drains}}
-        <tr><td>{{.Host}}</td>
-          <td class="r">{{.Remaining}}</td>
-          <td class="r{{if and .Remaining (not .Moving)}} warnish{{end}}">{{.Moving}}</td>
-          <td class="r{{if .Stuck}} errish{{end}}">{{.Stuck}}</td></tr>
-      {{end}}
-      </tbody>
-    </table>
-    {{end}}
-
-    <div class="panes inner">
-      {{with .Subsystems.OpenStack}}
-      <div class="sub">
-        <h4>Services</h4>
-        {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
-        <table class="packed cols-3">
-          <thead><tr><th>SERVICE</th><th class="r">AGENTS</th><th class="r">DISABLED</th></tr></thead>
-          <tbody>
-          {{range .Services}}
-            <tr><td>{{.Service}}</td>
-              <td class="r{{if lt .Up .Total}} errish{{end}}">{{.Up}}/{{.Total}}</td>
-              <td class="r{{if .Disabled}} warnish{{end}}">{{if .Disabled}}{{.Disabled}}{{else}}&ndash;{{end}}</td></tr>
+        {{with .Subsystems.OVN}}
+        <div class="sub">
+          <h4>OVN</h4>
+          {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
+          {{if .Statuses}}
+          <table>
+            <thead><tr><th>DB</th><th>ROLE</th><th class="r">TERM</th><th>LEADER</th><th class="r">MEMBERS</th></tr></thead>
+            <tbody>
+            {{range .Statuses}}
+              <tr><td>{{.Database}}</td>
+                <td{{if .IsLeader}} class="okish"{{end}}>{{.Role}}</td>
+                <td class="r dim">{{.Term}}</td>
+                <td class="dim">{{.LeaderName}}</td>
+                <td class="r">{{len .Servers}}</td></tr>
+            {{end}}
+            </tbody>
+          </table>
+          {{else}}<p class="empty">Raft status not readable.</p>{{end}}
+          {{if .Components}}
+          <table class="spaced">
+            <thead><tr><th>COMPONENT</th><th class="r">UPDATED</th><th></th></tr></thead>
+            <tbody>
+            {{range .Components}}
+              <tr><td>{{.Name}}</td>
+                <td class="r{{if not .Converged}} warnish{{end}}">{{.Updated}}/{{.Desired}}</td>
+                <td>{{if .Manual}}<span class="warnish">manual</span>{{end}}</td></tr>
+            {{end}}
+            </tbody>
+          </table>
           {{end}}
-          </tbody>
-        </table>
-        {{end}}
-      </div>
-      {{end}}
-
-      {{with .Subsystems.Inventory}}
-      <div class="sub">
-        <h4>Resources</h4>
-        {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
-        <table>
-          <tbody>
-          {{range .Counts}}
-            <tr><td class="dim nowrap">{{.Label}}</td>
-              {{if .Absent}}<td colspan="2" class="empty">not deployed</td>
-              {{else if .Err}}<td colspan="2" class="errish">unreadable</td>
-              {{else}}<td class="r">{{.Total}}</td>
-              {{/* Ordered by sextant's StateCounts rather than by iterating the
-                   map, so the bulk state leads here exactly as it does in the
-                   dashboard. Each state and its count is one unbreakable unit:
-                   a line wrapping between them turned "IN-USE 71" into a state
-                   with no number followed by a number with no state. */}}
-              <td class="dim msg">{{range states .ByState}}<span class="state{{if .Error}} errish{{end}}">{{.State}} {{.Count}}</span> {{end}}</td>{{end}}</tr>
           {{end}}
-          </tbody>
-        </table>
+        </div>
+        {{end}}
+
+        {{with .Subsystems.MetalLB}}
+        <div class="sub">
+          <h4>MetalLB</h4>
+          {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
+          <table>
+            <thead><tr><th>POOL</th><th>ADDRESSES</th><th>ADVERTISED</th><th class="r">IN USE</th></tr></thead>
+            <tbody>
+            {{range .Pools}}
+              <tr><td>{{.Name}}</td>
+                <td class="dim wrap">{{range $i, $a := .Addresses}}{{if $i}}, {{end}}{{$a}}{{end}}</td>
+                <td{{if not .Advertised}} class="errish"{{end}}>{{if .Advertised}}{{range $i, $a := .Advertised}}{{if $i}}/{{end}}{{$a}}{{end}}{{else}}none{{end}}</td>
+                <td class="r">{{.Assigned}}{{if .Available}}/{{add .Assigned .Available}}{{end}}</td></tr>
+            {{end}}
+            </tbody>
+          </table>
+          <div class="nums">
+            <div class="num"><div class="k">Speakers</div><div class="v">{{.SpeakerReady}}/{{.SpeakerDesired}}</div></div>
+            {{if .PendingServices}}<div class="num"><div class="k">Pending services</div><div class="v warnish">{{.PendingServices}}</div></div>{{end}}
+          </div>
+          {{if .UnadvertisedPools}}<p class="halfblind">Pools handing out addresses nothing announces: {{range $i, $p := .UnadvertisedPools}}{{if $i}}, {{end}}{{$p}}{{end}}</p>{{end}}
+          {{end}}
+        </div>
+        {{end}}
+
+      </div>
+    </section>
+    {{end}}
+
+    {{if .Subsystems.Cloud}}
+    <section class="pane">
+      <h3>Cloud</h3>
+
+      {{if .Drains}}
+      <h4>Draining hosts</h4>
+      <table class="packed cols-4">
+        <thead><tr><th>HOST</th><th class="r">REMAINING</th><th class="r">MOVING</th><th class="r">STUCK</th></tr></thead>
+        <tbody>
+        {{range .Drains}}
+          <tr><td>{{.Host}}</td>
+            <td class="r">{{.Remaining}}</td>
+            <td class="r{{if and .Remaining (not .Moving)}} warnish{{end}}">{{.Moving}}</td>
+            <td class="r{{if .Stuck}} errish{{end}}">{{.Stuck}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{end}}
+
+      <div class="panes inner">
+        {{with .Subsystems.OpenStack}}
+        <div class="sub">
+          <h4>Services</h4>
+          {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
+          <table class="packed cols-3">
+            <thead><tr><th>SERVICE</th><th class="r">AGENTS</th><th class="r">DISABLED</th></tr></thead>
+            <tbody>
+            {{range .Services}}
+              <tr><td>{{.Service}}</td>
+                <td class="r{{if lt .Up .Total}} errish{{end}}">{{.Up}}/{{.Total}}</td>
+                <td class="r{{if .Disabled}} warnish{{end}}">{{if .Disabled}}{{.Disabled}}{{else}}&ndash;{{end}}</td></tr>
+            {{end}}
+            </tbody>
+          </table>
+          {{end}}
+        </div>
+        {{end}}
+
+        {{with .Subsystems.Inventory}}
+        <div class="sub">
+          <h4>Resources</h4>
+          {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
+          <table>
+            <tbody>
+            {{range .Counts}}
+              <tr><td class="dim nowrap">{{.Label}}</td>
+                {{if .Absent}}<td colspan="2" class="empty">not deployed</td>
+                {{else if .Err}}<td colspan="2" class="errish">unreadable</td>
+                {{else}}<td class="r">{{.Total}}</td>
+                {{/* Ordered by sextant's StateCounts rather than by iterating the
+                     map, so the bulk state leads here exactly as it does in the
+                     dashboard. Each state and its count is one unbreakable unit:
+                     a line wrapping between them turned "IN-USE 71" into a state
+                     with no number followed by a number with no state. */}}
+                <td class="dim msg">{{range states .ByState}}<span class="state{{if .Error}} errish{{end}}">{{.State}} {{.Count}}</span> {{end}}</td>{{end}}</tr>
+            {{end}}
+            </tbody>
+          </table>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+
+      {{if .Shown.Rows}}
+      <h4>Server migrations{{if .Shown.Failures}} <span class="count">{{.Shown.Failures}} failed</span>{{end}}</h4>
+      <table class="packed cols-6 spread">
+        <thead><tr><th>SERVER</th><th>TYPE</th><th>STATUS</th><th>FROM</th><th>TO</th><th class="r">AGE</th></tr></thead>
+        <tbody>
+        {{range .Shown.Rows}}
+          {{/* The instance UUID, shortened the way the dashboard shortens it: a
+               full UUID is thirty-six characters beside two compute hostnames,
+               and the eight that identify it are the eight anybody reads. The
+               whole value stays on the row for a copy. */}}
+          <tr><td class="ident" title="{{.InstanceUUID}}">{{shortID .InstanceUUID}}</td>
+            <td class="dim">{{shortType .Type}}</td>
+            <td{{if failed .Status}} class="errish"{{else if active .Status}} class="warnish"{{end}}>{{shortStatus .Status}}</td>
+            <td class="dim">{{.SourceCompute}}</td><td class="dim">{{.DestCompute}}</td>
+            <td class="r dim">{{ago .UpdatedAt}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{end}}
+    </section>
+    {{end}}
+
+    <section class="pane" id="pods">
+      <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
+      {{if .UnhealthyPods}}
+      <table class="packed cols-6 spread">
+        <thead><tr><th>POD</th><th class="r">READY</th><th>STATUS</th><th class="r">RESTARTS</th><th>NODE</th><th class="r">AGE</th></tr></thead>
+        <tbody>
+        {{range .UnhealthyPods}}
+          <tr><td>{{.Namespace}}/{{.Name}}</td>
+            <td class="r">{{.ReadyReady}}/{{.ReadyTotal}}</td>
+            <td class="errish">{{.Status}}</td>
+            <td class="r">{{.Restarts}}</td>
+            <td class="dim">{{.Node}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{if .PodsTruncated}}<p class="empty">{{.PodsTruncated}} more not shown.</p>{{end}}
+      {{else if .NodesKnown}}<p class="empty">Every pod is healthy.</p>
+      {{else}}<p class="empty">Not reported.</p>{{end}}
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="pane">
+      <h3>Node pools</h3>
+      {{if .Pools}}
+      {{/* Four columns, not five: the paused/rolling flag qualifies the version
+           and belongs in the same cell as it. As a column of its own it was
+           spread a quarter of a pane away from the thing it describes, and read
+           as an unrelated word floating in the row. */}}
+      <table class="packed cols-4 spread">
+        <thead><tr><th>ROLE</th><th>NAME</th><th class="r">READY</th><th>VERSION</th></tr></thead>
+        <tbody>
+        {{range .Pools}}
+          <tr><td class="dim nowrap">{{.Role}}</td><td>{{.Name}}</td>
+            <td class="r{{if .Rolling}} warnish{{end}}">{{.Ready}}/{{.Desired}}</td>
+            <td class="dim nowrap">{{.Version}}{{if .Paused}} <span class="frozen">paused</span>{{else if .Rolling}} <span class="rolling">rolling</span>{{end}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{else}}<p class="empty">Nothing reported.</p>{{end}}
+
+      {{if .NodesKnown}}
+      <div class="nums">
+        <div class="num"><div class="k">Nodes</div><div class="v">{{.Nodes.Ready}}/{{.Nodes.Total}}{{if .Nodes.Cordoned}} <span class="warnish">{{.Nodes.Cordoned}} cordoned</span>{{end}}</div></div>
+        {{if .Capacity.Known}}
+        <div class="num"><div class="k">CPU committed</div><div class="v">{{.Capacity.CPUPercent}}%</div></div>
+        <div class="num"><div class="k">Memory committed</div><div class="v">{{.Capacity.MemPercent}}%</div></div>
         {{end}}
       </div>
       {{end}}
-    </div>
-
-    {{if .Shown.Rows}}
-    <h4>Server migrations{{if .Shown.Failures}} <span class="count">{{.Shown.Failures}} failed</span>{{end}}</h4>
-    <table class="packed cols-6 spread">
-      <thead><tr><th>SERVER</th><th>TYPE</th><th>STATUS</th><th>FROM</th><th>TO</th><th class="r">AGE</th></tr></thead>
-      <tbody>
-      {{range .Shown.Rows}}
-        {{/* The instance UUID, shortened the way the dashboard shortens it: a
-             full UUID is thirty-six characters beside two compute hostnames,
-             and the eight that identify it are the eight anybody reads. The
-             whole value stays on the row for a copy. */}}
-        <tr><td class="ident" title="{{.InstanceUUID}}">{{shortID .InstanceUUID}}</td>
-          <td class="dim">{{shortType .Type}}</td>
-          <td{{if failed .Status}} class="errish"{{else if active .Status}} class="warnish"{{end}}>{{shortStatus .Status}}</td>
-          <td class="dim">{{.SourceCompute}}</td><td class="dim">{{.DestCompute}}</td>
-          <td class="r dim">{{ago .UpdatedAt}}</td></tr>
+      {{if .Workloads}}
+      <div class="workloads">
+        {{range .Workloads}}<span class="wl{{if .Degraded}} degraded{{end}}">{{.Kind}} {{.Ready}}/{{.Total}}</span>{{end}}
+      </div>
       {{end}}
-      </tbody>
-    </table>
-    {{end}}
-  </section>
-  {{end}}
+    </section>
 
+    <section class="pane">
+      <h3>Machines &amp; hosts{{if .Machines.Total}} <span class="count">{{.Machines.Total}} machines &middot; {{.Hosts.Total}} host{{if ne .Hosts.Total 1}}s{{end}}</span>{{end}}</h3>
+      {{if .Machines.Shown}}{{template "machine-table" .Machines.Shown}}
+      {{else if .Machines.Total}}<p class="empty">Every machine is Running.</p>
+      {{else}}<p class="empty">No machines reported.</p>{{end}}
+      {{if .Machines.Quiet}}
+      <details class="quiet" id="quiet-machines">
+        <summary>{{len .Machines.Quiet}} machines Running</summary>
+        {{template "machine-table" .Machines.Quiet}}
+      </details>
+      {{end}}
 
-  <section class="pane wide">
-    <h3>Events{{if .Events.Total}} <span class="count">{{.Events.Total}}{{if .EventsTruncated}} of {{add .Events.Total .EventsTruncated}}{{end}} group{{if ne (add .Events.Total .EventsTruncated) 1}}s{{end}} &middot; {{.EventsTotal}} event{{if ne .EventsTotal 1}}s{{end}}</span>{{end}}</h3>
-    {{if .Events.Shown}}{{template "event-table" .Events.Shown}}
-    {{else if not .Events.Total}}<p class="empty">No events reported.</p>{{end}}
-    {{/* Normal events are the audit trail, not the pane: on a production
-         cluster an etcd backup CronJob alone fills forty rows an hour, and
-         unfolded they bury the warnings above them. */}}
-    {{if .Events.Quiet}}
-    <details class="quiet" id="quiet-events">
-      <summary>{{if not .Events.Shown}}No warnings &middot; {{end}}{{len .Events.Quiet}} Normal event group{{if ne (len .Events.Quiet) 1}}s{{end}}</summary>
-      {{template "event-table" .Events.Quiet}}
-    </details>
-    {{end}}
-    {{if .EventsTruncated}}<p class="empty">{{.EventsTruncated}} more group{{if ne .EventsTruncated 1}}s{{end}} not shown.</p>{{end}}
-    {{/* The management snapshot is namespace-wide, and the namespace holds every
-         cluster in the datacenter. Saying so is the difference between a pane
-         showing this cluster's events and one that appears to. */}}
-    {{if .EventsElsewhere}}
-    <p class="empty footnote">{{.EventsElsewhere}} further management event{{if ne .EventsElsewhere 1}}s{{end}} in this namespace belong to other clusters or to no cluster at all, and are not listed here.</p>
-    {{end}}
-  </section>
+      {{if .Hosts.Shown}}<div class="spaced">{{template "host-table" .Hosts.Shown}}</div>
+      {{else if .Hosts.Total}}<p class="empty spaced">Every host is provisioned without error.</p>
+      {{else if .Machines.Total}}<p class="empty spaced">No hosts are claimed by this cluster's machines.</p>{{end}}
+      {{if .Hosts.Quiet}}
+      <details class="quiet" id="quiet-hosts">
+        <summary>{{len .Hosts.Quiet}} hosts provisioned without error</summary>
+        {{template "host-table" .Hosts.Quiet}}
+      </details>
+      {{end}}
+      {{/* The snapshot is datacenter-wide. Saying so is the difference between a
+           pane that shows this cluster's hosts and one that appears to show every
+           host there is. */}}
+      {{if .HostsElsewhere}}
+      <p class="empty footnote">{{.HostsElsewhere}} further host{{if ne .HostsElsewhere 1}}s{{end}} in this datacenter belong to other clusters or to no cluster at all, and are not listed here.</p>
+      {{end}}
+    </section>
+
+    <section class="pane">
+      <h3>Events{{if .Events.Total}} <span class="count">{{.Events.Total}}{{if .EventsTruncated}} of {{add .Events.Total .EventsTruncated}}{{end}} group{{if ne (add .Events.Total .EventsTruncated) 1}}s{{end}} &middot; {{.EventsTotal}} event{{if ne .EventsTotal 1}}s{{end}}</span>{{end}}</h3>
+      {{if .Events.Shown}}{{template "event-table" .Events.Shown}}
+      {{else if not .Events.Total}}<p class="empty">No events reported.</p>{{end}}
+      {{/* Normal events are the audit trail, not the pane: on a production
+           cluster an etcd backup CronJob alone fills forty rows an hour, and
+           unfolded they bury the warnings above them. */}}
+      {{if .Events.Quiet}}
+      <details class="quiet" id="quiet-events">
+        <summary>{{if not .Events.Shown}}No warnings &middot; {{end}}{{len .Events.Quiet}} Normal event group{{if ne (len .Events.Quiet) 1}}s{{end}}</summary>
+        {{template "event-table" .Events.Quiet}}
+      </details>
+      {{end}}
+      {{if .EventsTruncated}}<p class="empty">{{.EventsTruncated}} more group{{if ne .EventsTruncated 1}}s{{end}} not shown.</p>{{end}}
+      {{/* The management snapshot is namespace-wide, and the namespace holds every
+           cluster in the datacenter. Saying so is the difference between a pane
+           showing this cluster's events and one that appears to. */}}
+      {{if .EventsElsewhere}}
+      <p class="empty footnote">{{.EventsElsewhere}} further management event{{if ne .EventsElsewhere 1}}s{{end}} in this namespace belong to other clusters or to no cluster at all, and are not listed here.</p>
+      {{end}}
+    </section>
+  </div>
 </div>
 {{end}}
 {{end}}

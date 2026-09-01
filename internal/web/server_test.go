@@ -1055,71 +1055,69 @@ func TestClusterPage_NoWarningsIsOneLine(t *testing.T) {
 	}
 }
 
-// The packing panes flow; the wide ones stay in the grid.
+// Each pane is in the column it was assigned, in the order it was assigned.
 //
-// The split is the whole layout: a list of rows reads fine at half the page and
-// its height depends on the data, which is what a grid handles worst — the row
-// is as tall as its tallest pane and the rest is a hole. The panes that need
-// width rather than packing keep the twelve-column grid below.
-func TestClusterPage_PackingPanesFlow(t *testing.T) {
-	d := richDetail()
-	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
-
-	flow := strings.Index(body, `<div class="panes flow">`)
-	grid := strings.LastIndex(body, `<div class="panes">`)
-	if flow < 0 || grid < 0 {
-		t.Fatalf("the page has no flow region (%d) or no grid region (%d)", flow, grid)
-	}
-	if flow > grid {
-		t.Fatal("the flow region must come before the grid region")
-	}
-
-	// Everything that packs is in the flow region, and carries no span class:
-	// a column has one width.
-	for _, want := range []string{
-		"<h3>Node pools</h3>", "<h3>Subsystems</h3>", `id="pods"`,
-		"Machines &amp; hosts", `id="nodes"`,
-	} {
-		at := strings.Index(body, want)
-		if at < 0 {
-			t.Errorf("%s is not on the page", want)
-			continue
-		}
-		if at > grid {
-			t.Errorf("%s is in the grid region; it should flow", want)
-		}
-	}
-
-	// Everything that needs width is in the grid region.
-	for _, want := range []string{"<h3>Network</h3>", "<h3>Cloud</h3>", "<h3>Events"} {
-		at := strings.Index(body, want)
-		if at < 0 {
-			t.Errorf("%s is not on the page", want)
-			continue
-		}
-		if at < grid {
-			t.Errorf("%s flows; it needs the full width", want)
-		}
-	}
-}
-
-// A flowing pane must not carry a span class. It would be silently ignored in a
-// multi-column region, which is the kind of dead attribute that later reads as
-// intent.
-func TestClusterPage_FlowingPanesHaveNoSpan(t *testing.T) {
+// Which pane goes where is a decision — the two whose height is decided by
+// whatever is happening, unhealthy pods and events, go last in their column so
+// that growing costs nothing. A pane that drifts out of position is a
+// regression even though the page still renders.
+func TestClusterPage_ColumnsHoldTheirPanes(t *testing.T) {
 	body := get(t, serveDetail(t, richDetail()), "/cluster/capi/tenant-01").Body.String()
-	flow := body[strings.Index(body, `<div class="panes flow">`):strings.LastIndex(body, `<div class="panes">`)]
 
-	for _, span := range []string{"pane half", "pane wide", "pane narrow", "pane broad", "paired"} {
-		if strings.Contains(flow, span) {
-			t.Errorf("a flowing pane still declares %q", span)
+	cols := strings.Split(body, `<div class="col">`)
+	if len(cols) != 3 {
+		t.Fatalf("got %d column containers, want 2", len(cols)-1)
+	}
+	first, second := cols[1], cols[2]
+
+	for _, want := range [][]string{
+		{"<h3>Nodes", "<h3>Subsystems</h3>", "<h3>Network</h3>", "<h3>Cloud</h3>", "<h3>Unhealthy pods"},
+		{"<h3>Node pools</h3>", "Machines &amp; hosts", "<h3>Events"},
+	} {
+		col, name := first, "first"
+		if want[0] == "<h3>Node pools</h3>" {
+			col, name = second, "second"
+		}
+		at := -1
+		for _, h := range want {
+			i := strings.Index(col, h)
+			if i < 0 {
+				t.Errorf("%s column is missing %s", name, h)
+				continue
+			}
+			if i < at {
+				t.Errorf("%s column has %s out of order", name, h)
+			}
+			at = i
+		}
+	}
+
+	// And the variable-height panes really are last in their column.
+	if i := strings.Index(first, "<h3>Unhealthy pods"); i < 0 || strings.Contains(first[i:], "<h3>Network") {
+		t.Error("unhealthy pods is not last in the first column")
+	}
+	if i := strings.Index(second, "<h3>Events"); i < 0 || strings.Contains(second[i:], "Machines &amp; hosts") {
+		t.Error("events is not last in the second column")
+	}
+}
+
+// A pane in a column must not carry a span class: a column has one width, and a
+// leftover span is the kind of dead attribute that later reads as intent.
+func TestClusterPage_ColumnPanesHaveNoSpan(t *testing.T) {
+	body := get(t, serveDetail(t, richDetail()), "/cluster/capi/tenant-01").Body.String()
+	cols := body[strings.Index(body, `<div class="columns">`):]
+
+	for _, span := range []string{"pane half", "pane wide", "pane narrow", "paired"} {
+		if strings.Contains(cols, span) {
+			t.Errorf("a pane in a column still declares %q", span)
 		}
 	}
 }
 
-// Two full-width panes pair only when both exist. One .paired pane on its own
-// would sit in half a row with a gap beside it.
-func TestClusterPage_NetworkAndCloudPairOnlyTogether(t *testing.T) {
+// Network and Cloud sit in a column now, so pairing them is moot — but each
+// still has to appear only when it has a source, which is the half of that rule
+// that was about the data rather than the layout.
+func TestClusterPage_NetworkAndCloudAppearWithTheirSources(t *testing.T) {
 	both := fleet.ClusterDetail{
 		ClusterView: fleet.ClusterView{Namespace: "capi", Name: "tenant-01", NodesKnown: true},
 		Subsystems: fleet.Subsystems{
@@ -1128,17 +1126,18 @@ func TestClusterPage_NetworkAndCloudPairOnlyTogether(t *testing.T) {
 		},
 	}
 	body := get(t, serveDetail(t, both), "/cluster/capi/tenant-01").Body.String()
-	if n := strings.Count(body, `class="pane wide paired"`); n != 2 {
-		t.Errorf("got %d paired panes, want network and cloud", n)
+	if !strings.Contains(body, "<h3>Network</h3>") || !strings.Contains(body, "<h3>Cloud</h3>") {
+		t.Error("a cluster reporting both subsystems is missing a pane")
 	}
 
 	networkOnly := both
 	networkOnly.Subsystems.Inventory = nil
 	body = get(t, serveDetail(t, networkOnly), "/cluster/capi/tenant-01").Body.String()
-	// The class attribute, not the bare word: the stylesheet is inlined in the
-	// page and names the class too.
-	if strings.Contains(body, `class="pane wide paired"`) {
-		t.Error("the network pane paired with nothing, leaving half a row empty")
+	if !strings.Contains(body, "<h3>Network</h3>") {
+		t.Error("the network pane vanished with the cloud one")
+	}
+	if strings.Contains(body, "<h3>Cloud</h3>") {
+		t.Error("a cloud pane rendered for a cluster with no cloud")
 	}
 }
 

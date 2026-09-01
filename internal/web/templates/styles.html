@@ -212,38 +212,28 @@
      missing rather than as something short. */
   .panes { display: grid; gap: 1rem; grid-template-columns: repeat(12, 1fr); align-items: start; }
 
-  /* .flow packs instead of aligning, and it is the answer to a page that read
-     as haphazard.
+  /* Two real columns, each packing its own panes top to bottom.
      
-     A grid makes rows. A row is as tall as its tallest pane, and both ways of
-     treating the remainder are wrong: stretch gives the shorter pane an empty
-     bordered box, and start leaves the same space as background. Neither packs,
-     so a short pane beside a tall one always leaves a hole — which is what
-     "random empty space where one panel doesn't grow as far as the panels next
-     to it" was describing.
+     Three arrangements were tried. A grid makes rows, and a row is as tall as
+     its tallest pane, so a short pane beside a tall one always leaves a hole:
+     stretch fills it with empty bordered box, start leaves it as background,
+     neither packs. Multi-column packs but *flows* — the browser chooses where
+     the break falls, so a pane cannot be assigned to a column and the two
+     columns end wherever the balancing leaves them.
      
-     Multi-column has no rows at all. Panes flow down one column and continue
-     into the next, so a short pane is followed immediately by whatever comes
-     after it and both columns end level. The cost is that reading order becomes
-     column-major, which for a board read by importance is the order it was
-     already in.
+     Two flex columns give both. Each packs tightly, and which pane goes where
+     is a decision rather than an outcome. That is what matters here: the two
+     panes whose height depends entirely on what is happening — unhealthy pods
+     and events — go last in their column, where growing costs nothing and
+     everything above them keeps its place no matter how the day is going.
      
-     Only the panes that pack go here: a list of rows is happy at half the page.
-     The wide ones — network's three sections, the events message column — stay
-     in the grid below, where they can have the width they need. */
-  .panes.flow {
-    display: block; columns: 2; column-gap: 1rem;
+     The only unavoidable space is below the shorter column, and putting the
+     variable panes last is what keeps it small most of the time. */
+  .columns { display: grid; gap: 1rem; grid-template-columns: 1fr; align-items: start; }
+  @media (min-width: 78rem) {
+    .columns { grid-template-columns: 1fr 1fr; }
   }
-  /* A pane split across a column boundary would be two half-panes with a border
-     each, which is worse than any hole. */
-  .panes.flow > .pane { break-inside: avoid; margin: 0 0 1rem; }
-  /* The two columns rarely end level — the browser balances them, but it cannot
-     split a pane it has been told to keep whole — so the grid region below
-     starts flush against whichever column ran longest and a long way below the
-     other. One gap read as deliberate and the other as a mistake. This makes
-     the boundary between the two regions its own space, so neither reads as an
-     accident. */
-  .panes.flow { margin-bottom: 1rem; }
+  .col { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
   .pane {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 6px; padding: .8rem 1rem 1rem; min-width: 0;
@@ -260,16 +250,8 @@
   @media (min-width: 52rem) {
     .pane.half { grid-column: span 6; }
   }
-  /* Two full-width panes share a row once the window is wide enough for both to
-     hold their contents. The network pane carries a five-column table and a
-     pool's address range; at half of a 1440-pixel window those wrap, and a
-     wrapped table is worse than a tall page. So this is a wide-window
-     arrangement only, and the template pairs panes only when both are present —
-     a lone .pane.paired would leave exactly the half-row gap the twelve-column
-     grid was introduced to remove. */
-  @media (min-width: 115rem) {
-    .pane.paired { grid-column: span 6; }
-  }
+  /* .paired went with the grid region it was for: network and cloud sit in a
+     column now, and a column has one width. */
   /* A pane arrived at from a card's deep link should not sit flush against the
      top of the viewport with its heading half under the browser chrome. */
   .pane[id] { scroll-margin-top: 1rem; }
@@ -424,8 +406,13 @@
   /* Ceph's checks are two columns of prose, and prose needs more air between
      columns than a table of numbers does: at the shared gutter a check name sat
      fourteen pixels from the sentence explaining it. */
-  .checks { margin-top: .7rem; }
-  .checks td { padding: .22rem 2rem .22rem 0; }
+  /* Ceph's checks are two columns of prose, and the message is the unbounded
+     one: given the column's slack it wraps beside its check name instead of
+     both crowding into the left third. The other tables in an inner section
+     size to their content; this one is the exception, because its content has
+     no natural width. */
+  .panes.inner table.checks { width: 100%; margin-top: .7rem; }
+  .checks td { padding: .22rem 1.6rem .22rem 0; vertical-align: baseline; }
   .checks td:last-child { padding-right: 0; }
   .ceph-health { margin: 0 0 .5rem; font-size: .82rem; font-variant-numeric: tabular-nums; }
   .reporters a { color: var(--teal); text-decoration: none; }
@@ -486,7 +473,10 @@
      leaves its slack at the column's edge, where it does no harm. */
   .panes.inner {
     display: grid; columns: auto;
-    gap: 1.25rem; margin-top: .2rem; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+    /* 24rem, not 19: a pane is half the page now, and at the lower floor
+       auto-fit packed three sections into room for two — OVN's five-column
+       table does not fit in a third of a half. */
+    gap: 1.25rem; margin-top: .2rem; grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
   }
   /* A sub-table sizes to its content, like .packed and for the same reason. The
      exception stays the exception: a genuinely unbounded last column still
