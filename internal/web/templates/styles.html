@@ -282,6 +282,25 @@
   .panes.inner table td:not(:last-child), .panes.inner table th:not(:last-child) {
     padding-right: 1.4rem;
   }
+  /* The storage layer is a peer of the cluster grid, not a card in it: it
+     belongs to the datacenter, and putting it inside the grid would have it
+     sorted among clusters it is not one of. */
+  .storage { margin-top: 1.5rem; }
+  .storage > h2 {
+    margin: 0 0 .7rem; font-size: .95rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .08em; color: var(--brass);
+  }
+  .storage .card h3 { margin: 0 0 .5rem; font-size: .95rem; font-weight: 600; }
+  /* An fsid is the identity but not the name, so it reads as a serial number
+     rather than as a heading. */
+  .fsid { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; color: var(--teal); font-size: .85rem; }
+  /* .footnote itself is defined below, with the other pane text. */
+  .footnote code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: .95em; }
+
+  /* A state and its count are one token to a reader, so they must not be split
+     by a line break. Inline-block rather than nowrap on the cell: the list as a
+     whole still needs to wrap when there are more states than fit. */
+  .state { display: inline-block; white-space: nowrap; }
   /* A long value that is not the last column wraps rather than grows. A growth
      column in the middle of a row pushes every column after it to the far edge,
      which is the same mistake .msg exists to avoid making everywhere else. */

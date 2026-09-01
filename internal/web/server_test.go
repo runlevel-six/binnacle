@@ -23,10 +23,12 @@ import (
 type fakeFleet struct {
 	clusters []fleet.ClusterView
 	detail   map[string]fleet.ClusterDetail
+	storage  fleet.Storage
 	changed  chan struct{}
 }
 
 func (f *fakeFleet) View() []fleet.ClusterView { return f.clusters }
+func (f *fakeFleet) Storage() fleet.Storage    { return f.storage }
 func (f *fakeFleet) Changed() <-chan struct{}  { return f.changed }
 
 func (f *fakeFleet) Cluster(namespace, name string) (fleet.ClusterDetail, bool) {
@@ -567,6 +569,32 @@ func TestFleetPage_WallModeIsOptIn(t *testing.T) {
 	// Any other value is not wall mode, rather than an error.
 	if body := get(t, srv, "/?display=desk").Body.String(); strings.Contains(body, `class="wall"`) {
 		t.Error("an unrecognized display mode was treated as wall")
+	}
+}
+
+// Nine load balancers in ERROR was the most alarming fact on the cloud pane and
+// rendered in the same grey as a project count. The order matters too: a
+// template iterating the map sorts by key, which put ACTIVE first.
+func TestClusterPage_FailingCloudStatesAreLegible(t *testing.T) {
+	d := fleet.ClusterDetail{
+		ClusterView: fleet.ClusterView{Namespace: "capi", Name: "tenant-01", NodesKnown: true},
+		Subsystems: fleet.Subsystems{Inventory: &openstack.Inventory{Counts: []openstack.Count{
+			{Label: "Load Balancers", Total: 12, ByState: map[string]int{"ACTIVE": 3, "ERROR": 9}},
+		}}},
+	}
+
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+
+	if !strings.Contains(body, `<span class="state errish">ERROR 9</span>`) {
+		t.Errorf("the ERROR state is not marked as one:\n%s", body)
+	}
+	if !strings.Contains(body, `<span class="state">ACTIVE 3</span>`) {
+		t.Errorf("a settled state should render plain:\n%s", body)
+	}
+	// Most common first, so the bulk state leads — and each pair is one span, so
+	// a wrap cannot separate a state from its count.
+	if i, j := strings.Index(body, "ERROR 9"), strings.Index(body, "ACTIVE 3"); i > j {
+		t.Error("ACTIVE 3 came before ERROR 9: the map order leaked through")
 	}
 }
 

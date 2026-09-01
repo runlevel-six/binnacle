@@ -4,6 +4,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/runlevel-six/sextant/pkg/health"
 	"github.com/runlevel-six/sextant/pkg/model"
 	"github.com/runlevel-six/sextant/pkg/store"
 	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
@@ -183,7 +184,10 @@ func (d *ClusterDetail) readPods(s *store.Store) {
 	}
 	var unhealthy []model.Pod
 	for _, p := range snap.Items {
-		if !p.IsHealthy {
+		// The same filter the card and the health cell use: see
+		// [health.NeedsAttention]. A pane listing pods the cell does not count
+		// is a page disagreeing with itself.
+		if health.NeedsAttention(p) {
 			unhealthy = append(unhealthy, p)
 		}
 	}

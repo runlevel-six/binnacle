@@ -362,3 +362,27 @@ func TestOwnsName_RequiresASegmentBoundary(t *testing.T) {
 		t.Error("an extension of an owned name is not owned")
 	}
 }
+
+// The card, the pane and the health cell all have to count the same pods. A
+// vulnerability scanner creating pods continuously used to hold every count
+// above zero forever.
+func TestReadPods_StartingPodsAreNotCounted(t *testing.T) {
+	s := store.New()
+	s.Put(model.KeyWorkloadPods, model.Snapshot[model.Pod]{UpdatedAt: time.Now(),
+		Items: []model.Pod{
+			{Namespace: "kube-system", Name: "cilium-abc", Status: "Running", IsHealthy: true},
+			{Namespace: "trivy-system", Name: "scan-1", Status: "ContainerCreating", Age: time.Second},
+			{Namespace: "example-system", Name: "api-0", Status: "CrashLoopBackOff",
+				Age: 6 * 24 * time.Hour, Restarts: 441},
+		}})
+
+	var d ClusterDetail
+	d.readPods(s)
+
+	if len(d.UnhealthyPods) != 1 {
+		t.Fatalf("listed %d pods, want only the crash loop: %+v", len(d.UnhealthyPods), d.UnhealthyPods)
+	}
+	if d.UnhealthyPods[0].Name != "api-0" {
+		t.Errorf("listed %q, want api-0", d.UnhealthyPods[0].Name)
+	}
+}

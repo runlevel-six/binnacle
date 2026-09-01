@@ -804,7 +804,11 @@ func (v *ClusterView) readWorkload(
 	if snap, ok := store.Get[model.Snapshot[model.Pod]](s, model.KeyWorkloadPods); ok {
 		var unhealthy []model.Pod
 		for _, pod := range snap.Items {
-			if !pod.IsHealthy {
+			// health.NeedsAttention, not IsHealthy: the card's count has to
+			// agree with the health cell beside it, and the cell is built from
+			// sextant's verdict. A pod one second into being created is not
+			// ready and is not a problem either.
+			if health.NeedsAttention(pod) {
 				v.UnhealthyPods++
 				unhealthy = append(unhealthy, pod)
 			}

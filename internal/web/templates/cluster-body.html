@@ -298,7 +298,12 @@
               {{if .Absent}}<td colspan="2" class="empty">not deployed</td>
               {{else if .Err}}<td colspan="2" class="errish">unreadable</td>
               {{else}}<td class="r">{{.Total}}</td>
-              <td class="dim msg">{{range $k, $v := .ByState}}{{$k}} {{$v}} {{end}}</td>{{end}}</tr>
+              {{/* Ordered by sextant's StateCounts rather than by iterating the
+                   map, so the bulk state leads here exactly as it does in the
+                   dashboard. Each state and its count is one unbreakable unit:
+                   a line wrapping between them turned "IN-USE 71" into a state
+                   with no number followed by a number with no state. */}}
+              <td class="dim msg">{{range states .ByState}}<span class="state{{if .Error}} errish{{end}}">{{.State}} {{.Count}}</span> {{end}}</td>{{end}}</tr>
           {{end}}
           </tbody>
         </table>
