@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/runlevel-six/sextant/pkg/health"
 	"github.com/runlevel-six/sextant/pkg/model"
 	"github.com/runlevel-six/sextant/pkg/profile"
 	"github.com/runlevel-six/sextant/pkg/store"
@@ -178,10 +179,13 @@ func (p *PodHealthPane) criticalRows(pods []model.Pod) ([][]string, [][]lipgloss
 
 // unhealthyPods filters and orders the pods worth attention: most restarts
 // first, since a crash-looping pod is a live problem, then by name.
+//
+// The filter is [health.NeedsAttention], the same one the health cell counts
+// with, so the pane and the cell above it cannot report different numbers.
 func unhealthyPods(pods []model.Pod) []model.Pod {
 	out := make([]model.Pod, 0)
 	for _, p := range pods {
-		if !p.IsHealthy {
+		if health.NeedsAttention(p) {
 			out = append(out, p)
 		}
 	}

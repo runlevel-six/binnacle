@@ -173,7 +173,7 @@ func cellPods(s *store.Store, roles profile.NodeRoles) (Cell, bool) {
 	}
 	unhealthy := 0
 	for _, p := range snap.Items {
-		if !p.IsHealthy {
+		if NeedsAttention(p) {
 			unhealthy++
 		}
 	}

@@ -231,6 +231,12 @@ type BareMetalHost struct {
 	ConsumerName      string
 	ErrorMessage      string
 	Age               time.Duration
+	// Labels are the host's own labels, carried because they are what classifies
+	// hardware a consumerRef cannot: a Ceph node is claimed by no Cluster API
+	// machine, so nothing else in this snapshot says what it is or which storage
+	// cluster it belongs to. A consumer decides which keys it cares about; this
+	// package deliberately knows about none of them.
+	Labels map[string]string
 }
 
 // Node is a core/v1 Node.

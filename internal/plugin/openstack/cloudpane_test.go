@@ -312,6 +312,30 @@ func TestCloudPaneMigrationsFitOneGridColumn(t *testing.T) {
 	}
 }
 
+// Nine load balancers in ERROR is the most alarming fact on the pane, and the
+// whole parenthesis used to be one muted style — so it read exactly like nine in
+// ACTIVE.
+func TestInventoryColorsFailingStates(t *testing.T) {
+	s := store.New()
+	s.Put(KeyInventory, Inventory{Counts: []Count{
+		{Label: "Load Balancers", Total: 12, ByState: map[string]int{"ACTIVE": 3, "ERROR": 9}},
+	}})
+
+	body := renderInventory(s, 74, 6)
+
+	if !strings.Contains(body, tui.StyleErr.Render("ERROR 9")) {
+		t.Errorf("the ERROR state is not styled as one:\n%q", body)
+	}
+	if !strings.Contains(body, tui.StyleMuted.Render("ACTIVE 3")) {
+		t.Errorf("a settled state should stay muted:\n%q", body)
+	}
+	// Still the same line, still ordered most common first.
+	plain := stripANSI(body)
+	if !strings.Contains(plain, "(ERROR 9, ACTIVE 3)") {
+		t.Errorf("breakdown is not (ERROR 9, ACTIVE 3): %q", plain)
+	}
+}
+
 // Cinder reports more states than a one-column frame can hold, and the line has
 // to lose the rarest rather than lose the end of a word.
 //

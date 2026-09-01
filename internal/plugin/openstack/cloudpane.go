@@ -2,7 +2,6 @@ package openstack
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 
 	"github.com/runlevel-six/sextant/pkg/rollout"
 	"github.com/runlevel-six/sextant/pkg/store"
+	osstate "github.com/runlevel-six/sextant/pkg/subsystem/openstack"
 	"github.com/runlevel-six/sextant/pkg/tui"
 	"github.com/runlevel-six/sextant/pkg/tui/table"
 )
@@ -515,41 +515,42 @@ func countLine(c Count, labelW, width int) string {
 		// written in full and clipped. Clipping cuts mid-word — a real cloud
 		// rendered "ERROR_DELETING 10, ATTACHI" at the pane edge, which reads as
 		// a state that does not exist and hides however many followed it.
-		line += "  " + tui.StyleMuted.Render(breakdown(c.ByState, max(width-lipgloss.Width(line)-2, 0)))
+		// breakdown styles itself: an ERROR state has to be legible as one, and
+		// wrapping the whole parenthesis in one style is what made nine load
+		// balancers in ERROR read like nine in ACTIVE.
+		line += "  " + breakdown(c.ByState, max(width-lipgloss.Width(line)-2, 0))
 	}
 	return line
 }
 
-// breakdown formats a state map as "(STATE n, STATE n)", most common first and
-// ties broken alphabetically, so the eye lands on the bulk state without reading
-// the whole parenthesis.
+// breakdown formats a state map as "(STATE n, STATE n)", ordered by
+// [osstate.StateCounts] so that the pane and the web front end put the same
+// state first, with failing states colored.
 //
 // States that do not fit in width are dropped and counted rather than truncated.
 // Dropping the rarest is the right sacrifice: they are last precisely because
 // they describe the fewest resources, and "+2" is honest about their existence
 // where a severed word is not. A width of zero or less means unconstrained, for
 // callers that have already made room.
+//
+// Widths are measured on the unstyled text and the styles applied after, which
+// is why two slices are kept in step: a rendered part carries escape sequences
+// that len() counts and the terminal does not draw.
 func breakdown(by map[string]int, width int) string {
-	type entry struct {
-		state string
-		n     int
-	}
-	entries := make([]entry, 0, len(by))
-	for state, n := range by {
-		entries = append(entries, entry{state, n})
-	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].n != entries[j].n {
-			return entries[i].n > entries[j].n
-		}
-		return entries[i].state < entries[j].state
-	})
+	entries := osstate.StateCounts(by)
 
-	parts := make([]string, 0, len(entries))
+	plain := make([]string, 0, len(entries))
+	styled := make([]string, 0, len(entries))
+	join := tui.StyleMuted.Render(", ")
+	wrap := func(parts []string, tail string) string {
+		return tui.StyleMuted.Render("(") + strings.Join(parts, join) +
+			tui.StyleMuted.Render(tail+")")
+	}
+
 	// Two for the parentheses, and the running total tracks the ", " joins.
 	used := 2
 	for i, e := range entries {
-		part := fmt.Sprintf("%s %d", e.state, e.n)
+		part := fmt.Sprintf("%s %d", e.State, e.Count)
 		cost := len(part)
 		if i > 0 {
 			cost += 2
@@ -558,21 +559,27 @@ func breakdown(by map[string]int, width int) string {
 			// Room for the marker is made by dropping one more entry if need be,
 			// so the marker itself cannot be what overflows.
 			marker := fmt.Sprintf(", +%d", len(entries)-i)
-			for len(parts) > 0 && used+len(marker) > width {
-				last := parts[len(parts)-1]
-				parts = parts[:len(parts)-1]
+			for len(plain) > 0 && used+len(marker) > width {
+				last := plain[len(plain)-1]
+				plain = plain[:len(plain)-1]
+				styled = styled[:len(styled)-1]
 				used -= len(last) + 2
-				marker = fmt.Sprintf(", +%d", len(entries)-len(parts))
+				marker = fmt.Sprintf(", +%d", len(entries)-len(plain))
 			}
-			if len(parts) == 0 {
+			if len(plain) == 0 {
 				return ""
 			}
-			return "(" + strings.Join(parts, ", ") + marker + ")"
+			return wrap(styled, marker)
 		}
 		used += cost
-		parts = append(parts, part)
+		plain = append(plain, part)
+		if e.Error {
+			styled = append(styled, tui.StyleErr.Render(part))
+		} else {
+			styled = append(styled, tui.StyleMuted.Render(part))
+		}
 	}
-	return "(" + strings.Join(parts, ", ") + ")"
+	return wrap(styled, "")
 }
 
 // migrationStyle colors a row by what it needs from the reader.

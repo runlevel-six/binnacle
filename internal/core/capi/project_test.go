@@ -344,6 +344,47 @@ func TestProjectBareMetalHosts(t *testing.T) {
 	}
 }
 
+// Labels are what classify hardware a consumerRef cannot. A Ceph node is
+// claimed by no machine, so its role and which storage cluster it belongs to
+// live nowhere else in this snapshot.
+func TestProjectBareMetalHosts_CarriesLabels(t *testing.T) {
+	snap := ProjectBareMetalHosts([]*unstructured.Unstructured{
+		obj(map[string]any{
+			"metadata": md("bmh-ns", "host-1", map[string]any{
+				"labels": map[string]any{
+					"atmosphere-role": "cephosd",
+					"cluster-id":      "24413730-08bc-11ef-b140-23a2dd2fc842",
+					"rack":            "r0102",
+				},
+			}),
+			"status": map[string]any{
+				"provisioning": map[string]any{"state": "provisioned"},
+			},
+		}),
+		// A host with no labels at all, which is what an unlabeled datacenter
+		// looks like: nil, not an empty map that would read as "asked and
+		// answered nothing".
+		obj(map[string]any{
+			"metadata": md("bmh-ns", "host-2", nil),
+			"status":   map[string]any{"provisioning": map[string]any{"state": "provisioned"}},
+		}),
+	})
+
+	if got := snap.Items[0].Labels["atmosphere-role"]; got != "cephosd" {
+		t.Errorf("atmosphere-role = %q, want cephosd", got)
+	}
+	if got := snap.Items[0].Labels["cluster-id"]; got != "24413730-08bc-11ef-b140-23a2dd2fc842" {
+		t.Errorf("cluster-id = %q", got)
+	}
+	// Nothing here filters the keys: a consumer decides what it cares about.
+	if got := snap.Items[0].Labels["rack"]; got != "r0102" {
+		t.Errorf("rack = %q, want r0102", got)
+	}
+	if snap.Items[1].Labels != nil {
+		t.Errorf("an unlabeled host got %v, want nil", snap.Items[1].Labels)
+	}
+}
+
 func TestProjectMetal3Clusters_ErrorMessagePreferredOverReason(t *testing.T) {
 	withBoth := ProjectMetal3Clusters([]*unstructured.Unstructured{
 		obj(map[string]any{

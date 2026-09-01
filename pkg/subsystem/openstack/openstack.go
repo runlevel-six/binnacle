@@ -240,6 +240,55 @@ func LatestPerServer(items []Migration) []Migration {
 	return out
 }
 
+// StateCount is one entry of a [Count.ByState] breakdown, ready to render.
+type StateCount struct {
+	State string
+	Count int
+	// Error reports whether this state is a failure the reader should be able
+	// to pick out of the line. See [ErrorState].
+	Error bool
+}
+
+// StateCounts orders a ByState breakdown for reading: most common first, ties
+// broken alphabetically, so the eye lands on the bulk state without reading the
+// whole line.
+//
+// A map has no order, and two front ends left to iterate one themselves will
+// each invent a different one — alphabetical in a template, arrival order in a
+// pane — which makes the same cloud look like two clouds. Ordering it once here
+// is what keeps them agreeing.
+func StateCounts(by map[string]int) []StateCount {
+	out := make([]StateCount, 0, len(by))
+	for state, n := range by {
+		out = append(out, StateCount{State: state, Count: n, Error: ErrorState(state)})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].State < out[j].State
+	})
+	return out
+}
+
+// ErrorState reports whether a resource state names a failure.
+//
+// The state vocabularies differ per service — a server is ERROR, a volume is
+// ERROR_DELETING or ERROR_RESTORING, a load balancer's provisioning status is
+// ERROR — so this matches the substring rather than enumerating them, which
+// keeps a state OpenStack adds later from arriving silently as good news.
+//
+// Only failures. The transitional states (BUILD, PENDING_UPDATE, ATTACHING) are
+// deliberately not included: most of them clear on their own within seconds, and
+// a cloud of any size always has a few, so treating them as problems would put a
+// standing warning on every cluster. A PENDING_UPDATE that never clears is a
+// real stuck Octavia, but what makes it one is elapsed time, which a state name
+// does not carry.
+func ErrorState(state string) bool {
+	s := strings.ToUpper(state)
+	return strings.Contains(s, "ERROR") || s == "FAILED"
+}
+
 // ShortType abbreviates Nova's migration_type for display.
 //
 // The type column is very nearly a constant: during a hypervisor drain every row

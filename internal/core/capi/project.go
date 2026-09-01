@@ -203,6 +203,7 @@ func ProjectBareMetalHosts(objs []*unstructured.Unstructured) model.Snapshot[mod
 			ConsumerName:      uStr(o, "spec", "consumerRef", "name"),
 			ErrorMessage:      trimToOneLine(uStr(o, "status", "errorMessage")),
 			Age:               uAge(o),
+			Labels:            o.GetLabels(),
 		})
 	}
 	sortByNamespacedName(out, func(b model.BareMetalHost) (string, string) { return b.Namespace, b.Name })
