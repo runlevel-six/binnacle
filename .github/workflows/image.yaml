@@ -60,9 +60,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # linux/arm64 as well as amd64: the clusters are amd64, but a
-          # developer on an arm laptop should be able to run the same image.
-          platforms: linux/amd64,linux/arm64
+          # Releases build both architectures: the clusters are amd64, but a
+          # developer on an arm laptop should be able to run a tagged image.
+          # edge builds amd64 only, because nothing but dev1a consumes it and
+          # buildx runs the build stage once per platform — the second leg is a
+          # second cold Go compile, which is most of what a push costs.
+          platforms: ${{ startsWith(github.ref, 'refs/tags/v') && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
