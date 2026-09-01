@@ -642,6 +642,79 @@ func TestFleetPage_EveryCardBranchRenders(t *testing.T) {
 	}
 }
 
+// Every disclosure carries an id, because that is how its open state survives a
+// pushed fragment. Without one the reader's click is undone within a second by
+// the next update, which is what this test exists to stop regressing.
+func TestDisclosuresCarryIdentifiers(t *testing.T) {
+	pages := map[string]string{
+		"cluster": get(t, serveDetail(t, foldedDetail()), "/cluster/capi/tenant-01").Body.String(),
+		"fleet":   fleetPageWithFoldedStorage(t),
+	}
+
+	for name, body := range pages {
+		count := strings.Count(body, "<details")
+		if count == 0 {
+			t.Fatalf("%s page rendered no disclosures to check", name)
+		}
+		// Every <details> opens with its class and then its id.
+		if withID := strings.Count(body, `<details class="quiet" id="`); withID != count {
+			t.Errorf("%s page: %d of %d disclosures carry an id", name, withID, count)
+		}
+	}
+
+	// And the page ships the script that restores them.
+	if !strings.Contains(pages["cluster"], "binnacleKeepOpen") {
+		t.Error("the cluster page does not restore open disclosures")
+	}
+	if !strings.Contains(pages["fleet"], "binnacleKeepOpen") {
+		t.Error("the fleet page does not restore open disclosures")
+	}
+}
+
+// foldedDetail is a cluster big enough that every table folds its quiet rows.
+func foldedDetail() fleet.ClusterDetail {
+	d := richDetail()
+	var machines []model.Machine
+	var hosts []model.BareMetalHost
+	var nodes []fleet.NodeRow
+	var events []fleet.EventGroup
+	for i := 0; i < 12; i++ {
+		n := strconv.Itoa(i)
+		machines = append(machines, model.Machine{Name: "m-" + n, Phase: "Running"})
+		hosts = append(hosts, model.BareMetalHost{Name: "h-" + n, State: "provisioned", OperationalStatus: "OK"})
+		nodes = append(nodes, fleet.NodeRow{Node: model.Node{Name: "n-" + n, Status: "Ready"}})
+		events = append(events, fleet.EventGroup{
+			Event:       model.Event{Type: "Normal", Reason: "Pulled", ObjectKind: "Pod", Message: "pulled " + n},
+			Occurrences: 1, Objects: 1,
+		})
+	}
+	d.Machines = fleet.Split[model.Machine]{Quiet: machines}
+	d.Hosts = fleet.Split[model.BareMetalHost]{Quiet: hosts}
+	d.NodeRows = fleet.Split[fleet.NodeRow]{Quiet: nodes}
+	d.Events = fleet.Split[fleet.EventGroup]{Quiet: events}
+	return d
+}
+
+// fleetPageWithFoldedStorage renders a storage panel whose host table folds.
+func fleetPageWithFoldedStorage(t *testing.T) string {
+	t.Helper()
+	var hosts []model.BareMetalHost
+	for i := 0; i < 12; i++ {
+		hosts = append(hosts, model.BareMetalHost{
+			Namespace: "machines", Name: "cephosd-" + strconv.Itoa(i),
+			State: "provisioned", OperationalStatus: "OK",
+			Labels: map[string]string{fleet.LabelRole: "cephosd", fleet.LabelClusterID: "fsid"},
+		})
+	}
+	s, err := New(&fakeFleet{
+		storage: fleet.StorageFor(hosts, nil), changed: make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return get(t, s.Handler(), "/").Body.String()
+}
+
 // A grid table declares its column count in a class, and nothing in the markup
 // checks it: get it wrong and every cell after the first row lands in the wrong
 // column, on a page that still renders. This counts the headers and compares.
@@ -825,9 +898,15 @@ func packedTables(body string) []packedTable {
 			return out
 		}
 		rest = rest[i+len(marker):]
-		digits, after, ok := strings.Cut(rest, `"`)
+		// The class may carry modifiers after the count ("cols-6 spread"), so
+		// take the leading digits rather than everything up to the quote.
+		attr, after, ok := strings.Cut(rest, `"`)
 		if !ok {
 			return out
+		}
+		digits := attr
+		if i := strings.IndexFunc(attr, func(r rune) bool { return r < '0' || r > '9' }); i >= 0 {
+			digits = attr[:i]
 		}
 		n, err := strconv.Atoi(digits)
 		if err != nil {
@@ -973,10 +1052,11 @@ func TestClusterPage_FirstRowFillsEitherWay(t *testing.T) {
 	body := get(t, serveDetail(t, fleet.ClusterDetail{ClusterView: withCeph}), "/cluster/capi/tenant-01").Body.String()
 	// The closing bracket matters: without it this also counts the pods pane,
 	// whose attribute begins with the same text.
-	// Nine for the node pools, three for the subsystem summary: the summary is a
-	// <pre> and cannot spread, so a half was mostly empty pane.
-	if !strings.Contains(body, `class="pane broad">`) {
-		t.Error("node pools did not take the broad share of the row")
+	// Six for the node pools, three for the subsystem summary, and the last
+	// quarter left as background: see the styles for why this row does not sum
+	// to twelve.
+	if !strings.Contains(body, `class="pane half">`) {
+		t.Error("node pools did not take a half of the row")
 	}
 	if !strings.Contains(body, `class="pane narrow">`) {
 		t.Error("the subsystem summary did not take the narrow share")
@@ -1082,9 +1162,10 @@ func TestClusterPage_IdentifierTablesArePacked(t *testing.T) {
 		t.Errorf("got %d packed tables, want 5", n)
 	}
 	for _, want := range []string{
-		`class="packed cols-5"`, // node pools, machines, hosts
-		`class="packed cols-6"`, // unhealthy pods
-		`class="packed cols-7"`, // nodes
+		`class="packed cols-5"`,        // node pools: short columns, no spreading
+		`class="packed cols-5 spread"`, // machines and hosts
+		`class="packed cols-6 spread"`, // unhealthy pods
+		`class="packed cols-7 spread"`, // nodes
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("no table declared %s", want)

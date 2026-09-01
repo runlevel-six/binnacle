@@ -226,17 +226,26 @@
      pools and a subsystem summary are a few short columns each, and at a third
      apiece both rendered more empty pane than table. */
   @media (min-width: 52rem) {
-    .pane.half, .pane.narrow, .pane.broad { grid-column: span 6; }
+    .pane.half, .pane.narrow { grid-column: span 6; }
   }
-  /* broad and narrow are a pair, nine and three, and they only split apart once
-     there is room for three columns to be worth having. A subsystem summary is
-     a few lines of monospace that cannot spread — it is a <pre> — so at a half
-     it rendered as mostly empty pane beside a node pool table that could have
-     used the width. Below this breakpoint they stay two halves, because a
-     quarter is too narrow for the summary itself. */
+  /* The top row is six and three, and the remaining quarter is left as
+     background.
+     
+     That row can only hold those two panes, because everything else on the page
+     has an unbounded height. Node pools wants about six columns' worth and a
+     subsystem summary about three, so roughly a quarter of the row is empty
+     whatever the split — the only question is where. Nine and three put it
+     inside the node pool table and stranded the paused flag a quarter of a pane
+     from the version it belongs to; six and six put it inside the summary,
+     which is a <pre> and cannot use it. Six and three puts it at the row's
+     edge, which is where the tables already put theirs.
+     
+     So this row deliberately does not sum to twelve. The rule it appears to
+     break was about a pane that looks like it wants a partner and has none;
+     two panes at the width they need, with background after them, does not read
+     that way. */
   @media (min-width: 78rem) {
     .pane.narrow { grid-column: span 3; }
-    .pane.broad { grid-column: span 9; }
   }
   /* Two full-width panes share a row once the window is wide enough for both to
      hold their contents. The network pane carries a five-column table and a
@@ -309,13 +318,22 @@
      its column count up front where a table infers it from the markup. */
   .pane table.packed {
     display: grid;
-    grid-template-columns: repeat(var(--cols, 4), minmax(max-content, 1fr));
+    grid-template-columns: repeat(var(--cols, 4), max-content);
     align-items: start;
     /* A table wider than its pane scrolls inside itself rather than pushing the
        page sideways. max-content minimums make that possible on a narrow
        window, where a table would instead have wrapped its cells. */
     max-width: 100%; overflow-x: auto;
   }
+  /* Spreading is opt-in, per table, because whether it helps depends on the
+     table. Machines, hosts, nodes and pods carry six or seven columns of
+     namespaced names and qualified hostnames: at content width they used a
+     third of their pane and the reading was crammed into it. The small ones —
+     node pools, cloud services, a storage cluster's hosts — are four short
+     columns, and spreading those across a full-width pane put four hundred and
+     eighty pixels between a host and its role. Same rule, opposite result, so
+     the table says which it is. */
+  .pane table.packed.spread { grid-template-columns: repeat(var(--cols, 4), minmax(max-content, 1fr)); }
   /* The row structure lives in the column count now, so the table's own
      grouping elements step out of the way and let the cells be grid items. */
   .pane table.packed thead, .pane table.packed tbody, .pane table.packed tr { display: contents; }

@@ -36,7 +36,7 @@
        was left staring at a screen of empty space. It gets its own row below,
        where being tall costs nobody anything and being short costs nothing
        either. */}}
-  {{$col := "broad"}}{{if not .Summaries}}{{$col = "wide"}}{{end}}
+  {{$col := "half"}}{{if not .Summaries}}{{$col = "wide"}}{{end}}
   <section class="pane {{$col}}">
     <h3>Node pools</h3>
     {{if .Pools}}
@@ -83,7 +83,7 @@
   <section class="pane wide" id="pods">
     <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
     {{if .UnhealthyPods}}
-    <table class="packed cols-6">
+    <table class="packed cols-6 spread">
       <thead><tr><th>POD</th><th class="r">READY</th><th>STATUS</th><th class="r">RESTARTS</th><th>NODE</th><th class="r">AGE</th></tr></thead>
       <tbody>
       {{range .UnhealthyPods}}
@@ -110,7 +110,7 @@
     {{else if .Machines.Total}}<p class="empty">Every machine is Running.</p>
     {{else}}<p class="empty">No machines reported.</p>{{end}}
     {{if .Machines.Quiet}}
-    <details class="quiet">
+    <details class="quiet" id="quiet-machines">
       <summary>{{len .Machines.Quiet}} machines Running</summary>
       {{template "machine-table" .Machines.Quiet}}
     </details>
@@ -120,7 +120,7 @@
     {{else if .Hosts.Total}}<p class="empty spaced">Every host is provisioned without error.</p>
     {{else if .Machines.Total}}<p class="empty spaced">No hosts are claimed by this cluster's machines.</p>{{end}}
     {{if .Hosts.Quiet}}
-    <details class="quiet">
+    <details class="quiet" id="quiet-hosts">
       <summary>{{len .Hosts.Quiet}} hosts provisioned without error</summary>
       {{template "host-table" .Hosts.Quiet}}
     </details>
@@ -139,7 +139,7 @@
     {{else if .NodeRows.Total}}<p class="empty">Every node is Ready and schedulable.</p>
     {{else}}<p class="empty">No nodes reported.</p>{{end}}
     {{if .NodeRows.Quiet}}
-    <details class="quiet">
+    <details class="quiet" id="quiet-nodes">
       <summary>{{len .NodeRows.Quiet}} nodes Ready and schedulable</summary>
       {{template "node-table" .NodeRows.Quiet}}
     </details>
@@ -263,7 +263,7 @@
 
     {{if .Drains}}
     <h4>Draining hosts</h4>
-    <table>
+    <table class="packed cols-4">
       <thead><tr><th>HOST</th><th class="r">REMAINING</th><th class="r">MOVING</th><th class="r">STUCK</th></tr></thead>
       <tbody>
       {{range .Drains}}
@@ -322,7 +322,7 @@
 
     {{if .Shown.Rows}}
     <h4>Server migrations{{if .Shown.Failures}} <span class="count">{{.Shown.Failures}} failed</span>{{end}}</h4>
-    <table>
+    <table class="packed cols-6 spread">
       <thead><tr><th>SERVER</th><th>TYPE</th><th>STATUS</th><th>FROM</th><th>TO</th><th class="r">AGE</th></tr></thead>
       <tbody>
       {{range .Shown.Rows}}
@@ -351,7 +351,7 @@
          cluster an etcd backup CronJob alone fills forty rows an hour, and
          unfolded they bury the warnings above them. */}}
     {{if .Events.Quiet}}
-    <details class="quiet">
+    <details class="quiet" id="quiet-events">
       <summary>{{if not .Events.Shown}}No warnings &middot; {{end}}{{len .Events.Quiet}} Normal event group{{if ne (len .Events.Quiet) 1}}s{{end}}</summary>
       {{template "event-table" .Events.Quiet}}
     </details>
@@ -392,7 +392,7 @@
 {{end}}
 
 {{define "machine-table"}}
-<table class="packed cols-5">
+<table class="packed cols-5 spread">
   <thead><tr><th>MACHINE</th><th>PHASE</th><th>VERSION</th><th>NODE</th><th class="r">AGE</th></tr></thead>
   <tbody>
   {{range .}}
@@ -406,7 +406,7 @@
 {{end}}
 
 {{define "host-table"}}
-<table class="packed cols-5">
+<table class="packed cols-5 spread">
   <thead><tr><th>HOST</th><th>STATE</th><th>STATUS</th><th>CONSUMER</th><th class="r">AGE</th></tr></thead>
   <tbody>
   {{range .}}
@@ -421,7 +421,7 @@
 {{end}}
 
 {{define "node-table"}}
-<table class="packed cols-7">
+<table class="packed cols-7 spread">
   <thead><tr><th>NODE</th><th>ROLE</th><th>STATUS</th><th>VERSION</th><th class="r">CPU</th><th class="r">MEM</th><th class="r">AGE</th></tr></thead>
   <tbody>
   {{range .}}
