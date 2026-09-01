@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"github.com/runlevel-six/sextant/pkg/subsystem/cilium"
 	"github.com/runlevel-six/sextant/pkg/subsystem/metallb"
 	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
+	"github.com/runlevel-six/sextant/pkg/subsystem/ovn"
 
 	"github.com/runlevel-six/binnacle/internal/auth"
 	"github.com/runlevel-six/binnacle/internal/fleet"
@@ -599,6 +601,47 @@ func TestClusterPage_FailingCloudStatesAreLegible(t *testing.T) {
 	}
 }
 
+// The same guard for the fleet page: every card branch and the storage panel,
+// rendered with data in each.
+func TestFleetPage_EveryCardBranchRenders(t *testing.T) {
+	rich := richDetail().ClusterView
+	rich.NodesByRole = []fleet.RoleCount{{Role: "control-plane", Ready: 2, Total: 3}}
+	rich.TopUnhealthyPods = []fleet.PodRef{{Namespace: "ns", Name: "api-1",
+		Status: "CrashLoopBackOff", Restarts: 441}}
+	rich.UnhealthyPods = 8
+	rich.WorkloadProblem = "context deadline exceeded"
+	rich.CloudsProblem = "no such cloud entry"
+
+	// And one card that could not be read at all, which takes a different path.
+	broken := fleet.ClusterView{Namespace: "capi", Name: "tenant-02", Problem: "unreachable"}
+
+	st := fleet.StorageFor([]model.BareMetalHost{
+		{Namespace: "machines", Name: "r0102-01-cephmon", State: "provisioned",
+			OperationalStatus: "error", ErrorMessage: "deploy image timed out",
+			Labels: map[string]string{fleet.LabelRole: "cephmon", fleet.LabelClusterID: "fsid"}},
+	}, []fleet.CephReport{{
+		Cluster: fleet.ClusterRef{Namespace: "capi", Name: "tenant-01"},
+		Status:  ceph.Status{FSID: "fsid", Health: "HEALTH_WARN"},
+		Summary: &fleet.SummaryBlock{Title: "Ceph", Lines: []string{"health  HEALTH_WARN"}},
+	}})
+
+	s, err := New(&fakeFleet{
+		clusters: []fleet.ClusterView{rich, broken}, storage: st,
+		changed: make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := get(t, s.Handler(), "/")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, body:\n%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); strings.Contains(body, "can't evaluate field") {
+		t.Errorf("template error in the body:\n%s", body)
+	}
+}
+
 // A grid table declares its column count in a class, and nothing in the markup
 // checks it: get it wrong and every cell after the first row lands in the wrong
 // column, on a page that still renders. This counts the headers and compares.
@@ -629,27 +672,127 @@ func TestPackedTablesDeclareTheirRealColumnCount(t *testing.T) {
 	}
 }
 
-// richDetail is a cluster with every packed table populated, so a layout test
-// sees them all rather than the empty states.
+// richDetail is a cluster with every table, pane and subsystem populated.
+//
+// It exists because of a 500 on a live page. html/template resolves a field
+// only when data reaches it, so a pane nothing has ever populated is a pane
+// nothing has ever checked: the migrations table referred to a
+// `.ServerID` that has never existed on openstack.Migration, and it sat there
+// from the day the cloud pane was written until a cluster finally had a
+// migration to render. The whole page 500s, not the table.
+//
+// So: every branch gets data. A field renamed in a sextant release, or misread
+// when it was written, fails here instead of on somebody's screen.
 func richDetail() fleet.ClusterDetail {
+	now := time.Now()
 	return fleet.ClusterDetail{
 		ClusterView: fleet.ClusterView{
 			Namespace: "capi", Name: "tenant-01", NodesKnown: true,
+			Version: "v1.36.2", Phase: "Provisioned", Paused: true,
 			Pools: []fleet.NodePool{{Name: "tenant-01-kcp", Role: "control-plane",
-				Ready: 3, Desired: 3, Version: "v1.36.2"}},
+				Ready: 3, Desired: 3, Version: "v1.36.2", Rolling: true}},
+			Nodes:     fleet.NodeCount{Ready: 6, Total: 6, Cordoned: 2},
+			Capacity:  fleet.Capacity{CPURequested: 2400, CPUAllocatable: 10000, MemRequested: 35, MemAllocatable: 100},
+			Workloads: []fleet.WorkloadCount{{Kind: "Deployment", Ready: 151, Total: 152}},
+			Summaries: []fleet.SummaryBlock{{Title: "Ceph", Lines: []string{"health  HEALTH_WARN"}}},
 		},
 		Machines: fleet.Split[model.Machine]{Shown: []model.Machine{
 			{Name: "tenant-01-kcp-abc", Phase: "Running", Version: "v1.36.2"}}},
 		Hosts: fleet.Split[model.BareMetalHost]{Shown: []model.BareMetalHost{
 			{Name: "host-1", State: "provisioned", OperationalStatus: "error",
 				ErrorMessage: "timed out waiting for the deploy image"}}},
+		HostsElsewhere: 9,
 		NodeRows: fleet.Split[fleet.NodeRow]{Shown: []fleet.NodeRow{{
 			Node: model.Node{Name: "node-1.site-a.example", Role: "control-plane", Status: "Ready"}}}},
 		UnhealthyPods: []model.Pod{{Namespace: "ns", Name: "api-1", Status: "CrashLoopBackOff"}},
-		Subsystems: fleet.Subsystems{Inventory: &openstack.Inventory{Counts: []openstack.Count{
-			{Label: "Servers", Total: 50, ByState: map[string]int{"ACTIVE": 50}}}},
+		PodsTruncated: 4,
+		Events: fleet.Split[fleet.EventGroup]{Shown: fleet.GroupEvents([]model.Event{{
+			Type: "Warning", Reason: "DrainFailed", ObjectKind: "BareMetalHost",
+			ObjectName: "host-1", Message: "failed to migrate virtual routers",
+			LastTimestamp: now}})},
+		EventsElsewhere: 45,
+		Subsystems: fleet.Subsystems{
+			// Reduced tiers, so the "reporting below full detail" pane renders.
+			Cilium: &cilium.State{
+				Tier: subsystem.TierInformer, TierReason: "pods/exec denied",
+				AgentsReady: 5, AgentsDesired: 6, Pod: "cilium-abc",
+				Rollout: subsystem.Rollout{Desired: 6, Updated: 5, Manual: true},
+				Status: cilium.Status{
+					Version: "1.19.7", State: "Ok", KubeProxyReplacement: "true",
+					EncryptionMode: "Ztunnel",
+					IPAM:           cilium.IPAM{Used: 133, Available: 121},
+					Controllers:    cilium.Controllers{Failing: 1, Total: 40},
+					Unreadable:     []string{"encryption"},
+				}},
+			OVN: &ovn.State{
+				Statuses: []ovn.ClusterStatus{{
+					Database: "OVN_Northbound", Role: "leader", Term: 389,
+					Leader: "ovn-ovsdb-nb-1", Servers: []ovn.Server{{Name: "nb-1"}}}},
+				Components: []ovn.Component{{
+					Name: "ovn-northd", Rollout: subsystem.Rollout{Desired: 3, Updated: 3, Ready: 3}}},
+			},
+			MetalLB: &metallb.State{
+				Pools: []metallb.Pool{
+					{Name: "default", Addresses: []string{"192.0.2.12-192.0.2.99"},
+						Advertised: []string{"L2"}, Assigned: 8, Available: 80},
+					// No Advertised, so UnadvertisedPools() has something to
+					// report and the halfblind line renders.
+					{Name: "spare", Addresses: []string{"192.0.2.200-192.0.2.210"}},
+				},
+				// A service with no external IP is what PendingServices() counts.
+				Services:     []metallb.Service{{Namespace: "ns", Name: "waiting"}},
+				SpeakerReady: 4, SpeakerDesired: 4,
+			},
 			OpenStack: &openstack.State{Services: []openstack.ServiceSummary{
-				{Service: "compute", Up: 8, Total: 8}}}},
+				{Service: "compute", Up: 7, Total: 8, Disabled: 1}}},
+			Inventory: &openstack.Inventory{Counts: []openstack.Count{
+				{Label: "Servers", Total: 50, ByState: map[string]int{"ACTIVE": 47, "ERROR": 3}},
+				{Label: "Load Balancers", Absent: true},
+				{Label: "Volumes", Err: errors.New("timed out")},
+			}},
+		},
+		// The pane that 500'd the page: a drain in progress and a migration to
+		// show for it.
+		Drains: []openstack.Drain{{Host: "compute-1", Remaining: 4, Moving: 0, Stuck: 2}},
+		Shown: openstack.Shown{Rows: []openstack.Migration{{
+			ID: 70551, Status: "error", Type: "live-migration",
+			InstanceUUID:  "3f2b1c8a-1111-2222-3333-444455556666",
+			SourceCompute: "compute-1", DestCompute: "compute-2", UpdatedAt: now,
+		}}},
+	}
+}
+
+// Every pane on the cluster page renders without a template error.
+//
+// render buffers, so a bad field reference anywhere is a 500 for the whole page
+// rather than one broken table. That makes this the cheapest test on the page
+// and the one that would have caught the .ServerID bug on the day it was
+// written.
+func TestClusterPage_EveryPaneRenders(t *testing.T) {
+	rec := get(t, serveDetail(t, richDetail()), "/cluster/capi/tenant-01")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, body:\n%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// A template execution failure is reported as text, so check for its shape
+	// as well as the status: "can't evaluate field X in type Y".
+	if strings.Contains(body, "can't evaluate field") || strings.Contains(body, "executing \"") {
+		t.Errorf("template error in the body:\n%s", body)
+	}
+	// Spot-check the pane that was broken, including the shortened UUID.
+	for _, want := range []string{"Server migrations", "3f2b1c8a", "Draining hosts", "compute-1"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q from a fully populated page", want)
+		}
+	}
+	// Short in the cell, whole in the title: eight characters are what anybody
+	// reads, and the rest is still there to copy.
+	if !strings.Contains(body, `>3f2b1c8a</td>`) {
+		t.Error("the cell does not hold the shortened UUID")
+	}
+	if !strings.Contains(body, `title="3f2b1c8a-1111-2222-3333-444455556666"`) {
+		t.Error("the whole UUID is not recoverable from the row")
 	}
 }
 

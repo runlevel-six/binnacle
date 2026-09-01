@@ -326,7 +326,11 @@
       <thead><tr><th>SERVER</th><th>TYPE</th><th>STATUS</th><th>FROM</th><th>TO</th><th class="r">AGE</th></tr></thead>
       <tbody>
       {{range .Shown.Rows}}
-        <tr><td class="msg">{{.ServerID}}</td>
+        {{/* The instance UUID, shortened the way the dashboard shortens it: a
+             full UUID is thirty-six characters beside two compute hostnames,
+             and the eight that identify it are the eight anybody reads. The
+             whole value stays on the row for a copy. */}}
+        <tr><td class="ident" title="{{.InstanceUUID}}">{{shortID .InstanceUUID}}</td>
           <td class="dim">{{shortType .Type}}</td>
           <td{{if failed .Status}} class="errish"{{else if active .Status}} class="warnish"{{end}}>{{shortStatus .Status}}</td>
           <td class="dim">{{.SourceCompute}}</td><td class="dim">{{.DestCompute}}</td>

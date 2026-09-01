@@ -574,6 +574,27 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 		{Host: "compute-node-3.site-a.example", Remaining: 4, Moving: 1},
 		{Host: "compute-node-7.site-a.example", Remaining: 2, Moving: 0, Stuck: 2},
 	}
+	// The migration table the drains above are producing. The fixture was
+	// missing it, which is why nothing caught a field name in that pane that
+	// had never existed: the demo is the only place a pane gets exercised
+	// without waiting for a real cloud to do something.
+	detail.Shown = openstack.Shown{Rows: []openstack.Migration{
+		{ID: 70551, Status: "error", Type: "live-migration",
+			InstanceUUID:  "3f2b1c8a-9d44-4c1e-8f77-2b6a5e0c1d93",
+			SourceCompute: "compute-node-7.site-a.example",
+			DestCompute:   "compute-node-2.site-a.example",
+			UpdatedAt:     now.Add(-9 * time.Minute)},
+		{ID: 70549, Status: "running", Type: "live-migration",
+			InstanceUUID:  "b81f7e20-3a5c-41d8-9e62-77c4f1a0b512",
+			SourceCompute: "compute-node-3.site-a.example",
+			DestCompute:   "compute-node-1.site-a.example",
+			UpdatedAt:     now.Add(-40 * time.Second)},
+		{ID: 70540, Status: "completed", Type: "evacuation",
+			InstanceUUID:  "c0a4d118-6f2b-4a90-b7e3-51d8ac2f6e07",
+			SourceCompute: "compute-node-7.site-a.example",
+			DestCompute:   "compute-node-4.site-a.example",
+			UpdatedAt:     now.Add(-22 * time.Minute)},
+	}}
 
 	detail.Summaries = []SummaryBlock{{
 		Title: "Ceph",

@@ -345,6 +345,18 @@ func funcs() template.FuncMap {
 		"shortStatus": openstack.ShortStatus,
 		"active":      openstack.Active,
 		"failed":      openstack.Failed,
+		// shortID trims an OpenStack UUID to the eight characters that identify
+		// it, matching what the dashboard's migration table shows. Local rather
+		// than shared from sextant: unlike the health verdicts, how many
+		// characters of a UUID to print carries no judgement about whether
+		// anything is wrong, so the two front ends drifting on it would cost
+		// nothing.
+		"shortID": func(s string) string {
+			if len(s) > 8 {
+				return s[:8]
+			}
+			return s
+		},
 		// A map has no order, and a template iterating one sorts by key —
 		// which put ACTIVE ahead of ERROR and buried the failing state in the
 		// middle of the line. StateCounts orders by count and says which states
