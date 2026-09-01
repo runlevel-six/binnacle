@@ -100,14 +100,33 @@ func cellHosts(s *store.Store, roles profile.NodeRoles) (Cell, bool) {
 	if !ok || snap.Err != nil {
 		return Cell{}, false
 	}
+	return HostsCell(snap.Items)
+}
 
-	cell := Cell{Name: "Hosts"}
-	if len(snap.Items) == 0 {
+// CellNameHosts is the [Cell.Name] the hosts cell carries, so a consumer
+// replacing it in a slice of cells does not have to spell it.
+const CellNameHosts = "Hosts"
+
+// HostsCell is the hosts verdict over an explicit set of hosts.
+//
+// Separate from the store because the BareMetalHost snapshot is deliberately
+// *datacenter-wide* — see the watcher, where narrowing it would break the
+// unclaimed-host join — while a consumer showing one cluster's hosts has
+// narrowed them. The dashboard watches one cluster and shows the whole
+// datacenter's hosts, so its cell and its pane agree; a fleet view that scopes
+// the pane to the cluster that owns the hardware must scope this too, or the
+// cell reports another cluster's failed host with no row on the page to explain
+// it.
+//
+// The verdict itself stays here so both callers make it the same way.
+func HostsCell(hosts []model.BareMetalHost) (Cell, bool) {
+	cell := Cell{Name: CellNameHosts}
+	if len(hosts) == 0 {
 		cell.Status = StatusLoading
 		return cell, true
 	}
 	errored := 0
-	for _, b := range snap.Items {
+	for _, b := range hosts {
 		if b.ErrorMessage != "" || b.OperationalStatus == "error" {
 			errored++
 		}

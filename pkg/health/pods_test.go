@@ -116,3 +116,50 @@ func TestCellPods_StartingPodsDoNotHoldTheCellAmber(t *testing.T) {
 		t.Errorf("detail = %q, want \"1 unhealthy\"", cell.Detail)
 	}
 }
+
+// A fleet view scopes its hosts pane to the cluster that owns the hardware, and
+// its cell has to agree. The datacenter-wide snapshot behind cellHosts would
+// otherwise report another cluster's failed host on every cluster's page, with
+// no row anywhere to explain it.
+func TestHostsCell_JudgesOnlyTheHostsGiven(t *testing.T) {
+	mine := []model.BareMetalHost{
+		{Name: "a03-17-controller", State: "provisioned", OperationalStatus: "OK"},
+		{Name: "a03-18-controller", State: "provisioned", OperationalStatus: "OK"},
+	}
+	theirs := model.BareMetalHost{
+		Name: "a03-22-compute", State: "deprovisioning",
+		OperationalStatus: "error", ErrorMessage: "Cleaning failed",
+	}
+
+	cell, ok := HostsCell(mine)
+	if !ok {
+		t.Fatal("no hosts cell")
+	}
+	if cell.Status != StatusOK {
+		t.Errorf("status = %v (%q), want OK", cell.Status, cell.Detail)
+	}
+
+	// The same failure, in this cluster's own hosts, is still reported.
+	cell, _ = HostsCell(append(mine, theirs))
+	if cell.Status != StatusErr {
+		t.Errorf("status = %v, want Err", cell.Status)
+	}
+	if cell.Detail != "1 errored" {
+		t.Errorf("detail = %q, want \"1 errored\"", cell.Detail)
+	}
+	if cell.Name != CellNameHosts {
+		t.Errorf("name = %q, want %q", cell.Name, CellNameHosts)
+	}
+}
+
+// No hosts is not the same as no problem: a cluster whose hosts have not been
+// read yet must not render as healthy hardware.
+func TestHostsCell_EmptyIsLoading(t *testing.T) {
+	cell, ok := HostsCell(nil)
+	if !ok {
+		t.Fatal("no hosts cell")
+	}
+	if cell.Status != StatusLoading {
+		t.Errorf("status = %v, want Loading", cell.Status)
+	}
+}
