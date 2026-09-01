@@ -201,7 +201,9 @@
         <div class="sub">
           <h4>Services</h4>
           {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
-          <table class="packed cols-3">
+          {{/* Spread: three short columns in a section of a half-width pane sat
+               in the left third of it. */}}
+          <table class="packed cols-3 spread">
             <thead><tr><th>SERVICE</th><th class="r">AGENTS</th><th class="r">DISABLED</th></tr></thead>
             <tbody>
             {{range .Services}}

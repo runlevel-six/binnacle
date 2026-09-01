@@ -126,17 +126,22 @@
   <h2>Storage <span class="ns">this datacenter</span></h2>
 
   {{if .Clusters}}
-  {{/* One Ceph takes the row; two share it. A half-width pane with nothing
-       beside it is the gap the twelve-column grid exists to avoid, and a
-       datacenter has one storage cluster or two. */}}
-  {{$span := "wide"}}{{if gt (len .Clusters) 1}}{{$span = "half"}}{{end}}
+  {{/* Half the row, whatever the count.
+       
+       A storage cluster's content wants about a half: three lines of summary,
+       four checks, a roles line and a six-row host table. Given the whole row
+       its two sections were nine hundred and seventy pixels each, and neither
+       had anything to do with that — the checks left half their column empty
+       while the host table spread four short columns seven hundred pixels
+       apart. Two clusters fill the row between them; one leaves the rest as
+       background, which is where slack belongs. */}}
   <div class="panes">
   {{range .Clusters}}
     {{/* A pane, not a card. The cluster cards are summaries with a page behind
          them; there is far less to a Ceph than to a cluster, so this shows what
          it has rather than teaching a reader to click. It stays on the cluster
          pages too — a shared Ceph is worth reading from either end. */}}
-    <section class="pane {{$span}} storage-pane {{if .Degraded}}warn{{else if .Silent}}unknown{{else}}ok{{end}}">
+    <section class="pane half storage-pane {{if .Degraded}}warn{{else if .Silent}}unknown{{else}}ok{{end}}">
       <h3>Ceph <span class="fsid">{{.Short}}</span>
         <span class="count">{{if .Hosts.Total}}{{.Hosts.Total}} host{{if ne .Hosts.Total 1}}s{{end}}{{else}}hardware not identified{{end}}</span></h3>
 
