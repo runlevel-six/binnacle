@@ -432,7 +432,34 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 				LastTimestamp: now.Add(-time.Duration(i) * time.Minute)})
 		}
 	}
+	// A backup CronJob's steady output. Real clusters produce forty rows of this
+	// an hour, and the fixture needs it or the demo cannot show what the fold is
+	// for: the layout being worked on here is the one with the audit trail
+	// tucked behind a disclosure.
+	for i, step := range []struct{ reason, message string }{
+		{"SawCompletedJob", "Saw completed job: etcd-backup, condition: Complete"},
+		{"SuccessfulDelete", "Deleted job etcd-backup-29804460"},
+		{"Completed", "Job completed"},
+		{"Started", "Container started"},
+		{"Created", "Container created"},
+		{"Pulling", "Pulling image \"docker.io/busybox\""},
+		{"Pulled", "Successfully pulled image \"docker.io/busybox\" in 267ms"},
+		{"Scheduled", "Successfully assigned kube-system/etcd-backup-29804490-6r55z to node-1"},
+		{"SuccessfulCreate", "Created pod: etcd-backup-29804490-6r55z"},
+		{"AddedInterface", "Add eth0 [172.18.6.231/32] from cilium"},
+		{"NodeSchedulable", "Node node-3 status is now: NodeSchedulable"},
+		{"LeaderElection", "node-2 became leader"},
+	} {
+		raw = append(raw, model.Event{
+			Namespace: "kube-system", Type: "Normal", Reason: step.reason, Count: 1,
+			ObjectKind: "Pod", ObjectName: fmt.Sprintf("etcd-backup-2980%d-6r55z", 4400+i),
+			Message:       step.message,
+			LastTimestamp: now.Add(-time.Duration(15*i) * time.Minute)})
+	}
 	detail.setEvents(GroupEvents(raw))
+	// The management namespace holds the whole fleet, so a real page always has
+	// some. Two clusters' worth of Cluster API chatter is about this many.
+	detail.EventsElsewhere = 31
 
 	detail.Subsystems = Subsystems{
 		Cilium: &cilium.State{

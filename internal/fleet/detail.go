@@ -80,13 +80,20 @@ type ClusterDetail struct {
 	// that silently truncates reports the first when it means the second.
 	PodsTruncated int
 
-	// Events is grouped, not raw: see GroupEvents. EventsTruncated counts the
-	// groups that did not fit, and EventsTotal the raw events behind all of
-	// them, so the header can say "12 of 47 groups, 1,384 events" rather than
-	// implying the cluster only produced what fits on the page.
-	Events          []EventGroup
+	// Events is grouped, not raw: see GroupEvents. It is also ranked and folded,
+	// like the three big tables: warnings are the pane and Normal events are the
+	// audit trail behind it. EventsTruncated counts the groups that did not fit,
+	// and EventsTotal the raw events behind all of them, so the header can say
+	// "12 of 47 groups, 1,384 events" rather than implying the cluster only
+	// produced what fits on the page.
+	Events          Split[EventGroup]
 	EventsTruncated int
 	EventsTotal     int
+	// EventsElsewhere is how many management events in the namespace-wide
+	// snapshot concern some other cluster. Reported for the same reason
+	// HostsElsewhere is: the reader who knows the snapshot is namespace-wide
+	// needs to be told where the rest went.
+	EventsElsewhere int
 
 	// Subsystems is whatever optional subsystems this cluster runs. Absent ones
 	// are nil rather than empty, so a cluster without Ceph gets no Ceph section
@@ -292,12 +299,23 @@ func earliest(a, b time.Time) time.Time {
 	return a
 }
 
+// readEvents merges the two event sources, scoping the management side to this
+// cluster.
+//
+// Must run after the machines and hosts are read: eventsFor matches on the
+// names they carry, and an empty owned set would drop every management event
+// rather than none.
 func (d *ClusterDetail) readEvents(s *store.Store) {
 	var all []model.Event
-	for _, key := range []string{model.KeyWorkloadEvents, model.KeyMgmtEvents} {
-		if snap, ok := store.Get[model.Snapshot[model.Event]](s, key); ok {
-			all = append(all, snap.Items...)
-		}
+	// The workload cluster's events are all its own — they come from its own
+	// API server — so they need no scoping.
+	if snap, ok := store.Get[model.Snapshot[model.Event]](s, model.KeyWorkloadEvents); ok {
+		all = append(all, snap.Items...)
+	}
+	if snap, ok := store.Get[model.Snapshot[model.Event]](s, model.KeyMgmtEvents); ok {
+		mine, elsewhere := eventsFor(snap.Items, d.ownedNames())
+		d.EventsElsewhere = elsewhere
+		all = append(all, mine...)
 	}
 
 	d.setEvents(GroupEvents(all))
@@ -315,7 +333,9 @@ func (d *ClusterDetail) setEvents(groups []EventGroup) {
 		d.EventsTruncated = len(groups) - maxEvents
 		groups = groups[:maxEvents]
 	}
-	d.Events = groups
+	// Capped before folding, so the cap keeps sixty groups worth reading rather
+	// than sixty rows of which fifty are folded out of sight anyway.
+	d.Events = splitEvents(groups)
 }
 
 // Compact renders a duration the way the tables do: one unit, no decimals.

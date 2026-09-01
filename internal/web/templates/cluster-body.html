@@ -29,8 +29,10 @@
 
 <div class="panes">
   {{/* Three across when there are subsystems to show, two when there are not,
-       so the row fills either way rather than stranding a gap. */}}
-  {{$col := "third"}}{{if not .Summaries}}{{$col = "half"}}{{end}}
+       so the row fills either way rather than stranding a gap. The two narrow
+       panes take a quarter each and the pods table the remaining half: it is
+       the only one of the three with a wide row to render. */}}
+  {{$col := "narrow"}}{{if not .Summaries}}{{$col = "half"}}{{end}}
   <section class="pane {{$col}}">
     <h3>Node pools</h3>
     {{if .Pools}}
@@ -64,7 +66,7 @@
   </section>
 
   {{if .Summaries}}
-  <section class="pane third">
+  <section class="pane narrow">
     <h3>Subsystems</h3>
     {{range .Summaries}}
       <h4>{{.Title}}</h4>
@@ -74,7 +76,7 @@
   </section>
   {{end}}
 
-  <section class="pane {{$col}}" id="pods">
+  <section class="pane half" id="pods">
     <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
     {{if .UnhealthyPods}}
     <table class="packed">
@@ -325,25 +327,26 @@
 
 
   <section class="pane wide">
-    <h3>Events{{if .Events}} <span class="count">{{len .Events}}{{if .EventsTruncated}} of {{add (len .Events) .EventsTruncated}}{{end}} group{{if ne (add (len .Events) .EventsTruncated) 1}}s{{end}} &middot; {{.EventsTotal}} event{{if ne .EventsTotal 1}}s{{end}}</span>{{end}}</h3>
-    {{if .Events}}
-    <table>
-      <thead><tr><th>TYPE</th><th>REASON</th><th>OBJECT</th><th>MESSAGE</th><th class="r">COUNT</th><th class="r">AGE</th></tr></thead>
-      <tbody>
-      {{range .Events}}
-        <tr><td{{if eq .Type "Warning"}} class="warnish"{{else}} class="dim"{{end}}>{{.Type}}</td>
-          <td>{{.Reason}}</td>
-          {{/* One object means the name is the whole story. Several means it is
-               only a sample, and the count of objects is the useful part. */}}
-          <td class="dim ident">{{.ObjectKind}}{{if eq .Objects 1}}/{{.ObjectName}}{{else}} <span class="tally">&times;{{.Objects}} objects</span>{{end}}</td>
-          <td class="msg">{{.Message}}</td>
-          <td class="r">{{.Occurrences}}</td>
-          <td class="r dim nowrap">{{ago .LastTimestamp}}</td></tr>
-      {{end}}
-      </tbody>
-    </table>
-    {{if .EventsTruncated}}<p class="empty">{{.EventsTruncated}} more group{{if ne .EventsTruncated 1}}s{{end}} not shown.</p>{{end}}
+    <h3>Events{{if .Events.Total}} <span class="count">{{.Events.Total}}{{if .EventsTruncated}} of {{add .Events.Total .EventsTruncated}}{{end}} group{{if ne (add .Events.Total .EventsTruncated) 1}}s{{end}} &middot; {{.EventsTotal}} event{{if ne .EventsTotal 1}}s{{end}}</span>{{end}}</h3>
+    {{if .Events.Shown}}{{template "event-table" .Events.Shown}}
+    {{else if .Events.Total}}<p class="empty">Every event is Normal.</p>
     {{else}}<p class="empty">No events reported.</p>{{end}}
+    {{/* Normal events are the audit trail, not the pane: on a production
+         cluster an etcd backup CronJob alone fills forty rows an hour, and
+         unfolded they bury the warnings above them. */}}
+    {{if .Events.Quiet}}
+    <details class="quiet">
+      <summary>{{len .Events.Quiet}} Normal event groups</summary>
+      {{template "event-table" .Events.Quiet}}
+    </details>
+    {{end}}
+    {{if .EventsTruncated}}<p class="empty">{{.EventsTruncated}} more group{{if ne .EventsTruncated 1}}s{{end}} not shown.</p>{{end}}
+    {{/* The management snapshot is namespace-wide, and the namespace holds every
+         cluster in the datacenter. Saying so is the difference between a pane
+         showing this cluster's events and one that appears to. */}}
+    {{if .EventsElsewhere}}
+    <p class="empty footnote">{{.EventsElsewhere}} further management event{{if ne .EventsElsewhere 1}}s{{end}} in this namespace concern other clusters, and are not listed here.</p>
+    {{end}}
   </section>
 </div>
 {{end}}
@@ -353,6 +356,24 @@
 {{/* The three big tables render twice: once for the rows that need reading and
      once inside the disclosure holding the quiet remainder. Defining each row
      shape once keeps the two halves from drifting apart. */}}
+
+{{define "event-table"}}
+<table>
+  <thead><tr><th>TYPE</th><th>REASON</th><th>OBJECT</th><th>MESSAGE</th><th class="r">COUNT</th><th class="r">AGE</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr><td{{if eq .Type "Warning"}} class="warnish"{{else}} class="dim"{{end}}>{{.Type}}</td>
+      <td>{{.Reason}}</td>
+      {{/* One object means the name is the whole story. Several means it is
+           only a sample, and the count of objects is the useful part. */}}
+      <td class="dim ident">{{.ObjectKind}}{{if eq .Objects 1}}/{{.ObjectName}}{{else}} <span class="tally">&times;{{.Objects}} objects</span>{{end}}</td>
+      <td class="msg">{{.Message}}</td>
+      <td class="r">{{.Occurrences}}</td>
+      <td class="r dim nowrap">{{ago .LastTimestamp}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
 
 {{define "machine-table"}}
 <table class="packed">
