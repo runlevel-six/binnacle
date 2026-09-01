@@ -642,6 +642,24 @@ func TestFleetPage_EveryCardBranchRenders(t *testing.T) {
 	}
 }
 
+// The events table sizes to its content rather than starting at the full width.
+//
+// The growth column put a thousand pixels between a short message and the count
+// at the pane's edge, while holding the object column at its floor so a pod name
+// wrapped. Both are the same cause.
+func TestClusterPage_EventsTableFitsItsContent(t *testing.T) {
+	body := get(t, serveDetail(t, richDetail()), "/cluster/capi/tenant-01").Body.String()
+
+	if !strings.Contains(body, `<table class="fit">`) {
+		t.Error("the events table does not size to its content")
+	}
+	// And nothing else adopted it by accident: .fit is wrong for a table whose
+	// columns should share the pane.
+	if n := strings.Count(body, `class="fit"`); n != 1 {
+		t.Errorf("%d tables are sized to content, want only the events table", n)
+	}
+}
+
 // Every disclosure carries an id, because that is how its open state survives a
 // pushed fragment. Without one the reader's click is undone within a second by
 // the next update, which is what this test exists to stop regressing.

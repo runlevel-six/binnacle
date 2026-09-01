@@ -237,6 +237,13 @@
   /* A pane split across a column boundary would be two half-panes with a border
      each, which is worse than any hole. */
   .panes.flow > .pane { break-inside: avoid; margin: 0 0 1rem; }
+  /* The two columns rarely end level — the browser balances them, but it cannot
+     split a pane it has been told to keep whole — so the grid region below
+     starts flush against whichever column ran longest and a long way below the
+     other. One gap read as deliberate and the other as a mistake. This makes
+     the boundary between the two regions its own space, so neither reads as an
+     accident. */
+  .panes.flow { margin-bottom: 1rem; }
   .pane {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 6px; padding: .8rem 1rem 1rem; min-width: 0;
@@ -295,6 +302,19 @@
   /* Messages are the one genuinely unbounded column; let it take the slack and
      wrap rather than pushing the numeric columns off the pane. */
   .msg { width: 99%; word-break: break-word; }
+  /* .fit sizes a table to its content and stops there.
+     
+     A growth column is right when the content is long and wrong when it is not,
+     and the events table gets both. Given width: 99% the message column
+     swallowed every spare pixel: with short messages that left a thousand
+     pixels between the message and the count at the pane's edge, while the
+     object column next to it was held at its 15rem floor and wrapped a pod name
+     onto two lines. Sized to content instead, the object column takes what it
+     needs, the count follows the message, and the slack lands at the pane's
+     edge. A long message still fills the width and wraps, because the table can
+     still grow to 100% — it just no longer starts there. */
+  .pane table.fit { width: auto; max-width: 100%; }
+  .pane table.fit .msg { width: auto; }
   /* A table of short columns must not be stretched across the pane at all.
      Auto layout spreads the slack evenly between the columns; handing one
      column 99% only moves the same slack inside it, and left-aligned text
@@ -401,6 +421,12 @@
   .storage-pane.unknown { border-left-color: var(--loading); }
   .storage-pane h3 { text-transform: none; letter-spacing: 0; font-size: .9rem; color: var(--ink); }
   .reporters { margin: 0 0 .5rem; font-size: .78rem; color: var(--dim); }
+  /* Ceph's checks are two columns of prose, and prose needs more air between
+     columns than a table of numbers does: at the shared gutter a check name sat
+     fourteen pixels from the sentence explaining it. */
+  .checks { margin-top: .7rem; }
+  .checks td { padding: .22rem 2rem .22rem 0; }
+  .checks td:last-child { padding-right: 0; }
   .ceph-health { margin: 0 0 .5rem; font-size: .82rem; font-variant-numeric: tabular-nums; }
   .reporters a { color: var(--teal); text-decoration: none; }
   .reporters a:hover { text-decoration: underline; }

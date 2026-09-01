@@ -558,6 +558,51 @@ func (f *Fleet) View() []ClusterView {
 	return out
 }
 
+// scopeHostsCell narrows the hosts cell to the hardware this cluster owns.
+//
+// The BareMetalHost snapshot is datacenter-wide and deliberately so — a host is
+// unclaimed only if *no* cluster claims it, which is a question no single
+// cluster's view can answer. The dashboard shows that whole snapshot, so its
+// cell and its pane agree. This page does not: hostsFor scopes the pane to the
+// hardware this cluster's machines consume, and the cell was left reading the
+// snapshot. The result was a red "Hosts 1 errored" on a cluster whose every
+// listed host read OK, about a host that belongs to a different cluster
+// entirely.
+//
+// The verdict itself is sextant's, over the hosts this page will actually show.
+// A cluster whose machines or hosts have not arrived yet keeps the cell it had:
+// an empty scope would report StatusLoading and hide a real failure behind
+// "waiting".
+func scopeHostsCell(cells []health.Cell, s *store.Store) []health.Cell {
+	hosts, ok := store.Get[model.Snapshot[model.BareMetalHost]](s, model.KeyMgmtBareMetalHosts)
+	if !ok || hosts.Err != nil {
+		return cells
+	}
+	machines, ok := store.Get[model.Snapshot[model.Machine]](s, model.KeyMgmtMachines)
+	if !ok || machines.Err != nil || len(machines.Items) == 0 {
+		return cells
+	}
+
+	mine, _ := hostsFor(hosts.Items, machines.Items)
+	if len(mine) == 0 {
+		// No hardware claimed by this cluster's machines. That is a real state
+		// on a cloud-provider cluster, and not one this cell can say anything
+		// useful about, so leave whatever the snapshot produced.
+		return cells
+	}
+	scoped, ok := health.HostsCell(mine)
+	if !ok {
+		return cells
+	}
+	for i := range cells {
+		if cells[i].Name == health.CellNameHosts {
+			cells[i] = scoped
+			break
+		}
+	}
+	return cells
+}
+
 // sortViews orders clusters worst first, then by namespace and name.
 //
 // Ordering is a deliberate choice rather than a stable list: a fleet page is
@@ -605,7 +650,9 @@ func (t *tracked) view(prof profile.Profile) ClusterView {
 	for _, b := range t.registry.Summaries(t.store) {
 		v.Summaries = append(v.Summaries, SummaryBlock{Title: b.Title, Lines: b.Lines})
 	}
-	v.Cells = append(health.CoreCells(t.store, prof.NodeRoles), t.registry.BannerCells(t.store)...)
+	v.Cells = scopeHostsCell(
+		append(health.CoreCells(t.store, prof.NodeRoles), t.registry.BannerCells(t.store)...),
+		t.store)
 	v.Status = health.Worst(v.Cells)
 	v.Rollout = rollout.Detect(t.store, "")
 

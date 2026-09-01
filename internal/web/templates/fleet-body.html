@@ -169,7 +169,7 @@
             &middot; mons {{.Mons.InQuorum}}/{{.Mons.Total}} &middot; osds {{.OSDs.Up}}/{{.OSDs.Total}} up</p>{{end}}
           {{end}}
           {{with .Status}}{{if .Checks}}
-          <table>
+          <table class="checks">
             <tbody>
             {{range .Checks}}
               <tr><td class="warnish nowrap">{{.Name}}</td><td class="msg">{{.Message}}</td></tr>

@@ -2,8 +2,11 @@ package fleet
 
 import (
 	"testing"
+	"time"
 
+	"github.com/runlevel-six/sextant/pkg/health"
 	"github.com/runlevel-six/sextant/pkg/model"
+	"github.com/runlevel-six/sextant/pkg/store"
 )
 
 // cephHost builds a labeled Ceph host.
@@ -200,5 +203,76 @@ func TestStorageCluster_ShortIsTheFSIDPrefix(t *testing.T) {
 	c := StorageCluster{FSID: "24413730-08bc-11ef-b140-23a2dd2fc842"}
 	if got := c.Short(); got != "24413730" {
 		t.Errorf("Short() = %q, want 24413730", got)
+	}
+}
+
+// The bug this exists for, seen live: k8s00's page showed a red "Hosts 1
+// errored" while every host in its table read provisioned OK. The errored host
+// was a03-22-compute, which belongs to k8s01.
+func TestScopeHostsCell_AnotherClustersFailureIsNotOurs(t *testing.T) {
+	s := store.New()
+	s.Put(model.KeyMgmtMachines, model.Snapshot[model.Machine]{UpdatedAt: time.Now(),
+		Items: []model.Machine{
+			{Namespace: "machines", Name: "ours-kcp-aaa", InfraName: "ours-kcp-aaa", Phase: "Running"},
+		}})
+	s.Put(model.KeyMgmtBareMetalHosts, model.Snapshot[model.BareMetalHost]{UpdatedAt: time.Now(),
+		Items: []model.BareMetalHost{
+			{Namespace: "machines", Name: "a03-17-controller", State: "provisioned",
+				OperationalStatus: "OK",
+				ConsumerNamespace: "machines", ConsumerName: "ours-kcp-aaa"},
+			// Another cluster's host, mid-deprovision and failing to clean.
+			{Namespace: "machines", Name: "a03-22-compute", State: "deprovisioning",
+				OperationalStatus: "error", ErrorMessage: "Cleaning failed",
+				ConsumerNamespace: "machines", ConsumerName: "theirs-kcp-bbb"},
+		}})
+
+	cells := scopeHostsCell([]health.Cell{
+		{Name: health.CellNameHosts, Status: health.StatusErr, Detail: "1 errored"},
+	}, s)
+
+	if len(cells) != 1 {
+		t.Fatalf("got %d cells, want 1", len(cells))
+	}
+	if cells[0].Status != health.StatusOK {
+		t.Errorf("status = %v (%q), want OK: the errored host is another cluster's",
+			cells[0].Status, cells[0].Detail)
+	}
+}
+
+// And our own failing host still reaches the strip.
+func TestScopeHostsCell_OurOwnFailureIsReported(t *testing.T) {
+	s := store.New()
+	s.Put(model.KeyMgmtMachines, model.Snapshot[model.Machine]{UpdatedAt: time.Now(),
+		Items: []model.Machine{{Namespace: "machines", Name: "ours-kcp-aaa", Phase: "Running"}}})
+	s.Put(model.KeyMgmtBareMetalHosts, model.Snapshot[model.BareMetalHost]{UpdatedAt: time.Now(),
+		Items: []model.BareMetalHost{
+			{Namespace: "machines", Name: "a03-17-controller", State: "deprovisioning",
+				OperationalStatus: "error", ErrorMessage: "Cleaning failed",
+				ConsumerNamespace: "machines", ConsumerName: "ours-kcp-aaa"},
+		}})
+
+	cells := scopeHostsCell([]health.Cell{{Name: health.CellNameHosts, Status: health.StatusOK}}, s)
+	if cells[0].Status != health.StatusErr {
+		t.Errorf("status = %v, want Err", cells[0].Status)
+	}
+	if cells[0].Detail != "1 errored" {
+		t.Errorf("detail = %q, want \"1 errored\"", cells[0].Detail)
+	}
+}
+
+// Silence must not turn into good news: a cluster whose machines have not
+// arrived keeps whatever the datacenter-wide snapshot said rather than
+// reporting an empty scope as healthy.
+func TestScopeHostsCell_NoMachinesLeavesTheCellAlone(t *testing.T) {
+	s := store.New()
+	s.Put(model.KeyMgmtBareMetalHosts, model.Snapshot[model.BareMetalHost]{UpdatedAt: time.Now(),
+		Items: []model.BareMetalHost{
+			{Name: "a03-22-compute", OperationalStatus: "error", ErrorMessage: "Cleaning failed"},
+		}})
+
+	before := []health.Cell{{Name: health.CellNameHosts, Status: health.StatusErr, Detail: "1 errored"}}
+	cells := scopeHostsCell(before, s)
+	if cells[0].Status != health.StatusErr {
+		t.Errorf("status = %v, want the snapshot's own verdict kept", cells[0].Status)
 	}
 }
