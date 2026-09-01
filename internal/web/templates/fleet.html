@@ -21,15 +21,18 @@
 {{if .Warning}}<p class="unauth">{{.Warning}}</p>{{end}}
 <main id="grid">{{template "fleet-body.html" .}}</main>
 <footer>binnacle {{.Version}} &middot; {{.Auth}} &middot; verdicts from sextant</footer>
+{{template "disclosures"}}
 <script>
   // The page is server-rendered; this only swaps in the fragment the server
   // sends. Any judgement made here would be a second opinion about a cluster's
   // health, and one of the two would eventually be wrong.
   const grid = document.getElementById("grid");
   const live = document.getElementById("live");
+  const keepOpen = window.binnacleKeepOpen(grid);
   const es = new EventSource("/events");
   es.addEventListener("fleet", (e) => {
     grid.innerHTML = e.data;
+    keepOpen();
     live.classList.remove("stale");
     live.textContent = "live";
   });

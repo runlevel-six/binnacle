@@ -187,7 +187,7 @@
       {{if .Hosts.Shown}}{{template "storage-hosts" .Hosts.Shown}}
       {{else if .Hosts.Total}}<p class="empty">Every host is provisioned without error.</p>{{end}}
       {{if .Hosts.Quiet}}
-      <details class="quiet">
+      <details class="quiet" id="quiet-storage-{{.FSID}}">
         <summary>{{len .Hosts.Quiet}} host{{if ne (len .Hosts.Quiet) 1}}s{{end}} provisioned without error</summary>
         {{template "storage-hosts" .Hosts.Quiet}}
       </details>

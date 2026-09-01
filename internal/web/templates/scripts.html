@@ -1,0 +1,44 @@
+{{/* Shared by both pages, because both replace their body wholesale when the
+     fleet moves and both hold disclosures a reader can open. */}}
+{{define "disclosures"}}
+<script>
+  // Keep open disclosures open across a pushed fragment.
+  //
+  // The server sends a re-rendered body and the page does `innerHTML =`, which
+  // throws away every <details> a reader had opened. On a fleet that changes
+  // every second that meant a folded table closed itself before it could be
+  // read — click "44 Normal event groups" and watch it vanish.
+  //
+  // This does not breach the rule that the browser holds no opinions. The rule
+  // exists so that nothing here can disagree with the server about whether a
+  // cluster is healthy; which sections a reader has opened is not a fact about
+  // the cluster at all, and it is the one piece of state the server cannot know.
+  // It is this reader's place in the page, in this tab.
+  //
+  // Tracked by id, so a disclosure that is re-rendered comes back as itself.
+  // Anything without an id is ignored rather than guessed at.
+  window.binnacleKeepOpen = (container) => {
+    const open = new Set();
+    // The toggle event does not bubble, so this listens in the capture phase —
+    // a capturing listener on an ancestor still sees it on the way down.
+    container.addEventListener("toggle", (e) => {
+      const d = e.target;
+      if (!d.id) return;
+      if (d.open) {
+        open.add(d.id);
+      } else {
+        open.delete(d.id);
+      }
+    }, true);
+    // Called after the replacement. Ids that no longer exist are skipped and
+    // kept: a pane can come and go with the data, and reopening it later should
+    // remember.
+    return () => {
+      for (const id of open) {
+        const d = document.getElementById(id);
+        if (d) d.open = true;
+      }
+    };
+  };
+</script>
+{{end}}
