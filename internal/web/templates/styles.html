@@ -231,6 +231,16 @@
   @media (min-width: 78rem) {
     .pane.narrow { grid-column: span 3; }
   }
+  /* Two full-width panes share a row once the window is wide enough for both to
+     hold their contents. The network pane carries a five-column table and a
+     pool's address range; at half of a 1440-pixel window those wrap, and a
+     wrapped table is worse than a tall page. So this is a wide-window
+     arrangement only, and the template pairs panes only when both are present —
+     a lone .pane.paired would leave exactly the half-row gap the twelve-column
+     grid was introduced to remove. */
+  @media (min-width: 115rem) {
+    .pane.paired { grid-column: span 6; }
+  }
   /* A pane arrived at from a card's deep link should not sit flush against the
      top of the viewport with its heading half under the browser chrome. */
   .pane[id] { scroll-margin-top: 1rem; }
@@ -271,26 +281,78 @@
      columns beside each other, with the leftover space out at the edge of the
      pane where it does no harm. Only a table with an unbounded column of its
      own — events, and its message — should fill the width. */
-  .pane table.packed { width: auto; max-width: 100%; }
-  /* A content-width table needs its own column gutters. At the .5rem every
-     table shares, columns that are not being stretched apart sit almost
-     touching — a machine name, its phase and its version read as one run of
-     text — while the space they wanted is out at the pane's edge. Only the
-     trailing column is left alone, so the right-aligned gutter rule below still
-     holds. */
+  /* Each column takes the width its content needs, and the space left over is
+     divided equally between them.
+     
+     Three arrangements were tried before this one. A table at width:100% gives
+     the surplus to whichever column is widest already, in proportion — which is
+     how a node name ended up eighteen hundred pixels from its role. Sizing the
+     table to its content instead leaves every column snug and all the slack out
+     at the pane's edge, so a pane is two thirds empty with the reading crammed
+     into the first third. Capping the track cannot help either: the amount of
+     content is fixed, so the only question is where the emptiness goes.
+     
+     minmax(max-content, 1fr) answers it: max-content is each column's own
+     minimum, and the fr splits what remains evenly, so every column is a little
+     wider than it needs and none is stretched to swallow the rest. Grid rather
+     than table layout because no table algorithm distributes surplus equally —
+     they all weight it by content.
+     
+     --cols has to be declared per table, hence the cols-N classes: a grid needs
+     its column count up front where a table infers it from the markup. */
+  .pane table.packed {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 4), minmax(max-content, 1fr));
+    align-items: start;
+    /* A table wider than its pane scrolls inside itself rather than pushing the
+       page sideways. max-content minimums make that possible on a narrow
+       window, where a table would instead have wrapped its cells. */
+    max-width: 100%; overflow-x: auto;
+  }
+  /* The row structure lives in the column count now, so the table's own
+     grouping elements step out of the way and let the cells be grid items. */
+  .pane table.packed thead, .pane table.packed tbody, .pane table.packed tr { display: contents; }
+  /* colspan has no meaning in a grid; a cell that spanned the row says so. */
+  .pane table.packed .full { grid-column: 1 / -1; }
+  .cols-3 { --cols: 3; }
+  .cols-4 { --cols: 4; }
+  .cols-5 { --cols: 5; }
+  .cols-6 { --cols: 6; }
+  .cols-7 { --cols: 7; }
+  /* A gutter is still wanted as the minimum: the fr share is what a wide pane
+     adds, and on a cramped one the columns would otherwise touch. */
   .pane table.packed td:not(:last-child), .pane table.packed th:not(:last-child),
   .panes.inner table td:not(:last-child), .panes.inner table th:not(:last-child) {
-    padding-right: 1.4rem;
+    padding-right: 1.1rem;
   }
   /* The storage layer is a peer of the cluster grid, not a card in it: it
      belongs to the datacenter, and putting it inside the grid would have it
-     sorted among clusters it is not one of. */
+     sorted among clusters it is not one of.
+     
+     Its contents are .pane, deliberately. Every table rule in this sheet is
+     scoped to .pane, so the first version of this panel — a .card holding a
+     table — inherited none of them and rendered at the browser's defaults:
+     centered bold headers at 1rem beside the app's own .78rem. A new region
+     that shows tables either lives inside .pane or restates the whole
+     stylesheet. */
   .storage { margin-top: 1.5rem; }
   .storage > h2 {
     margin: 0 0 .7rem; font-size: .95rem; font-weight: 600;
     text-transform: uppercase; letter-spacing: .08em; color: var(--brass);
   }
-  .storage .card h3 { margin: 0 0 .5rem; font-size: .95rem; font-weight: 600; }
+  /* The status accent the cluster cards use, on a pane. Left border rather than
+     a filled background: it has to read at a glance from across a room in wall
+     mode without turning the panel into a warning. */
+  .storage-pane { border-left: 3px solid var(--loading); }
+  .storage-pane.ok      { border-left-color: var(--ok); }
+  .storage-pane.warn    { border-left-color: var(--warn); }
+  /* Hardware whose Ceph nobody reports. Grey rather than green: the panel does
+     not know, and not knowing is not health. */
+  .storage-pane.unknown { border-left-color: var(--loading); }
+  .storage-pane h3 { text-transform: none; letter-spacing: 0; font-size: .9rem; color: var(--ink); }
+  .reporters { margin: 0 0 .5rem; font-size: .78rem; color: var(--dim); }
+  .reporters a { color: var(--teal); text-decoration: none; }
+  .reporters a:hover { text-decoration: underline; }
   /* An fsid is the identity but not the name, so it reads as a serial number
      rather than as a heading. */
   .fsid { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; color: var(--teal); font-size: .85rem; }

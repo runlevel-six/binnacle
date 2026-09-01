@@ -28,15 +28,19 @@
 {{end}}
 
 <div class="panes">
-  {{/* Three across when there are subsystems to show, two when there are not,
-       so the row fills either way rather than stranding a gap. The two narrow
-       panes take a quarter each and the pods table the remaining half: it is
-       the only one of the three with a wide row to render. */}}
-  {{$col := "narrow"}}{{if not .Summaries}}{{$col = "half"}}{{end}}
+  {{/* Node pools and the subsystem summaries are both short and bounded, so
+       they share the top row: two halves, or one full width when a cluster
+       reports no subsystems. The unhealthy pods pane used to take a third of
+       this row, and its height is the one thing on the page with no bound at
+       all — during maintenance it runs to sixty rows, and everything beside it
+       was left staring at a screen of empty space. It gets its own row below,
+       where being tall costs nobody anything and being short costs nothing
+       either. */}}
+  {{$col := "half"}}{{if not .Summaries}}{{$col = "wide"}}{{end}}
   <section class="pane {{$col}}">
     <h3>Node pools</h3>
     {{if .Pools}}
-    <table class="packed">
+    <table class="packed cols-5">
       <thead><tr><th>ROLE</th><th>NAME</th><th class="r">READY</th><th>VERSION</th><th></th></tr></thead>
       <tbody>
       {{range .Pools}}
@@ -66,7 +70,7 @@
   </section>
 
   {{if .Summaries}}
-  <section class="pane narrow">
+  <section class="pane half">
     <h3>Subsystems</h3>
     {{range .Summaries}}
       <h4>{{.Title}}</h4>
@@ -76,10 +80,10 @@
   </section>
   {{end}}
 
-  <section class="pane half" id="pods">
+  <section class="pane wide" id="pods">
     <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
     {{if .UnhealthyPods}}
-    <table class="packed">
+    <table class="packed cols-6">
       <thead><tr><th>POD</th><th class="r">READY</th><th>STATUS</th><th class="r">RESTARTS</th><th>NODE</th><th class="r">AGE</th></tr></thead>
       <tbody>
       {{range .UnhealthyPods}}
@@ -156,8 +160,12 @@
   </section>
   {{end}}
 
+  {{/* $pair is set only when both panes exist. A single paired pane would sit
+       in half a row with a gap beside it, which is the bug the explicit grid
+       replaced. */}}
+  {{$pair := "wide"}}{{if and .Subsystems.Network .Subsystems.Cloud}}{{$pair = "wide paired"}}{{end}}
   {{if .Subsystems.Network}}
-  <section class="pane wide">
+  <section class="pane {{$pair}}">
     <h3>Network</h3>
     <div class="panes inner">
 
@@ -250,7 +258,7 @@
   {{end}}
 
   {{if .Subsystems.Cloud}}
-  <section class="pane wide">
+  <section class="pane {{$pair}}">
     <h3>Cloud</h3>
 
     {{if .Drains}}
@@ -273,7 +281,7 @@
       <div class="sub">
         <h4>Services</h4>
         {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
-        <table class="packed">
+        <table class="packed cols-3">
           <thead><tr><th>SERVICE</th><th class="r">AGENTS</th><th class="r">DISABLED</th></tr></thead>
           <tbody>
           {{range .Services}}
@@ -380,7 +388,7 @@
 {{end}}
 
 {{define "machine-table"}}
-<table class="packed">
+<table class="packed cols-5">
   <thead><tr><th>MACHINE</th><th>PHASE</th><th>VERSION</th><th>NODE</th><th class="r">AGE</th></tr></thead>
   <tbody>
   {{range .}}
@@ -394,7 +402,7 @@
 {{end}}
 
 {{define "host-table"}}
-<table class="packed">
+<table class="packed cols-5">
   <thead><tr><th>HOST</th><th>STATE</th><th>STATUS</th><th>CONSUMER</th><th class="r">AGE</th></tr></thead>
   <tbody>
   {{range .}}
@@ -402,14 +410,14 @@
       <td>{{.Name}}</td><td class="dim">{{.State}}</td>
       <td{{if .ErrorMessage}} class="errish"{{end}}>{{.OperationalStatus}}</td>
       <td class="dim">{{.ConsumerName}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
-    {{if .ErrorMessage}}<tr class="row-err"><td colspan="5" class="errish indent">{{.ErrorMessage}}</td></tr>{{end}}
+    {{if .ErrorMessage}}<tr class="row-err"><td class="full errish indent">{{.ErrorMessage}}</td></tr>{{end}}
   {{end}}
   </tbody>
 </table>
 {{end}}
 
 {{define "node-table"}}
-<table class="packed">
+<table class="packed cols-7">
   <thead><tr><th>NODE</th><th>ROLE</th><th>STATUS</th><th>VERSION</th><th class="r">CPU</th><th class="r">MEM</th><th class="r">AGE</th></tr></thead>
   <tbody>
   {{range .}}
