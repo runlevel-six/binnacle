@@ -12,6 +12,7 @@ import (
 	"github.com/runlevel-six/sextant/pkg/model"
 	"github.com/runlevel-six/sextant/pkg/rollout"
 	"github.com/runlevel-six/sextant/pkg/subsystem"
+	"github.com/runlevel-six/sextant/pkg/subsystem/ceph"
 	"github.com/runlevel-six/sextant/pkg/subsystem/cilium"
 	"github.com/runlevel-six/sextant/pkg/subsystem/metallb"
 	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
@@ -299,7 +300,26 @@ func (d *Demo) Storage() Storage {
 			State: "available", OperationalStatus: "OK",
 		})
 	}
-	return StorageFor(hosts)
+	// One reporting cluster, so the demo exercises the join and the borrowed
+	// summary rather than only the hardware half.
+	return StorageFor(hosts, []CephReport{{
+		Cluster: ClusterRef{Namespace: "managed-clusters", Name: "tenant-01"},
+		Status: ceph.Status{
+			FSID: "24413730-08bc-11ef-b140-23a2dd2fc842", Health: "HEALTH_WARN",
+			Mons: ceph.Mons{Total: 3, InQuorum: 3},
+			OSDs: ceph.OSDs{Total: 36, Up: 36, In: 36},
+			PGs:  ceph.PGs{Total: 1953, Pools: 14},
+			Checks: []ceph.Check{{
+				Name: "AUTH_INSECURE_GLOBAL_ID_RECLAIM", Severity: "HEALTH_WARN",
+				Message: "client is using insecure global_id reclaim",
+			}},
+		},
+		Summary: &SummaryBlock{Title: "Ceph", Lines: []string{
+			"health    HEALTH_WARN  AUTH_INSECURE_GLOBAL_ID_RECLAIM",
+			"osds      36/36 up, 36 in   mons 3/3",
+			"capacity  13% used   pgs 1953/1953 clean",
+		}},
+	}})
 }
 
 // Cluster satisfies the same contract as [Fleet.Cluster], with invented detail

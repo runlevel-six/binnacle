@@ -6,6 +6,7 @@ import (
 
 	"github.com/runlevel-six/sextant/pkg/model"
 	"github.com/runlevel-six/sextant/pkg/store"
+	"github.com/runlevel-six/sextant/pkg/subsystem/ceph"
 )
 
 // Label keys the hardware inventory sets on every BareMetalHost.
@@ -35,26 +36,57 @@ const (
 // cells — and a storage layer has none of that. What it has is hosts, which is
 // what this reports.
 //
-// Deliberately no Ceph health. HEALTH_WARN, the OSD counts and the PG state
-// arrive through a subsystem plugin keyed to a *workload cluster's* store, and
-// there is no datacenter-level source for them, so a panel claiming them here
-// would be inventing them. The cluster cards keep that summary, where its data
-// comes from.
+// Its health is borrowed rather than collected. Ceph's own status arrives
+// through a subsystem plugin keyed to a *workload cluster's* store, and there
+// is no datacenter-level collector — but `ceph -s` reports the fsid, and the
+// fsid is exactly what the cluster-id label holds, so a cluster's report can be
+// attributed to a storage cluster with no guessing. That is what makes this
+// work in a datacenter with two Ceph clusters as well as one with a shared one.
 type StorageCluster struct {
-	// FSID is the Ceph cluster's own identifier, from the cluster-id label. It
-	// is what makes a datacenter with two Ceph clusters two rather than one.
+	// FSID is the Ceph cluster's own identifier: the cluster-id label on its
+	// hosts, and the fsid Ceph itself reports. It is what makes a datacenter
+	// with two Ceph clusters two rather than one, and it is what joins the two
+	// halves of this type together.
 	FSID string
-	// Hosts is ranked and folded like every other host table.
+	// Hosts is ranked and folded like every other host table. Empty when no
+	// host carries this fsid, which happens in a datacenter whose hardware
+	// inventory has not been labeled: Ceph still reports itself, so the panel
+	// still has something true to say.
 	Hosts Split[model.BareMetalHost]
 	// ByRole is the per-role count: cephmon 3/3, cephosd 3/3. A total of 6/6 is
 	// reassuring right up until the missing one is the last monitor, which is
 	// the same reason the cards carry node readiness per role.
 	ByRole []RoleCount
+	// Status is Ceph's own account of itself, as one of the clusters using it
+	// reports. Nil when no cluster reports this fsid — which is a fact worth
+	// saying rather than an empty section: hardware labeled for a Ceph nobody
+	// is talking to.
+	Status *ceph.Status
+	// Summary is the plugin's own rendering of that status, the same lines the
+	// cluster pages and the fleet cards show. Borrowed rather than re-derived,
+	// so the datacenter panel and the cluster pane cannot describe one Ceph
+	// differently.
+	Summary *SummaryBlock
+	// ReportedBy names the clusters reporting this fsid, in the order the fleet
+	// lists them. Several is the normal case for a shared Ceph and is worth
+	// showing: it is what says this storage is shared rather than one
+	// cluster's. Namespaced, because that is what a link to a cluster page
+	// needs and a bare name cannot supply it.
+	ReportedBy []ClusterRef
+}
+
+// ClusterRef is enough of a cluster to name it and link to it.
+type ClusterRef struct {
+	Namespace string
+	Name      string
 }
 
 // Storage is the datacenter's storage layer, and what could be said about it.
 type Storage struct {
-	// Clusters is one entry per fsid, worst first.
+	// Clusters is one entry per fsid, worst first. An fsid earns an entry by
+	// appearing on a host's labels or in a cluster's Ceph report — either half
+	// is worth showing on its own, and which halves are missing is itself the
+	// most useful thing the panel can say about a site mid-rollout.
 	Clusters []StorageCluster
 	// Unlabeled is how many unclaimed hosts carry no role label.
 	//
@@ -66,6 +98,20 @@ type Storage struct {
 	// Known is false when no host inventory could be read at all, which is
 	// different again from reading one that holds no Ceph.
 	Known bool
+}
+
+// CephReport is one cluster's account of the Ceph it uses.
+//
+// The fsid is what makes it attributable. Everything else is borrowed from the
+// plugin that produced it: a datacenter panel that re-derived Ceph's health from
+// the same fields would eventually disagree with the cluster pane that renders
+// them, and there would be no way to tell which was right.
+type CephReport struct {
+	// Cluster names the cluster reporting, for attribution and for a link.
+	Cluster ClusterRef
+	Status  ceph.Status
+	// Summary is the plugin's own rendering, or nil if it published none.
+	Summary *SummaryBlock
 }
 
 // RoleHosts counts hosts by their role label, for one storage cluster.
@@ -89,7 +135,12 @@ type roleTally struct {
 // Hosts with a Ceph role and no cluster-id are grouped under an empty fsid
 // rather than dropped: that is a labeling job half done, and hiding it would
 // make the hardware disappear.
-func StorageFor(hosts []model.BareMetalHost) Storage {
+//
+// Reports are the clusters' own Ceph status, joined on the fsid. A report with
+// no matching hosts still gets a panel: an unlabeled datacenter has no Ceph
+// hosts to find, and the storage layer is no less real for that — it is the
+// hardware behind it that is unidentified, which is what the panel then says.
+func StorageFor(hosts []model.BareMetalHost, reports []CephReport) Storage {
 	s := Storage{Known: true}
 
 	byFSID := map[string][]model.BareMetalHost{}
@@ -115,13 +166,44 @@ func StorageFor(hosts []model.BareMetalHost) Storage {
 		byFSID[fsid] = append(byFSID[fsid], h)
 	}
 
+	// An fsid nobody has labeled hardware for still earns its panel from the
+	// report alone. Appended after the labeled ones so the order stays stable.
+	byReport := map[string][]CephReport{}
+	for _, r := range reports {
+		fsid := r.Status.FSID
+		if fsid == "" {
+			// A report with no fsid cannot be attributed to anything, and
+			// guessing which storage cluster it describes is exactly the kind of
+			// invention this design exists to avoid.
+			continue
+		}
+		if _, seen := byFSID[fsid]; !seen {
+			if _, seen := byReport[fsid]; !seen {
+				order = append(order, fsid)
+			}
+		}
+		byReport[fsid] = append(byReport[fsid], r)
+	}
+
 	for _, fsid := range order {
 		group := byFSID[fsid]
-		s.Clusters = append(s.Clusters, StorageCluster{
+		c := StorageCluster{
 			FSID:   fsid,
 			Hosts:  splitHosts(group),
 			ByRole: storageRoles(group),
-		})
+		}
+		for _, r := range byReport[fsid] {
+			c.ReportedBy = append(c.ReportedBy, r.Cluster)
+			if c.Status == nil {
+				// The first report wins the detail. Several clusters using one
+				// Ceph are describing the same thing, so the choice does not
+				// matter; who is reporting does, and every one of them is named.
+				status := r.Status
+				c.Status = &status
+				c.Summary = r.Summary
+			}
+		}
+		s.Clusters = append(s.Clusters, c)
 	}
 	sort.SliceStable(s.Clusters, func(i, j int) bool {
 		// Worst first, by the same host rank the table is ordered on, then by
@@ -146,8 +228,23 @@ func (c StorageCluster) worst() int {
 	return worst
 }
 
-// Degraded reports whether any of this cluster's hardware needs looking at.
-func (c StorageCluster) Degraded() bool { return c.worst() < hostQuiet }
+// Degraded reports whether this storage cluster needs looking at, by either
+// half: hardware the inventory is complaining about, or Ceph's own verdict on
+// itself. Both, because they fail independently — a HEALTH_WARN with every host
+// provisioned cleanly is the normal shape of a Ceph problem.
+func (c StorageCluster) Degraded() bool {
+	if c.worst() < hostQuiet {
+		return true
+	}
+	return c.Status != nil && !c.Status.HealthOK()
+}
+
+// Silent reports hardware labeled for a Ceph that no cluster is talking to.
+//
+// Its own state rather than a missing section: the panel has to distinguish "no
+// cluster reports this fsid" from "this Ceph is fine", and an absent health
+// block on its own reads as the second.
+func (c StorageCluster) Silent() bool { return c.Status == nil }
 
 // Short is the first eight characters of the fsid.
 //
@@ -206,20 +303,55 @@ func storageRoles(hosts []model.BareMetalHost) []RoleCount {
 // side effect of watching a cluster.
 func (f *Fleet) Storage() Storage {
 	f.mu.Lock()
-	stores := make([]*store.Store, 0, len(f.clusters))
+	tracked := make([]*tracked, 0, len(f.clusters))
 	for _, t := range f.clusters {
-		stores = append(stores, t.store)
+		tracked = append(tracked, t)
 	}
 	f.mu.Unlock()
 
-	for _, s := range stores {
-		snap, ok := store.Get[model.Snapshot[model.BareMetalHost]](s, model.KeyMgmtBareMetalHosts)
-		if !ok || snap.Err != nil {
-			continue
+	// Named order, so the reporting clusters are listed the same way twice
+	// running and the panel does not reshuffle under a reader.
+	sort.Slice(tracked, func(i, j int) bool {
+		a, b := tracked[i].discovered, tracked[j].discovered
+		if a.Namespace != b.Namespace {
+			return a.Namespace < b.Namespace
 		}
-		return StorageFor(snap.Items)
+		return a.Name < b.Name
+	})
+
+	var hosts []model.BareMetalHost
+	var found bool
+	var reports []CephReport
+	for _, t := range tracked {
+		if !found {
+			if snap, ok := store.Get[model.Snapshot[model.BareMetalHost]](t.store, model.KeyMgmtBareMetalHosts); ok && snap.Err == nil {
+				hosts, found = snap.Items, true
+			}
+		}
+		if state, ok := store.Get[ceph.State](t.store, ceph.KeyState); ok {
+			r := CephReport{
+				Cluster: ClusterRef{Namespace: t.discovered.Namespace, Name: t.discovered.Name},
+				Status:  state.Status,
+			}
+			for _, b := range t.registry.Summaries(t.store) {
+				if b.Title == "Ceph" {
+					r.Summary = &SummaryBlock{Title: b.Title, Lines: b.Lines}
+					break
+				}
+			}
+			reports = append(reports, r)
+		}
 	}
-	// Nothing readable. Known stays false, so the page can say it does not know
-	// rather than that there is nothing there.
-	return Storage{}
+
+	if !found && len(reports) == 0 {
+		// Nothing readable at all. Known stays false, so the page can say it
+		// does not know rather than that there is nothing there.
+		return Storage{}
+	}
+	s := StorageFor(hosts, reports)
+	// The hosts are what could not be read, not the reports: a site whose Ceph
+	// answers while the host inventory does not is a real state and the panel
+	// should not claim otherwise.
+	s.Known = found
+	return s
 }

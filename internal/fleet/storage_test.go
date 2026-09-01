@@ -36,7 +36,7 @@ func TestStorageFor_UndercloudHostsAreNotAStorageCluster(t *testing.T) {
 		undercloud("a03-26-compute", "managed-services", "k8s00"),
 		cephHost("a03-05-cephosd", "cephosd", "fsid-one"),
 		cephHost("a03-11-cephmon", "cephmon", "fsid-one"),
-	})
+	}, nil)
 
 	if len(s.Clusters) != 1 {
 		var got []string
@@ -64,7 +64,7 @@ func TestStorageFor_TwoFSIDsAreTwoClusters(t *testing.T) {
 		cephHost("r0102-01-cephosd", "cephosd", "fsid-a"),
 		cephHost("r0306-01-cephosd", "cephosd", "fsid-b"),
 		cephHost("r0307-09-cephmon", "cephmon", "fsid-b"),
-	})
+	}, nil)
 
 	if len(s.Clusters) != 2 {
 		t.Fatalf("got %d storage clusters, want 2", len(s.Clusters))
@@ -87,7 +87,7 @@ func TestStorageFor_MatchesEveryCephRole(t *testing.T) {
 		cephHost("h3", "cephmgr", "fsid"),
 		cephHost("h4", "cephrgw", "fsid"),
 		cephHost("h5", "compute", "fsid"),
-	})
+	}, nil)
 
 	if len(s.Clusters) != 1 {
 		t.Fatalf("got %d storage clusters, want 1", len(s.Clusters))
@@ -118,7 +118,7 @@ func TestStorageFor_UnlabeledHardwareIsCounted(t *testing.T) {
 		{Namespace: "machines", Name: "spare-2", State: "available"},
 		// Claimed and unlabeled: somebody's machine, already on their page.
 		{Namespace: "machines", Name: "in-use", ConsumerName: "cluster-kcp-abc"},
-	})
+	}, nil)
 
 	if len(s.Clusters) != 0 {
 		t.Errorf("invented %d storage clusters from unlabeled hosts", len(s.Clusters))
@@ -151,7 +151,7 @@ func TestStorageFor_CephHostWithNoFSIDIsStillShown(t *testing.T) {
 	s := StorageFor([]model.BareMetalHost{
 		{Namespace: "machines", Name: "a03-05-cephosd", State: "provisioned",
 			Labels: map[string]string{LabelRole: "cephosd"}},
-	})
+	}, nil)
 
 	if len(s.Clusters) != 1 {
 		t.Fatalf("got %d storage clusters, want 1", len(s.Clusters))
@@ -174,7 +174,7 @@ func TestStorageFor_ErroredHardwareRanksFirst(t *testing.T) {
 	s := StorageFor([]model.BareMetalHost{
 		cephHost("r0102-01-cephmon", "cephmon", "fsid-fine"),
 		broken,
-	})
+	}, nil)
 
 	if len(s.Clusters) != 2 {
 		t.Fatalf("got %d storage clusters, want 2", len(s.Clusters))

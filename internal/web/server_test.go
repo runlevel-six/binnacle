@@ -12,6 +12,7 @@ import (
 	"github.com/runlevel-six/sextant/pkg/health"
 	"github.com/runlevel-six/sextant/pkg/model"
 	"github.com/runlevel-six/sextant/pkg/subsystem"
+	"github.com/runlevel-six/sextant/pkg/subsystem/ceph"
 	"github.com/runlevel-six/sextant/pkg/subsystem/cilium"
 	"github.com/runlevel-six/sextant/pkg/subsystem/metallb"
 	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
@@ -598,6 +599,190 @@ func TestClusterPage_FailingCloudStatesAreLegible(t *testing.T) {
 	}
 }
 
+// A grid table declares its column count in a class, and nothing in the markup
+// checks it: get it wrong and every cell after the first row lands in the wrong
+// column, on a page that still renders. This counts the headers and compares.
+func TestPackedTablesDeclareTheirRealColumnCount(t *testing.T) {
+	pages := []string{
+		get(t, serveDetail(t, richDetail()), "/cluster/capi/tenant-01").Body.String(),
+		fleetPageWithStorage(t),
+	}
+
+	seen := 0
+	for _, body := range pages {
+		for _, table := range packedTables(body) {
+			seen++
+			head, _, ok := strings.Cut(table.html, "</thead>")
+			if !ok {
+				t.Errorf("packed table with cols-%d has no thead", table.cols)
+				continue
+			}
+			// "<th" alone also counts the <thead that opens the block.
+			n := strings.Count(head, "<th>") + strings.Count(head, "<th ")
+			if n != table.cols {
+				t.Errorf("table declares cols-%d but has %d headers: %.120s", table.cols, n, table.html)
+			}
+		}
+	}
+	if seen < 6 {
+		t.Errorf("only checked %d packed tables; the pages should render more", seen)
+	}
+}
+
+// richDetail is a cluster with every packed table populated, so a layout test
+// sees them all rather than the empty states.
+func richDetail() fleet.ClusterDetail {
+	return fleet.ClusterDetail{
+		ClusterView: fleet.ClusterView{
+			Namespace: "capi", Name: "tenant-01", NodesKnown: true,
+			Pools: []fleet.NodePool{{Name: "tenant-01-kcp", Role: "control-plane",
+				Ready: 3, Desired: 3, Version: "v1.36.2"}},
+		},
+		Machines: fleet.Split[model.Machine]{Shown: []model.Machine{
+			{Name: "tenant-01-kcp-abc", Phase: "Running", Version: "v1.36.2"}}},
+		Hosts: fleet.Split[model.BareMetalHost]{Shown: []model.BareMetalHost{
+			{Name: "host-1", State: "provisioned", OperationalStatus: "error",
+				ErrorMessage: "timed out waiting for the deploy image"}}},
+		NodeRows: fleet.Split[fleet.NodeRow]{Shown: []fleet.NodeRow{{
+			Node: model.Node{Name: "node-1.site-a.example", Role: "control-plane", Status: "Ready"}}}},
+		UnhealthyPods: []model.Pod{{Namespace: "ns", Name: "api-1", Status: "CrashLoopBackOff"}},
+		Subsystems: fleet.Subsystems{Inventory: &openstack.Inventory{Counts: []openstack.Count{
+			{Label: "Servers", Total: 50, ByState: map[string]int{"ACTIVE": 50}}}},
+			OpenStack: &openstack.State{Services: []openstack.ServiceSummary{
+				{Service: "compute", Up: 8, Total: 8}}}},
+	}
+}
+
+// fleetPageWithStorage renders the fleet page with a storage panel on it.
+func fleetPageWithStorage(t *testing.T) string {
+	t.Helper()
+	st := fleet.StorageFor([]model.BareMetalHost{
+		{Namespace: "machines", Name: "r0102-01-cephmon", State: "provisioned", OperationalStatus: "OK",
+			Labels: map[string]string{fleet.LabelRole: "cephmon", fleet.LabelClusterID: "fsid"}},
+	}, nil)
+	s, err := New(&fakeFleet{storage: st, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return get(t, s.Handler(), "/").Body.String()
+}
+
+type packedTable struct {
+	cols int
+	html string
+}
+
+// packedTables finds every grid table on a page and the column count it claims.
+func packedTables(body string) []packedTable {
+	var out []packedTable
+	const marker = `<table class="packed cols-`
+	for rest := body; ; {
+		i := strings.Index(rest, marker)
+		if i < 0 {
+			return out
+		}
+		rest = rest[i+len(marker):]
+		digits, after, ok := strings.Cut(rest, `"`)
+		if !ok {
+			return out
+		}
+		n, err := strconv.Atoi(digits)
+		if err != nil {
+			return out
+		}
+		html, _, _ := strings.Cut(after, "</table>")
+		out = append(out, packedTable{cols: n, html: html})
+		rest = after
+	}
+}
+
+// The storage panel renders every branch it has, because a template referring
+// to a field the page data does not carry fails at execution — a 500 on the
+// fleet page, and only on the sites that have the data to reach that branch.
+func TestFleetPage_StoragePanel(t *testing.T) {
+	labeled := fleet.StorageFor([]model.BareMetalHost{
+		{Namespace: "machines", Name: "r0102-01-cephmon", State: "provisioned", OperationalStatus: "OK",
+			Labels: map[string]string{fleet.LabelRole: "cephmon", fleet.LabelClusterID: "fsid-known"}},
+	}, []fleet.CephReport{{
+		Cluster: fleet.ClusterRef{Namespace: "capi", Name: "tenant-01"},
+		Status: ceph.Status{FSID: "fsid-known", Health: "HEALTH_WARN",
+			Mons: ceph.Mons{Total: 3, InQuorum: 2}, OSDs: ceph.OSDs{Total: 36, Up: 35, In: 36},
+			Checks: []ceph.Check{{Name: "OSD_DOWN", Message: "1 osds down"}}},
+		Summary: &fleet.SummaryBlock{Title: "Ceph", Lines: []string{"health  HEALTH_WARN"}},
+	}})
+
+	s, err := New(&fakeFleet{
+		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01"}},
+		storage:  labeled,
+		changed:  make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+
+	for _, want := range []string{
+		"fsid-kno",                           // the fsid prefix names it
+		`<a href="/cluster/capi/tenant-01">`, // and the reporter links back
+		"HEALTH_WARN",                        // Ceph's own verdict
+		"OSD_DOWN",                           // and its checks
+		"r0102-01-cephmon",                   // the hardware
+		"cephmon</span> 1/1",                 // per-role readiness
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("storage panel is missing %q", want)
+		}
+	}
+	// Degraded by Ceph's own verdict, with every host provisioned cleanly.
+	if !strings.Contains(body, "storage-pane warn") {
+		t.Error("a HEALTH_WARN Ceph did not mark the pane degraded")
+	}
+}
+
+// Hardware labeled for a Ceph nobody reports must say so. An absent health
+// block on its own reads as good news.
+func TestFleetPage_StoragePanelSaysWhenNobodyReports(t *testing.T) {
+	silent := fleet.StorageFor([]model.BareMetalHost{
+		{Namespace: "machines", Name: "r0306-01-cephosd", State: "provisioned", OperationalStatus: "OK",
+			Labels: map[string]string{fleet.LabelRole: "cephosd", fleet.LabelClusterID: "fsid-orphan"}},
+	}, nil)
+
+	s, err := New(&fakeFleet{storage: silent, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+
+	if !strings.Contains(body, "No cluster in this fleet reports this Ceph") {
+		t.Errorf("silence is not reported:\n%s", body)
+	}
+	if !strings.Contains(body, "storage-pane unknown") {
+		t.Error("an unreported Ceph should not render as healthy")
+	}
+}
+
+// A datacenter whose hardware is not labeled still has a storage layer, and the
+// clusters still report it. The panel has to work from the report alone.
+func TestFleetPage_StoragePanelWithoutLabeledHardware(t *testing.T) {
+	unlabeled := fleet.StorageFor(nil, []fleet.CephReport{{
+		Cluster: fleet.ClusterRef{Namespace: "capi", Name: "tenant-01"},
+		Status:  ceph.Status{FSID: "fsid-only-reported", Health: "HEALTH_OK"},
+	}})
+
+	s, err := New(&fakeFleet{storage: unlabeled, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+
+	if !strings.Contains(body, "hardware not identified") {
+		t.Errorf("a Ceph with no labeled hosts does not say so:\n%s", body)
+	}
+	if !strings.Contains(body, "HEALTH_OK") {
+		t.Error("the reported health was dropped with the hardware")
+	}
+}
+
 // A cluster with no warnings should say so once, not twice. The disclosure
 // carries the good news, so there is no separate sentence above it.
 func TestClusterPage_NoWarningsIsOneLine(t *testing.T) {
@@ -631,7 +816,9 @@ func TestClusterPage_NoWarningsIsOneLine(t *testing.T) {
 }
 
 // The first row has to fill whether or not a cluster reports subsystems: two
-// quarters and a half, or two halves — never a pane holding a gap beside it.
+// halves, or one full width — never a pane holding a gap beside it. And the
+// unhealthy pods pane is not in that row at all: its height is unbounded, and a
+// variable-height pane beside bounded ones is what leaves a hole on the page.
 func TestClusterPage_FirstRowFillsEitherWay(t *testing.T) {
 	base := fleet.ClusterView{
 		Namespace: "capi", Name: "tenant-01", NodesKnown: true,
@@ -643,21 +830,47 @@ func TestClusterPage_FirstRowFillsEitherWay(t *testing.T) {
 	body := get(t, serveDetail(t, fleet.ClusterDetail{ClusterView: withCeph}), "/cluster/capi/tenant-01").Body.String()
 	// The closing bracket matters: without it this also counts the pods pane,
 	// whose attribute begins with the same text.
-	if n := strings.Count(body, `class="pane narrow">`); n != 2 {
-		t.Errorf(`got %d "pane narrow" sections, want 2 (node pools, subsystems)`, n)
+	if n := strings.Count(body, `class="pane half">`); n < 2 {
+		t.Errorf(`got %d "pane half" sections, want at least 2 (node pools, subsystems)`, n)
 	}
-	// The pods pane keeps the remaining half either way: it is the only one of
-	// the three rendering a namespaced pod name against a qualified node name.
-	if !strings.Contains(body, `class="pane half" id="pods"`) {
-		t.Error("the pods pane did not take the rest of the row beside the narrow panes")
+	// Wherever the pods pane is, it is full width and it is not in that row.
+	if !strings.Contains(body, `class="pane wide" id="pods"`) {
+		t.Error("the pods pane is not full width on its own row")
 	}
 
 	body = get(t, serveDetail(t, fleet.ClusterDetail{ClusterView: base}), "/cluster/capi/tenant-01").Body.String()
-	if strings.Contains(body, `class="pane narrow"`) {
-		t.Error("without subsystems the row should be two halves, not a quarter and a gap")
+	// With nothing to pair it with, node pools takes the whole row rather than
+	// half of one.
+	if !strings.Contains(body, `class="pane wide">`) {
+		t.Error("without subsystems, node pools should take the full width")
 	}
-	if !strings.Contains(body, `class="pane half" id="pods"`) {
-		t.Error("the pods pane did not widen to a half when subsystems were absent")
+	if !strings.Contains(body, `class="pane wide" id="pods"`) {
+		t.Error("the pods pane changed width with the subsystems")
+	}
+}
+
+// Two full-width panes pair only when both exist. One .paired pane on its own
+// would sit in half a row with a gap beside it.
+func TestClusterPage_NetworkAndCloudPairOnlyTogether(t *testing.T) {
+	both := fleet.ClusterDetail{
+		ClusterView: fleet.ClusterView{Namespace: "capi", Name: "tenant-01", NodesKnown: true},
+		Subsystems: fleet.Subsystems{
+			Cilium:    &cilium.State{AgentsReady: 3, AgentsDesired: 3},
+			Inventory: &openstack.Inventory{Counts: []openstack.Count{{Label: "Servers", Total: 1}}},
+		},
+	}
+	body := get(t, serveDetail(t, both), "/cluster/capi/tenant-01").Body.String()
+	if n := strings.Count(body, `class="pane wide paired"`); n != 2 {
+		t.Errorf("got %d paired panes, want network and cloud", n)
+	}
+
+	networkOnly := both
+	networkOnly.Subsystems.Inventory = nil
+	body = get(t, serveDetail(t, networkOnly), "/cluster/capi/tenant-01").Body.String()
+	// The class attribute, not the bare word: the stylesheet is inlined in the
+	// page and names the class too.
+	if strings.Contains(body, `class="pane wide paired"`) {
+		t.Error("the network pane paired with nothing, leaving half a row empty")
 	}
 }
 
@@ -714,9 +927,20 @@ func TestClusterPage_IdentifierTablesArePacked(t *testing.T) {
 
 	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
 
-	// Node pools, machines, hosts, nodes, unhealthy pods.
-	if n := strings.Count(body, `<table class="packed">`); n != 5 {
+	// Node pools, machines, hosts, nodes, unhealthy pods. Each declares its own
+	// column count, because a grid cannot infer one from the markup the way a
+	// table does — and a wrong count silently misplaces every cell.
+	if n := strings.Count(body, `<table class="packed cols-`); n != 5 {
 		t.Errorf("got %d packed tables, want 5", n)
+	}
+	for _, want := range []string{
+		`class="packed cols-5"`, // node pools, machines, hosts
+		`class="packed cols-6"`, // unhealthy pods
+		`class="packed cols-7"`, // nodes
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("no table declared %s", want)
+		}
 	}
 	// The growth columns that caused the regression must not come back.
 	for _, gone := range []string{`class="grow"`, `class="grow-2"`, `grow-2">`} {
