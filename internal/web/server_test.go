@@ -1162,8 +1162,7 @@ func TestClusterPage_IdentifierTablesArePacked(t *testing.T) {
 		t.Errorf("got %d packed tables, want 5", n)
 	}
 	for _, want := range []string{
-		`class="packed cols-5"`,        // node pools: short columns, no spreading
-		`class="packed cols-5 spread"`, // machines and hosts
+		`class="packed cols-5 spread"`, // node pools, machines and hosts
 		`class="packed cols-6 spread"`, // unhealthy pods
 		`class="packed cols-7 spread"`, // nodes
 	} {

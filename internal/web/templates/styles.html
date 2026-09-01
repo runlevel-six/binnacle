@@ -325,14 +325,20 @@
        window, where a table would instead have wrapped its cells. */
     max-width: 100%; overflow-x: auto;
   }
-  /* Spreading is opt-in, per table, because whether it helps depends on the
-     table. Machines, hosts, nodes and pods carry six or seven columns of
-     namespaced names and qualified hostnames: at content width they used a
-     third of their pane and the reading was crammed into it. The small ones —
-     node pools, cloud services, a storage cluster's hosts — are four short
-     columns, and spreading those across a full-width pane put four hundred and
-     eighty pixels between a host and its role. Same rule, opposite result, so
-     the table says which it is. */
+  /* Spreading is opt-in, per table, and the threshold is the pane rather than
+     the table.
+     
+     Machines, hosts, nodes, pods and node pools all sit in a half-width pane and
+     all read better spread: at content width they used a third of it. A storage
+     cluster's hosts sit in a full-width pane, and spreading four short columns
+     across two thousand pixels put four hundred and eighty pixels between a host
+     and its role.
+     
+     So it is not how many columns a table has — node pools has four short ones
+     and spreads fine at a half — it is how much wider than its content the pane
+     is. Past roughly three times, the columns stop reading as one row. Judged
+     per table because CSS cannot express it: minmax() takes a cap, not a
+     ratio. */
   .pane table.packed.spread { grid-template-columns: repeat(var(--cols, 4), minmax(max-content, 1fr)); }
   /* The row structure lives in the column count now, so the table's own
      grouping elements step out of the way and let the cells be grid items. */
