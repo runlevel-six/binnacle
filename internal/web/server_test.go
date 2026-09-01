@@ -281,7 +281,7 @@ func TestClusterPage_RendersTheCorePanes(t *testing.T) {
 		}}},
 		UnhealthyPods: []model.Pod{{Namespace: "example-system", Name: "api-1",
 			ReadyTotal: 1, Status: "CrashLoopBackOff", Restarts: 441}},
-		Events: fleet.GroupEvents([]model.Event{
+		Events: fleet.Split[fleet.EventGroup]{Shown: fleet.GroupEvents([]model.Event{
 			{Type: "Warning", Reason: "Unhealthy", ObjectKind: "Pod",
 				ObjectName: "api-1", Message: "Readiness probe failed", Count: 9148,
 				LastTimestamp: time.Now().Add(-time.Minute)},
@@ -293,7 +293,7 @@ func TestClusterPage_RendersTheCorePanes(t *testing.T) {
 			{Type: "Warning", Reason: "PolicyViolation", ObjectKind: "ReplicaSet",
 				ObjectName: "batch-2", Message: "HostPath volumes are forbidden", Count: 4,
 				LastTimestamp: time.Now().Add(-3 * time.Minute)},
-		}),
+		})},
 		EventsTotal: 9155,
 	}
 
@@ -569,8 +569,8 @@ func TestFleetPage_WallModeIsOptIn(t *testing.T) {
 	}
 }
 
-// The first row has to fill whether or not a cluster reports subsystems.
-// Three panes at a third each, or two at a half — never two thirds and a gap.
+// The first row has to fill whether or not a cluster reports subsystems: two
+// quarters and a half, or two halves — never a pane holding a gap beside it.
 func TestClusterPage_FirstRowFillsEitherWay(t *testing.T) {
 	base := fleet.ClusterView{
 		Namespace: "capi", Name: "tenant-01", NodesKnown: true,
@@ -582,16 +582,18 @@ func TestClusterPage_FirstRowFillsEitherWay(t *testing.T) {
 	body := get(t, serveDetail(t, fleet.ClusterDetail{ClusterView: withCeph}), "/cluster/capi/tenant-01").Body.String()
 	// The closing bracket matters: without it this also counts the pods pane,
 	// whose attribute begins with the same text.
-	if n := strings.Count(body, `class="pane third">`); n != 2 {
-		t.Errorf(`got %d bare "pane third" sections, want 2 (node pools, subsystems)`, n)
+	if n := strings.Count(body, `class="pane narrow">`); n != 2 {
+		t.Errorf(`got %d "pane narrow" sections, want 2 (node pools, subsystems)`, n)
 	}
-	if !strings.Contains(body, `class="pane third" id="pods"`) {
-		t.Error("the pods pane did not take a third alongside subsystems")
+	// The pods pane keeps the remaining half either way: it is the only one of
+	// the three rendering a namespaced pod name against a qualified node name.
+	if !strings.Contains(body, `class="pane half" id="pods"`) {
+		t.Error("the pods pane did not take the rest of the row beside the narrow panes")
 	}
 
 	body = get(t, serveDetail(t, fleet.ClusterDetail{ClusterView: base}), "/cluster/capi/tenant-01").Body.String()
-	if strings.Contains(body, `class="pane third"`) {
-		t.Error("without subsystems the row should be two halves, not thirds with a gap")
+	if strings.Contains(body, `class="pane narrow"`) {
+		t.Error("without subsystems the row should be two halves, not a quarter and a gap")
 	}
 	if !strings.Contains(body, `class="pane half" id="pods"`) {
 		t.Error("the pods pane did not widen to a half when subsystems were absent")
@@ -643,10 +645,10 @@ func TestClusterPage_IdentifierTablesArePacked(t *testing.T) {
 			Node: model.Node{Name: "node-1.site-a.example", Role: "control-plane", Status: "Ready"},
 		}}},
 		UnhealthyPods: []model.Pod{{Namespace: "ns", Name: "api-1", Status: "CrashLoopBackOff"}},
-		Events: fleet.GroupEvents([]model.Event{{
+		Events: fleet.Split[fleet.EventGroup]{Shown: fleet.GroupEvents([]model.Event{{
 			Type: "Warning", Reason: "Unhealthy", ObjectKind: "Pod", ObjectName: "api-1",
 			Message: "probe failed", LastTimestamp: time.Now(),
-		}}),
+		}})},
 	}
 
 	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()

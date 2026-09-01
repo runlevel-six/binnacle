@@ -211,14 +211,21 @@
      means a new pane is never accidentally squeezed. */
   .pane { grid-column: span 12; }
   .pane.wide { grid-column: span 12; }
-  /* Two across once a half-pane has room to be useful, three once a third
-     does. The spans are chosen to fill the row exactly in both arrangements:
-     a pane left holding a gap beside it is the bug this replaced. */
+  /* Two across once a half-pane has room to be useful; a narrow pane keeps a
+     half until there is room for it to be a quarter. The spans are chosen to
+     fill the row exactly in every arrangement: a pane left holding a gap beside
+     it is the bug this replaced.
+
+     Narrow rather than a third, because three equal thirds gave the widest
+     table on the row the same width as the narrowest. The unhealthy pods table
+     carries a namespaced pod name against a fully qualified node name; node
+     pools and a subsystem summary are a few short columns each, and at a third
+     apiece both rendered more empty pane than table. */
   @media (min-width: 52rem) {
-    .pane.half, .pane.third { grid-column: span 6; }
+    .pane.half, .pane.narrow { grid-column: span 6; }
   }
   @media (min-width: 78rem) {
-    .pane.third { grid-column: span 4; }
+    .pane.narrow { grid-column: span 3; }
   }
   /* A pane arrived at from a card's deep link should not sit flush against the
      top of the viewport with its heading half under the browser chrome. */
@@ -294,7 +301,16 @@
   /* Network and Cloud hold several subsystems each. Nesting a grid inside the
      pane lets Cilium, OVN and MetalLB sit side by side on a wide screen and
      stack on a narrow one, without any of them needing a fixed height. */
-  .panes.inner { gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); margin-top: .2rem; }
+  /* Inner columns are capped rather than sharing the pane equally, and the row
+     is packed from the left. The same rule the tables follow: slack belongs at
+     the pane's edge, not inside a row. Sharing a full-width pane between two
+     short tables put a thousand pixels between a MetalLB pool's address range
+     and the count of addresses in use, which reads as two unrelated facts. */
+  .panes.inner {
+    gap: 1.25rem; margin-top: .2rem;
+    grid-template-columns: repeat(auto-fit, minmax(19rem, 30rem));
+    justify-content: start;
+  }
   .sub { min-width: 0; }
   .sub h4 {
     margin: 0 0 .35rem; font-size: .68rem; letter-spacing: .08em;
