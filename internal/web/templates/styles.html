@@ -202,7 +202,11 @@
      wide panes pinned the grid open at six tracks and the two narrow panes at
      the top each got one of them, leaving four tracks — most of the screen —
      empty beside a pool name wrapped onto two lines. */
-  .panes { display: grid; gap: 1rem; grid-template-columns: repeat(12, 1fr); }
+  /* align-items: start, so a pane ends where its content does. Stretched to the
+     row's tallest, a two-line subsystem summary beside a twenty-row pod table
+     drew three hundred pixels of empty bordered box, which reads as something
+     missing rather than as something short. */
+  .panes { display: grid; gap: 1rem; grid-template-columns: repeat(12, 1fr); align-items: start; }
   .pane {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 6px; padding: .8rem 1rem 1rem; min-width: 0;
@@ -268,6 +272,20 @@
      pane where it does no harm. Only a table with an unbounded column of its
      own — events, and its message — should fill the width. */
   .pane table.packed { width: auto; max-width: 100%; }
+  /* A content-width table needs its own column gutters. At the .5rem every
+     table shares, columns that are not being stretched apart sit almost
+     touching — a machine name, its phase and its version read as one run of
+     text — while the space they wanted is out at the pane's edge. Only the
+     trailing column is left alone, so the right-aligned gutter rule below still
+     holds. */
+  .pane table.packed td:not(:last-child), .pane table.packed th:not(:last-child),
+  .panes.inner table td:not(:last-child), .panes.inner table th:not(:last-child) {
+    padding-right: 1.4rem;
+  }
+  /* A long value that is not the last column wraps rather than grows. A growth
+     column in the middle of a row pushes every column after it to the far edge,
+     which is the same mistake .msg exists to avoid making everywhere else. */
+  .wrap { word-break: break-word; }
   /* An identifier is one token and reads as one. Given a floor it stops
      wrapping a replica set name onto three lines while the message column beside
      it keeps the slack. */
@@ -301,16 +319,18 @@
   /* Network and Cloud hold several subsystems each. Nesting a grid inside the
      pane lets Cilium, OVN and MetalLB sit side by side on a wide screen and
      stack on a narrow one, without any of them needing a fixed height. */
-  /* Inner columns are capped rather than sharing the pane equally, and the row
-     is packed from the left. The same rule the tables follow: slack belongs at
-     the pane's edge, not inside a row. Sharing a full-width pane between two
-     short tables put a thousand pixels between a MetalLB pool's address range
-     and the count of addresses in use, which reads as two unrelated facts. */
-  .panes.inner {
-    gap: 1.25rem; margin-top: .2rem;
-    grid-template-columns: repeat(auto-fit, minmax(19rem, 30rem));
-    justify-content: start;
-  }
+  /* Inner columns share the pane. Capping them at 30rem instead left a
+     full-width network pane using two thirds of its own width, which is a
+     different waste from the one the cap was fixing: the thousand pixels
+     between a MetalLB pool's address range and its addresses-in-use count came
+     from the *table* stretching to fill its column, not from the column being
+     wide. Tables here size to their content (see below), so a wide track now
+     leaves its slack at the column's edge, where it does no harm. */
+  .panes.inner { gap: 1.25rem; margin-top: .2rem; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); }
+  /* A sub-table sizes to its content, like .packed and for the same reason. The
+     exception stays the exception: a genuinely unbounded last column still
+     takes the slack, which is what .msg is for. */
+  .panes.inner table { width: auto; max-width: 100%; }
   .sub { min-width: 0; }
   .sub h4 {
     margin: 0 0 .35rem; font-size: .68rem; letter-spacing: .08em;

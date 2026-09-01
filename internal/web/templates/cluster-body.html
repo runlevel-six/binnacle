@@ -167,7 +167,7 @@
         {{if .Err}}<p class="problem">{{.Err}}</p>{{else}}
         <table>
           <tbody>
-            <tr><td class="dim">agents</td><td class="r">{{.AgentsReady}}/{{.AgentsDesired}}</td>
+            <tr><td class="dim">agents</td><td>{{.AgentsReady}}/{{.AgentsDesired}}</td>
               <td>{{if not .Rollout.Converged}}<span class="rolling">{{.Rollout.Updated}}/{{.Rollout.Desired}} updated{{if .Rollout.Manual}} &middot; manual{{end}}</span>{{end}}</td></tr>
             {{if .Status.Version}}<tr><td class="dim">version</td><td colspan="2">{{.Status.Version}}</td></tr>{{end}}
             {{if .Status.State}}<tr><td class="dim">state</td><td colspan="2">{{.Status.State}}</td></tr>{{end}}
@@ -175,11 +175,11 @@
             {{if .Status.EncryptionMode}}<tr><td class="dim">encryption</td><td colspan="2">{{.Status.EncryptionMode}}</td></tr>{{end}}
             {{if .Status.IPAM.ExhaustionKnown}}
             <tr><td class="dim">ipam</td>
-              <td class="r{{if gt .Status.IPAM.Percent 85}} warnish{{end}}">{{.Status.IPAM.Percent}}%</td>
+              <td{{if gt .Status.IPAM.Percent 85}} class="warnish"{{end}}>{{.Status.IPAM.Percent}}%</td>
               <td class="dim">{{.Status.IPAM.Used}}/{{.Status.IPAM.Total}}{{if .Pod}} on {{.Pod}}{{end}}</td></tr>
             {{end}}
             {{if .Status.Controllers.Failing}}<tr><td class="dim">controllers</td>
-              <td class="r errish">{{.Status.Controllers.Failing}} failing</td><td class="dim">of {{.Status.Controllers.Total}}</td></tr>{{end}}
+              <td class="errish">{{.Status.Controllers.Failing}} failing</td><td class="dim">of {{.Status.Controllers.Total}}</td></tr>{{end}}
           </tbody>
         </table>
         {{if .Status.Unreadable}}<p class="empty">unreadable: {{range $i, $u := .Status.Unreadable}}{{if $i}}, {{end}}{{$u}}{{end}}</p>{{end}}
@@ -230,7 +230,7 @@
           <tbody>
           {{range .Pools}}
             <tr><td>{{.Name}}</td>
-              <td class="dim msg">{{range $i, $a := .Addresses}}{{if $i}}, {{end}}{{$a}}{{end}}</td>
+              <td class="dim wrap">{{range $i, $a := .Addresses}}{{if $i}}, {{end}}{{$a}}{{end}}</td>
               <td{{if not .Advertised}} class="errish"{{end}}>{{if .Advertised}}{{range $i, $a := .Advertised}}{{if $i}}/{{end}}{{$a}}{{end}}{{else}}none{{end}}</td>
               <td class="r">{{.Assigned}}{{if .Available}}/{{add .Assigned .Available}}{{end}}</td></tr>
           {{end}}
@@ -329,14 +329,13 @@
   <section class="pane wide">
     <h3>Events{{if .Events.Total}} <span class="count">{{.Events.Total}}{{if .EventsTruncated}} of {{add .Events.Total .EventsTruncated}}{{end}} group{{if ne (add .Events.Total .EventsTruncated) 1}}s{{end}} &middot; {{.EventsTotal}} event{{if ne .EventsTotal 1}}s{{end}}</span>{{end}}</h3>
     {{if .Events.Shown}}{{template "event-table" .Events.Shown}}
-    {{else if .Events.Total}}<p class="empty">Every event is Normal.</p>
-    {{else}}<p class="empty">No events reported.</p>{{end}}
+    {{else if not .Events.Total}}<p class="empty">No events reported.</p>{{end}}
     {{/* Normal events are the audit trail, not the pane: on a production
          cluster an etcd backup CronJob alone fills forty rows an hour, and
          unfolded they bury the warnings above them. */}}
     {{if .Events.Quiet}}
     <details class="quiet">
-      <summary>{{len .Events.Quiet}} Normal event groups</summary>
+      <summary>{{if not .Events.Shown}}No warnings &middot; {{end}}{{len .Events.Quiet}} Normal event group{{if ne (len .Events.Quiet) 1}}s{{end}}</summary>
       {{template "event-table" .Events.Quiet}}
     </details>
     {{end}}
@@ -345,7 +344,7 @@
          cluster in the datacenter. Saying so is the difference between a pane
          showing this cluster's events and one that appears to. */}}
     {{if .EventsElsewhere}}
-    <p class="empty footnote">{{.EventsElsewhere}} further management event{{if ne .EventsElsewhere 1}}s{{end}} in this namespace concern other clusters, and are not listed here.</p>
+    <p class="empty footnote">{{.EventsElsewhere}} further management event{{if ne .EventsElsewhere 1}}s{{end}} in this namespace belong to other clusters or to no cluster at all, and are not listed here.</p>
     {{end}}
   </section>
 </div>

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -566,6 +567,38 @@ func TestFleetPage_WallModeIsOptIn(t *testing.T) {
 	// Any other value is not wall mode, rather than an error.
 	if body := get(t, srv, "/?display=desk").Body.String(); strings.Contains(body, `class="wall"`) {
 		t.Error("an unrecognized display mode was treated as wall")
+	}
+}
+
+// A cluster with no warnings should say so once, not twice. The disclosure
+// carries the good news, so there is no separate sentence above it.
+func TestClusterPage_NoWarningsIsOneLine(t *testing.T) {
+	var quiet []fleet.EventGroup
+	for i := 0; i < 12; i++ {
+		quiet = append(quiet, fleet.EventGroup{
+			Event: model.Event{Type: "Normal", Reason: "Pulled", ObjectKind: "Pod",
+				ObjectName: "p-" + strconv.Itoa(i), Message: "pulled " + strconv.Itoa(i),
+				LastTimestamp: time.Now()},
+			Occurrences: 1, Objects: 1,
+		})
+	}
+	d := fleet.ClusterDetail{
+		ClusterView: fleet.ClusterView{Namespace: "capi", Name: "tenant-01", NodesKnown: true},
+		Events:      fleet.Split[fleet.EventGroup]{Quiet: quiet},
+		EventsTotal: 12,
+	}
+
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+
+	if !strings.Contains(body, "No warnings &middot; 12 Normal event groups") {
+		t.Errorf("the disclosure does not carry the good news:\n%s", body)
+	}
+	// The sentence this replaced.
+	if strings.Contains(body, "Every event is Normal") {
+		t.Error("the redundant sentence is back above the disclosure")
+	}
+	if strings.Contains(body, "No events reported") {
+		t.Error("twelve folded groups reported as no events at all")
 	}
 }
 
