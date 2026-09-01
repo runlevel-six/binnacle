@@ -78,7 +78,11 @@
   .ns { color: var(--dim); font-weight: 400; font-size: .8rem; }
   .meta { color: var(--dim); font-size: .8rem; margin: .15rem 0 .7rem; }
   .rolling { color: var(--warn); font-weight: 600; }
-  .frozen  { color: var(--err); font-weight: 600; }
+  /* Paused is amber, not red. It is nearly always somebody's deliberate act —
+     a rollout held while a host is worked on — and red says a thing has gone
+     wrong. It still has to stand out, because a paused cluster that looks
+     ordinary is how a rollout stays paused for a week. */
+  .frozen  { color: var(--warn); font-weight: 600; }
   .warnish { color: var(--warn); }
 
   /* Sized to its content, not to the card. Stretching it put a pool's ready
@@ -207,6 +211,32 @@
      drew three hundred pixels of empty bordered box, which reads as something
      missing rather than as something short. */
   .panes { display: grid; gap: 1rem; grid-template-columns: repeat(12, 1fr); align-items: start; }
+
+  /* .flow packs instead of aligning, and it is the answer to a page that read
+     as haphazard.
+     
+     A grid makes rows. A row is as tall as its tallest pane, and both ways of
+     treating the remainder are wrong: stretch gives the shorter pane an empty
+     bordered box, and start leaves the same space as background. Neither packs,
+     so a short pane beside a tall one always leaves a hole — which is what
+     "random empty space where one panel doesn't grow as far as the panels next
+     to it" was describing.
+     
+     Multi-column has no rows at all. Panes flow down one column and continue
+     into the next, so a short pane is followed immediately by whatever comes
+     after it and both columns end level. The cost is that reading order becomes
+     column-major, which for a board read by importance is the order it was
+     already in.
+     
+     Only the panes that pack go here: a list of rows is happy at half the page.
+     The wide ones — network's three sections, the events message column — stay
+     in the grid below, where they can have the width they need. */
+  .panes.flow {
+    display: block; columns: 2; column-gap: 1rem;
+  }
+  /* A pane split across a column boundary would be two half-panes with a border
+     each, which is worse than any hole. */
+  .panes.flow > .pane { break-inside: avoid; margin: 0 0 1rem; }
   .pane {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 6px; padding: .8rem 1rem 1rem; min-width: 0;
@@ -215,37 +245,13 @@
      means a new pane is never accidentally squeezed. */
   .pane { grid-column: span 12; }
   .pane.wide { grid-column: span 12; }
-  /* Two across once a half-pane has room to be useful; a narrow pane keeps a
-     half until there is room for it to be a quarter. The spans are chosen to
-     fill the row exactly in every arrangement: a pane left holding a gap beside
-     it is the bug this replaced.
-
-     Narrow rather than a third, because three equal thirds gave the widest
-     table on the row the same width as the narrowest. The unhealthy pods table
-     carries a namespaced pod name against a fully qualified node name; node
-     pools and a subsystem summary are a few short columns each, and at a third
-     apiece both rendered more empty pane than table. */
+  /* Two across once a half-pane has room to be useful. The only panes left in
+     the grid are the ones that need width rather than packing, so .half now has
+     a single user: two storage clusters sharing the fleet page's row. The
+     thirds and quarters this once carried went with the panes they were for,
+     which flow now — a column has one width, and a span there means nothing. */
   @media (min-width: 52rem) {
-    .pane.half, .pane.narrow { grid-column: span 6; }
-  }
-  /* The top row is six and three, and the remaining quarter is left as
-     background.
-     
-     That row can only hold those two panes, because everything else on the page
-     has an unbounded height. Node pools wants about six columns' worth and a
-     subsystem summary about three, so roughly a quarter of the row is empty
-     whatever the split — the only question is where. Nine and three put it
-     inside the node pool table and stranded the paused flag a quarter of a pane
-     from the version it belongs to; six and six put it inside the summary,
-     which is a <pre> and cannot use it. Six and three puts it at the row's
-     edge, which is where the tables already put theirs.
-     
-     So this row deliberately does not sum to twelve. The rule it appears to
-     break was about a pane that looks like it wants a partner and has none;
-     two panes at the width they need, with background after them, does not read
-     that way. */
-  @media (min-width: 78rem) {
-    .pane.narrow { grid-column: span 3; }
+    .pane.half { grid-column: span 6; }
   }
   /* Two full-width panes share a row once the window is wide enough for both to
      hold their contents. The network pane carries a five-column table and a
@@ -340,6 +346,19 @@
      per table because CSS cannot express it: minmax() takes a cap, not a
      ratio. */
   .pane table.packed.spread { grid-template-columns: repeat(var(--cols, 4), minmax(max-content, 1fr)); }
+  /* A spread table left-aligns even its numeric columns.
+     
+     Right alignment puts a cell's content at the far edge of its track, and a
+     spread track is much wider than its content — so a right-aligned READY sat
+     three hundred pixels from the pod name before it and hard against the
+     STATUS after it. The columns clumped into pairs with gaps between them,
+     which is what "a lot of space between columns" was describing. Left-aligned,
+     every column starts at its own track and the gaps are equal, which is what
+     dividing the surplus evenly was supposed to look like.
+     
+     The .r class keeps its other job: tabular-nums, so digits still line up
+     under each other down the column. */
+  .pane table.packed.spread td.r, .pane table.packed.spread th.r { text-align: left; }
   /* The row structure lives in the column count now, so the table's own
      grouping elements step out of the way and let the cells be grid items. */
   .pane table.packed thead, .pane table.packed tbody, .pane table.packed tr { display: contents; }
@@ -439,7 +458,10 @@
      from the *table* stretching to fill its column, not from the column being
      wide. Tables here size to their content (see below), so a wide track now
      leaves its slack at the column's edge, where it does no harm. */
-  .panes.inner { gap: 1.25rem; margin-top: .2rem; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); }
+  .panes.inner {
+    display: grid; columns: auto;
+    gap: 1.25rem; margin-top: .2rem; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+  }
   /* A sub-table sizes to its content, like .packed and for the same reason. The
      exception stays the exception: a genuinely unbounded last column still
      takes the slack, which is what .msg is for. */

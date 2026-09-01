@@ -1037,43 +1037,65 @@ func TestClusterPage_NoWarningsIsOneLine(t *testing.T) {
 	}
 }
 
-// The first row has to fill whether or not a cluster reports subsystems: nine
-// and three, or one full width — never a pane holding a gap beside it. And the
-// unhealthy pods pane is not in that row at all: its height is unbounded, and a
-// variable-height pane beside bounded ones is what leaves a hole on the page.
-func TestClusterPage_FirstRowFillsEitherWay(t *testing.T) {
-	base := fleet.ClusterView{
-		Namespace: "capi", Name: "tenant-01", NodesKnown: true,
-		Nodes: fleet.NodeCount{Ready: 3, Total: 3},
+// The packing panes flow; the wide ones stay in the grid.
+//
+// The split is the whole layout: a list of rows reads fine at half the page and
+// its height depends on the data, which is what a grid handles worst — the row
+// is as tall as its tallest pane and the rest is a hole. The panes that need
+// width rather than packing keep the twelve-column grid below.
+func TestClusterPage_PackingPanesFlow(t *testing.T) {
+	d := richDetail()
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+
+	flow := strings.Index(body, `<div class="panes flow">`)
+	grid := strings.LastIndex(body, `<div class="panes">`)
+	if flow < 0 || grid < 0 {
+		t.Fatalf("the page has no flow region (%d) or no grid region (%d)", flow, grid)
+	}
+	if flow > grid {
+		t.Fatal("the flow region must come before the grid region")
 	}
 
-	withCeph := base
-	withCeph.Summaries = []fleet.SummaryBlock{{Title: "Ceph", Lines: []string{"health  HEALTH_OK"}}}
-	body := get(t, serveDetail(t, fleet.ClusterDetail{ClusterView: withCeph}), "/cluster/capi/tenant-01").Body.String()
-	// The closing bracket matters: without it this also counts the pods pane,
-	// whose attribute begins with the same text.
-	// Six for the node pools, three for the subsystem summary, and the last
-	// quarter left as background: see the styles for why this row does not sum
-	// to twelve.
-	if !strings.Contains(body, `class="pane half">`) {
-		t.Error("node pools did not take a half of the row")
-	}
-	if !strings.Contains(body, `class="pane narrow">`) {
-		t.Error("the subsystem summary did not take the narrow share")
-	}
-	// Wherever the pods pane is, it is full width and it is not in that row.
-	if !strings.Contains(body, `class="pane wide" id="pods"`) {
-		t.Error("the pods pane is not full width on its own row")
+	// Everything that packs is in the flow region, and carries no span class:
+	// a column has one width.
+	for _, want := range []string{
+		"<h3>Node pools</h3>", "<h3>Subsystems</h3>", `id="pods"`,
+		"Machines &amp; hosts", `id="nodes"`,
+	} {
+		at := strings.Index(body, want)
+		if at < 0 {
+			t.Errorf("%s is not on the page", want)
+			continue
+		}
+		if at > grid {
+			t.Errorf("%s is in the grid region; it should flow", want)
+		}
 	}
 
-	body = get(t, serveDetail(t, fleet.ClusterDetail{ClusterView: base}), "/cluster/capi/tenant-01").Body.String()
-	// With nothing to pair it with, node pools takes the whole row rather than
-	// half of one.
-	if !strings.Contains(body, `class="pane wide">`) {
-		t.Error("without subsystems, node pools should take the full width")
+	// Everything that needs width is in the grid region.
+	for _, want := range []string{"<h3>Network</h3>", "<h3>Cloud</h3>", "<h3>Events"} {
+		at := strings.Index(body, want)
+		if at < 0 {
+			t.Errorf("%s is not on the page", want)
+			continue
+		}
+		if at < grid {
+			t.Errorf("%s flows; it needs the full width", want)
+		}
 	}
-	if !strings.Contains(body, `class="pane wide" id="pods"`) {
-		t.Error("the pods pane changed width with the subsystems")
+}
+
+// A flowing pane must not carry a span class. It would be silently ignored in a
+// multi-column region, which is the kind of dead attribute that later reads as
+// intent.
+func TestClusterPage_FlowingPanesHaveNoSpan(t *testing.T) {
+	body := get(t, serveDetail(t, richDetail()), "/cluster/capi/tenant-01").Body.String()
+	flow := body[strings.Index(body, `<div class="panes flow">`):strings.LastIndex(body, `<div class="panes">`)]
+
+	for _, span := range []string{"pane half", "pane wide", "pane narrow", "pane broad", "paired"} {
+		if strings.Contains(flow, span) {
+			t.Errorf("a flowing pane still declares %q", span)
+		}
 	}
 }
 
@@ -1117,14 +1139,6 @@ func TestClusterPage_ProblemsComeBeforeInventory(t *testing.T) {
 	if pods > machines {
 		t.Error("unhealthy pods rendered below the machine inventory")
 	}
-	// Machines & hosts and Nodes share a row: both pack to about a quarter of a
-	// full-width pane, so neither earns one.
-	if !strings.Contains(body, `<section class="pane half">`) {
-		t.Error("the machines pane did not take a half")
-	}
-	if !strings.Contains(body, `<section class="pane half" id="nodes">`) {
-		t.Error("the nodes pane did not take a half")
-	}
 	if machines > events {
 		t.Error("events rendered above the inventory")
 	}
@@ -1162,7 +1176,8 @@ func TestClusterPage_IdentifierTablesArePacked(t *testing.T) {
 		t.Errorf("got %d packed tables, want 5", n)
 	}
 	for _, want := range []string{
-		`class="packed cols-5 spread"`, // node pools, machines and hosts
+		`class="packed cols-4 spread"`, // node pools
+		`class="packed cols-5 spread"`, // machines and hosts
 		`class="packed cols-6 spread"`, // unhealthy pods
 		`class="packed cols-7 spread"`, // nodes
 	} {

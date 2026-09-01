@@ -27,27 +27,32 @@
   <p class="halfblind">OpenStack credentials: {{.CloudsProblem}}</p>
 {{end}}
 
-<div class="panes">
-  {{/* Node pools and the subsystem summaries are both short and bounded, so
-       they share the top row: two halves, or one full width when a cluster
-       reports no subsystems. The unhealthy pods pane used to take a third of
-       this row, and its height is the one thing on the page with no bound at
-       all — during maintenance it runs to sixty rows, and everything beside it
-       was left staring at a screen of empty space. It gets its own row below,
-       where being tall costs nobody anything and being short costs nothing
-       either. */}}
-  {{$col := "half"}}{{if not .Summaries}}{{$col = "wide"}}{{end}}
-  <section class="pane {{$col}}">
+{{/* Two regions, and the split is about what each pane needs from the width.
+
+     These five are lists of rows: node pools, the subsystem summary, unhealthy
+     pods, machines and hosts, nodes. Every one of them is content that reads
+     fine at half the page and whose height depends entirely on the data, which
+     is exactly what a grid handles worst — the row is as tall as its tallest
+     pane and the rest is a hole. They flow instead, packing down two columns.
+
+     The panes below need width rather than packing: the network pane's three
+     sections, the cloud pane's tables, the events message column. Those stay in
+     the twelve-column grid. */}}
+<div class="panes flow">
+  <section class="pane">
     <h3>Node pools</h3>
     {{if .Pools}}
-    <table class="packed cols-5 spread">
-      <thead><tr><th>ROLE</th><th>NAME</th><th class="r">READY</th><th>VERSION</th><th></th></tr></thead>
+    {{/* Four columns, not five: the paused/rolling flag qualifies the version
+         and belongs in the same cell as it. As a column of its own it was
+         spread a quarter of a pane away from the thing it describes, and read
+         as an unrelated word floating in the row. */}}
+    <table class="packed cols-4 spread">
+      <thead><tr><th>ROLE</th><th>NAME</th><th class="r">READY</th><th>VERSION</th></tr></thead>
       <tbody>
       {{range .Pools}}
         <tr><td class="dim nowrap">{{.Role}}</td><td>{{.Name}}</td>
           <td class="r{{if .Rolling}} warnish{{end}}">{{.Ready}}/{{.Desired}}</td>
-          <td class="dim">{{.Version}}</td>
-          <td>{{if .Paused}}<span class="frozen">paused</span>{{else if .Rolling}}<span class="rolling">rolling</span>{{end}}</td></tr>
+          <td class="dim nowrap">{{.Version}}{{if .Paused}} <span class="frozen">paused</span>{{else if .Rolling}} <span class="rolling">rolling</span>{{end}}</td></tr>
       {{end}}
       </tbody>
     </table>
@@ -70,7 +75,7 @@
   </section>
 
   {{if .Summaries}}
-  <section class="pane narrow">
+  <section class="pane">
     <h3>Subsystems</h3>
     {{range .Summaries}}
       <h4>{{.Title}}</h4>
@@ -80,7 +85,7 @@
   </section>
   {{end}}
 
-  <section class="pane wide" id="pods">
+  <section class="pane" id="pods">
     <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
     {{if .UnhealthyPods}}
     <table class="packed cols-6 spread">
@@ -104,7 +109,7 @@
        production scale both fold most of their rows away, so they are short as
        well as narrow. Side by side they waste half as much width and a whole
        screen less height. */}}
-  <section class="pane half">
+  <section class="pane">
     <h3>Machines &amp; hosts{{if .Machines.Total}} <span class="count">{{.Machines.Total}} machines &middot; {{.Hosts.Total}} host{{if ne .Hosts.Total 1}}s{{end}}</span>{{end}}</h3>
     {{if .Machines.Shown}}{{template "machine-table" .Machines.Shown}}
     {{else if .Machines.Total}}<p class="empty">Every machine is Running.</p>
@@ -133,7 +138,7 @@
     {{end}}
   </section>
 
-  <section class="pane half" id="nodes">
+  <section class="pane" id="nodes">
     <h3>Nodes{{if .NodeRows.Total}} <span class="count">{{.NodeRows.Total}}</span>{{end}}</h3>
     {{if .NodeRows.Shown}}{{template "node-table" .NodeRows.Shown}}
     {{else if .NodeRows.Total}}<p class="empty">Every node is Ready and schedulable.</p>
@@ -147,6 +152,9 @@
   </section>
 
 
+</div>
+
+<div class="panes">
   {{if .Subsystems.Reduced}}
   <section class="pane wide">
     <h3>Reporting below full detail</h3>
