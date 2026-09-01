@@ -112,4 +112,64 @@
   <p class="empty">No Cluster API clusters found on the management cluster.</p>
 {{end}}
 </div>
+
+{{- /* The storage layer sits beside the cluster cards rather than inside one,
+     because it belongs to the datacenter. Ceph hosts are claimed by no Cluster
+     API machine, so scoping the hosts pane to the cluster that owns the
+     hardware — correctly — left them appearing on no page at all.
+
+     Hardware only. Ceph's own health arrives through a plugin keyed to a
+     workload cluster's store and there is no datacenter-level source for it, so
+     this panel says what it knows and the cards keep the health summary. */ -}}
+{{with .Storage}}{{if or .Clusters .Unlabeled}}
+<section class="storage">
+  <h2>Storage <span class="ns">this datacenter</span></h2>
+
+  {{if .Clusters}}
+  <div class="grid">
+  {{range .Clusters}}
+    <article class="card {{if .Degraded}}warn{{else}}ok{{end}}">
+      <h3>Ceph <span class="fsid">{{.Short}}</span> <span class="ns">{{.Hosts.Total}} host{{if ne .Hosts.Total 1}}s{{end}}</span></h3>
+      <div class="roles">
+        {{range .ByRole}}
+        <span class="role{{if .Degraded}} degraded{{end}}"><span class="role-k">{{.Role}}</span> {{.Ready}}/{{.Total}}</span>
+        {{end}}
+      </div>
+      {{if .Hosts.Shown}}{{template "storage-hosts" .Hosts.Shown}}
+      {{else}}<p class="empty">Every host is provisioned without error.</p>{{end}}
+      {{if .Hosts.Quiet}}
+      <details class="quiet">
+        <summary>{{len .Hosts.Quiet}} host{{if ne (len .Hosts.Quiet) 1}}s{{end}} provisioned without error</summary>
+        {{template "storage-hosts" .Hosts.Quiet}}
+      </details>
+      {{end}}
+    </article>
+  {{end}}
+  </div>
+  {{end}}
+
+  {{/* A site whose inventory has not been labeled yet looks exactly like a site
+       with no storage in it, and must not render as one. */}}
+  {{if .Unlabeled}}
+  <p class="empty footnote">{{.Unlabeled}} unclaimed host{{if ne .Unlabeled 1}}s{{end}} in this datacenter carry no
+    <code>atmosphere-role</code> label, so what they are is unknown. Any storage among them is not shown above.</p>
+  {{end}}
+</section>
+{{- end}}{{end}}
+{{- end}}
+
+{{define "storage-hosts"}}
+<table class="packed">
+  <thead><tr><th>HOST</th><th>STATE</th><th>STATUS</th><th>ROLE</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr{{if .ErrorMessage}} class="row-err"{{end}}>
+      <td>{{.Name}}</td>
+      <td class="dim">{{.State}}</td>
+      <td{{if and .OperationalStatus (ne .OperationalStatus "OK")}} class="errish"{{end}}>{{if .OperationalStatus}}{{.OperationalStatus}}{{else}}&ndash;{{end}}</td>
+      <td class="dim">{{index .Labels "atmosphere-role"}}</td></tr>
+    {{if .ErrorMessage}}<tr class="row-err"><td colspan="4" class="msg errish">{{.ErrorMessage}}</td></tr>{{end}}
+  {{end}}
+  </tbody>
+</table>
 {{end}}

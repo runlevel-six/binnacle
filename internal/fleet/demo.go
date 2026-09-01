@@ -266,6 +266,42 @@ func fillCard(v *ClusterView) {
 	}
 }
 
+// Storage invents a datacenter with one Ceph cluster and a rack of hardware
+// nobody has labeled, so the panel and its unlabeled-hardware line can both be
+// worked on without a cluster.
+func (d *Demo) Storage() Storage {
+	host := func(name, role string, status, errMsg string) model.BareMetalHost {
+		return model.BareMetalHost{
+			Namespace: "managed-clusters", Name: name, State: "provisioned",
+			OperationalStatus: status, ErrorMessage: errMsg, PoweredOn: true, Online: true,
+			Labels: map[string]string{
+				LabelRole:      role,
+				LabelClusterID: "24413730-08bc-11ef-b140-23a2dd2fc842",
+			},
+		}
+	}
+	hosts := []model.BareMetalHost{
+		host("r0102-01-cephmon", "cephmon", "OK", ""),
+		host("r0102-02-cephmon", "cephmon", "OK", ""),
+		host("r0102-03-cephmon", "cephmon", "OK", ""),
+		host("r0104-01-cephosd", "cephosd", "OK", ""),
+		host("r0104-02-cephosd", "cephosd", "OK", ""),
+		// One with the hardware complaining, so the rank and the row style are
+		// both exercised.
+		host("r0104-03-cephosd", "cephosd", "error", "timed out waiting for the deploy image"),
+	}
+	// Unclaimed hardware carrying no role label: a rack the inventory has not
+	// reached. Without these the demo cannot show the line that keeps an
+	// unlabeled site from rendering as a site with no storage.
+	for i := 1; i <= 4; i++ {
+		hosts = append(hosts, model.BareMetalHost{
+			Namespace: "managed-clusters", Name: fmt.Sprintf("r0108-%02d-unknown", i),
+			State: "available", OperationalStatus: "OK",
+		})
+	}
+	return StorageFor(hosts)
+}
+
 // Cluster satisfies the same contract as [Fleet.Cluster], with invented detail
 // for whichever fixture cluster was asked for.
 //

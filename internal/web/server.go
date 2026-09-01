@@ -65,6 +65,9 @@ type Source interface {
 	// cluster has no nodes" and "there is no such cluster" are different
 	// claims and must not render the same.
 	Cluster(namespace, name string) (fleet.ClusterDetail, bool)
+	// Storage returns the datacenter's storage layer, which belongs to no
+	// cluster and so cannot be reached through View.
+	Storage() fleet.Storage
 	// Changed ticks when something may have moved.
 	Changed() <-chan struct{}
 }
@@ -123,11 +126,14 @@ func (s *Server) Handler() http.Handler {
 
 type pageData struct {
 	Clusters []fleet.ClusterView
-	Auth     string
-	Warning  string
-	Version  string
-	Site     string
-	Now      time.Time
+	// Storage is the datacenter's Ceph hardware. Its own field rather than a
+	// cluster's, because it is not one.
+	Storage fleet.Storage
+	Auth    string
+	Warning string
+	Version string
+	Site    string
+	Now     time.Time
 	// Wall scales the page up for a display read from across a room. Opt-in
 	// through ?display=wall rather than inferred: a 1920-pixel viewport is as
 	// likely to be a laptop at arm's length as a television at ten feet, and no
@@ -148,6 +154,7 @@ type clusterData struct {
 func (s *Server) page() pageData {
 	return pageData{
 		Clusters: s.fleet.View(),
+		Storage:  s.fleet.Storage(),
 		Auth:     s.auth.Describe(),
 		Warning:  s.auth.Warning(),
 		Version:  s.version,
@@ -338,6 +345,11 @@ func funcs() template.FuncMap {
 		"shortStatus": openstack.ShortStatus,
 		"active":      openstack.Active,
 		"failed":      openstack.Failed,
+		// A map has no order, and a template iterating one sorts by key —
+		// which put ACTIVE ahead of ERROR and buried the failing state in the
+		// middle of the line. StateCounts orders by count and says which states
+		// are failures, so the pane and this page cannot disagree about either.
+		"states": openstack.StateCounts,
 	}
 }
 
