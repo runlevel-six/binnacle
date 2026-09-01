@@ -36,7 +36,7 @@
        was left staring at a screen of empty space. It gets its own row below,
        where being tall costs nobody anything and being short costs nothing
        either. */}}
-  {{$col := "half"}}{{if not .Summaries}}{{$col = "wide"}}{{end}}
+  {{$col := "broad"}}{{if not .Summaries}}{{$col = "wide"}}{{end}}
   <section class="pane {{$col}}">
     <h3>Node pools</h3>
     {{if .Pools}}
@@ -70,7 +70,7 @@
   </section>
 
   {{if .Summaries}}
-  <section class="pane half">
+  <section class="pane narrow">
     <h3>Subsystems</h3>
     {{range .Summaries}}
       <h4>{{.Title}}</h4>

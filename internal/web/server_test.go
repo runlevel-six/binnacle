@@ -958,8 +958,8 @@ func TestClusterPage_NoWarningsIsOneLine(t *testing.T) {
 	}
 }
 
-// The first row has to fill whether or not a cluster reports subsystems: two
-// halves, or one full width — never a pane holding a gap beside it. And the
+// The first row has to fill whether or not a cluster reports subsystems: nine
+// and three, or one full width — never a pane holding a gap beside it. And the
 // unhealthy pods pane is not in that row at all: its height is unbounded, and a
 // variable-height pane beside bounded ones is what leaves a hole on the page.
 func TestClusterPage_FirstRowFillsEitherWay(t *testing.T) {
@@ -973,8 +973,13 @@ func TestClusterPage_FirstRowFillsEitherWay(t *testing.T) {
 	body := get(t, serveDetail(t, fleet.ClusterDetail{ClusterView: withCeph}), "/cluster/capi/tenant-01").Body.String()
 	// The closing bracket matters: without it this also counts the pods pane,
 	// whose attribute begins with the same text.
-	if n := strings.Count(body, `class="pane half">`); n < 2 {
-		t.Errorf(`got %d "pane half" sections, want at least 2 (node pools, subsystems)`, n)
+	// Nine for the node pools, three for the subsystem summary: the summary is a
+	// <pre> and cannot spread, so a half was mostly empty pane.
+	if !strings.Contains(body, `class="pane broad">`) {
+		t.Error("node pools did not take the broad share of the row")
+	}
+	if !strings.Contains(body, `class="pane narrow">`) {
+		t.Error("the subsystem summary did not take the narrow share")
 	}
 	// Wherever the pods pane is, it is full width and it is not in that row.
 	if !strings.Contains(body, `class="pane wide" id="pods"`) {

@@ -226,10 +226,17 @@
      pools and a subsystem summary are a few short columns each, and at a third
      apiece both rendered more empty pane than table. */
   @media (min-width: 52rem) {
-    .pane.half, .pane.narrow { grid-column: span 6; }
+    .pane.half, .pane.narrow, .pane.broad { grid-column: span 6; }
   }
+  /* broad and narrow are a pair, nine and three, and they only split apart once
+     there is room for three columns to be worth having. A subsystem summary is
+     a few lines of monospace that cannot spread — it is a <pre> — so at a half
+     it rendered as mostly empty pane beside a node pool table that could have
+     used the width. Below this breakpoint they stay two halves, because a
+     quarter is too narrow for the summary itself. */
   @media (min-width: 78rem) {
     .pane.narrow { grid-column: span 3; }
+    .pane.broad { grid-column: span 9; }
   }
   /* Two full-width panes share a row once the window is wide enough for both to
      hold their contents. The network pane carries a five-column table and a
