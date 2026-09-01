@@ -126,13 +126,17 @@
   <h2>Storage <span class="ns">this datacenter</span></h2>
 
   {{if .Clusters}}
+  {{/* One Ceph takes the row; two share it. A half-width pane with nothing
+       beside it is the gap the twelve-column grid exists to avoid, and a
+       datacenter has one storage cluster or two. */}}
+  {{$span := "wide"}}{{if gt (len .Clusters) 1}}{{$span = "half"}}{{end}}
   <div class="panes">
   {{range .Clusters}}
     {{/* A pane, not a card. The cluster cards are summaries with a page behind
          them; there is far less to a Ceph than to a cluster, so this shows what
          it has rather than teaching a reader to click. It stays on the cluster
          pages too — a shared Ceph is worth reading from either end. */}}
-    <section class="pane half storage-pane {{if .Degraded}}warn{{else if .Silent}}unknown{{else}}ok{{end}}">
+    <section class="pane {{$span}} storage-pane {{if .Degraded}}warn{{else if .Silent}}unknown{{else}}ok{{end}}">
       <h3>Ceph <span class="fsid">{{.Short}}</span>
         <span class="count">{{if .Hosts.Total}}{{.Hosts.Total}} host{{if ne .Hosts.Total 1}}s{{end}}{{else}}hardware not identified{{end}}</span></h3>
 
@@ -144,15 +148,20 @@
            lines the cluster pages show, so one Ceph cannot be described two
            ways. */}}
       {{with .Summary}}<pre class="summary">{{range .Lines}}{{.}}
-{{end}}</pre>{{end}}
+{{end}}</pre>
+      {{else}}{{/* The plugin published state but no summary block. Falling back
+           to the fields keeps the panel from showing a colored border with
+           nothing to justify it — the border is a claim, and it has to be
+           answerable. */}}
+      {{with .Status}}<p class="ceph-health{{if not .HealthOK}} warnish{{end}}">{{.Health}}
+        &middot; mons {{.Mons.InQuorum}}/{{.Mons.Total}} &middot; osds {{.OSDs.Up}}/{{.OSDs.Total}} up</p>{{end}}
+      {{end}}
 
+      {{/* No health/mons/osds tiles here: the summary lines above already carry
+           all three, and on real data the panel said HEALTH_WARN, mons 3/3 and
+           osds 36/36 twice over. The checks are what the summary only hints at
+           — it names the first one and stops — so they are what this adds. */}}
       {{with .Status}}
-      <div class="nums">
-        <div class="num"><div class="k">Health</div><div class="v{{if not .HealthOK}} warnish{{end}}">{{.Health}}</div></div>
-        <div class="num"><div class="k">Mons</div><div class="v{{if not .Mons.Healthy}} warnish{{end}}">{{.Mons.InQuorum}}/{{.Mons.Total}}</div></div>
-        <div class="num"><div class="k">OSDs</div><div class="v{{if not .OSDs.Healthy}} warnish{{end}}">{{.OSDs.Up}}/{{.OSDs.Total}} up</div></div>
-        {{if .PGs.Pools}}<div class="num"><div class="k">Pools</div><div class="v">{{.PGs.Pools}}</div></div>{{end}}
-      </div>
       {{if .Checks}}
       <table>
         <tbody>
