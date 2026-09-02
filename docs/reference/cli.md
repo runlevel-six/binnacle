@@ -107,6 +107,7 @@ switching between clouds has already exported it.
 | `enter` | Drill into the selected cluster's detail. |
 | `esc` | Return to the fleet list. |
 | `r` | Reverse sort order (worst-first ↔ worst-last). |
+| `/` | Filter clusters by substring (case-insensitive). Type to narrow, enter to apply, esc to clear. |
 | `q` | Quit. |
 
 `z` is the answer to "this table is truncating". On a large cluster a pane may show

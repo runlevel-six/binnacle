@@ -29,7 +29,7 @@ type fleetSource interface {
 // FleetModel is the Bubble Tea model for --server mode: a fleet list with
 // drill-down to cluster detail.
 type FleetModel struct {
-	source   fleetSource
+	source    fleetSource
 	serverURL string
 	buildInfo build.Info
 
@@ -41,6 +41,12 @@ type FleetModel struct {
 	detail   *fleet.ClusterDetail
 	viewing  string // "fleet" or "detail"
 	autoSelect string // "namespace/name" to drill into on first load
+
+	// filter: when non-empty, only clusters whose namespace/name contain
+	// the substring are shown. filtering is a mode entered with / and
+	// exited with enter or esc.
+	filter     string
+	filtering  bool
 
 	width, height int
 	keys          fleetKeymap
@@ -123,8 +129,8 @@ func (m *FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FleetUpdateMsg:
 		m.clusters = m.sortClusters(msg.Clusters)
 		m.storage = msg.Storage
-		if m.selected >= len(m.clusters) {
-			m.selected = max(len(m.clusters)-1, 0)
+		if m.selected >= len(m.filteredClusters()) {
+			m.selected = max(len(m.filteredClusters())-1, 0)
 		}
 		// --server-cluster: drill into the named cluster as soon as the
 		// fleet list arrives. The list is still loaded so Esc returns to
@@ -150,6 +156,9 @@ func (m *FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.filtering {
+			return m.handleFilterKey(msg)
+		}
 		return m.handleFleetKey(msg)
 	}
 	return m, nil
@@ -197,17 +206,21 @@ func (m *FleetModel) handleFleetKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.reversed = !m.reversed
 		m.clusters = m.sortClusters(m.clusters)
 		return m, nil
+	case key.Matches(msg, m.keys.Filter):
+		m.filtering = true
+		return m, nil
 	case key.Matches(msg, m.keys.Up):
 		if m.selected > 0 {
 			m.selected--
 		}
 	case key.Matches(msg, m.keys.Down):
-		if m.selected < len(m.clusters)-1 {
+		if m.selected < len(m.filteredClusters())-1 {
 			m.selected++
 		}
 	case key.Matches(msg, m.keys.Enter):
-		if len(m.clusters) > 0 {
-			c := m.clusters[m.selected]
+		fc := m.filteredClusters()
+		if len(fc) > 0 && m.selected < len(fc) {
+			c := fc[m.selected]
 			return m, fetchCluster(m.source, c.Namespace, c.Name)
 		}
 	}
@@ -233,7 +246,13 @@ func (m *FleetModel) renderFleet() string {
 	footer := m.fleetFooter(th)
 
 	lines := []string{header, body}
-	if h := m.height - lipgloss.Height(header) - lipgloss.Height(body) - lipgloss.Height(footer); h > 0 {
+	used := lipgloss.Height(header) + lipgloss.Height(body) + lipgloss.Height(footer)
+	if m.filtering {
+		filterLine := tui.StyleMuted.Render("/ ") + m.filter + tui.StyleMuted.Render("▏")
+		lines = append(lines, filterLine)
+		used += lipgloss.Height(filterLine)
+	}
+	if h := m.height - used; h > 0 {
 		lines = append(lines, strings.Repeat("\n", h-1))
 	}
 	lines = append(lines, footer)
@@ -257,7 +276,11 @@ func (m *FleetModel) fleetHeader() string {
 }
 
 func (m *FleetModel) fleetBody(th tui.Theme) string {
-	if len(m.clusters) == 0 {
+	clusters := m.filteredClusters()
+	if len(clusters) == 0 {
+		if m.filter != "" {
+			return tui.StyleMuted.Render("no clusters match \"" + m.filter + "\"")
+		}
 		return tui.StyleMuted.Render("waiting for data…")
 	}
 
@@ -270,11 +293,11 @@ func (m *FleetModel) fleetBody(th tui.Theme) string {
 		availH = 1
 	}
 
-	end := min(m.selected+availH, len(m.clusters))
+	end := min(m.selected+availH, len(clusters))
 	start := max(0, end-availH)
 
 	for i := start; i < end; i++ {
-		c := m.clusters[i]
+		c := clusters[i]
 		marker := " "
 		if i == m.selected {
 			marker = ">"
@@ -314,11 +337,15 @@ func (m *FleetModel) fleetBody(th tui.Theme) string {
 
 func (m *FleetModel) fleetFooter(th tui.Theme) string {
 	status := styleStatusBar()
-	count := fmt.Sprintf("%d clusters", len(m.clusters))
+	clusters := m.filteredClusters()
+	count := fmt.Sprintf("%d clusters", len(clusters))
+	if len(m.clusters) != len(clusters) {
+		count = fmt.Sprintf("%d/%d clusters", len(clusters), len(m.clusters))
+	}
 	if len(m.storage.Clusters) > 0 {
 		count += fmt.Sprintf(" · %d storage clusters", len(m.storage.Clusters))
 	}
-	hint := "? help · ↑↓ navigate · enter detail · r reverse · q quit"
+	hint := "? help · ↑↓ navigate · enter detail · r reverse · / filter · q quit"
 	return groundLine(
 		status.Render(count)+status.Render(th.Separator)+status.Render(hint),
 		m.width, th.Text, th.ScreenBG(),
@@ -471,13 +498,14 @@ func padLines(s string, width int) string {
 
 // fleetKeymap is the key set for the fleet model.
 type fleetKeymap struct {
-	Up     key.Binding
-	Down   key.Binding
-	Enter  key.Binding
-	Back   key.Binding
-	Quit   key.Binding
-	Help   key.Binding
+	Up      key.Binding
+	Down    key.Binding
+	Enter   key.Binding
+	Back    key.Binding
+	Quit    key.Binding
+	Help    key.Binding
 	Reverse key.Binding
+	Filter  key.Binding
 }
 
 func defaultFleetKeymap() fleetKeymap {
@@ -489,5 +517,60 @@ func defaultFleetKeymap() fleetKeymap {
 		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c")),
 		Help:    key.NewBinding(key.WithKeys("?")),
 		Reverse: key.NewBinding(key.WithKeys("r")),
+		Filter:  key.NewBinding(key.WithKeys("/")),
 	}
+}
+
+// handleFilterKey processes keystrokes while the filter input is active.
+// Backspace edits, enter applies, esc clears and exits filter mode.
+func (m *FleetModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.filter = ""
+		m.filtering = false
+		m.clampSelected()
+		return m, nil
+	case tea.KeyEnter:
+		m.filtering = false
+		m.clampSelected()
+		return m, nil
+	case tea.KeyBackspace:
+		if len(m.filter) > 0 {
+			m.filter = m.filter[:len(m.filter)-1]
+		}
+		if m.filter == "" {
+			m.filtering = false
+		}
+		m.clampSelected()
+		return m, nil
+	case tea.KeyRunes:
+		m.filter += string(msg.Runes)
+		m.clampSelected()
+		return m, nil
+	}
+	return m, nil
+}
+
+// clampSelected keeps the selection within the filtered list's bounds.
+func (m *FleetModel) clampSelected() {
+	if m.selected >= len(m.filteredClusters()) {
+		m.selected = max(len(m.filteredClusters())-1, 0)
+	}
+}
+
+// filteredClusters returns the clusters matching the current filter, or
+// all clusters when no filter is set.
+func (m *FleetModel) filteredClusters() []fleet.ClusterView {
+	if m.filter == "" {
+		return m.clusters
+	}
+	needle := strings.ToLower(m.filter)
+	var out []fleet.ClusterView
+	for _, c := range m.clusters {
+		if strings.Contains(strings.ToLower(c.Name), needle) ||
+			strings.Contains(strings.ToLower(c.Namespace), needle) {
+			out = append(out, c)
+		}
+	}
+	return out
 }

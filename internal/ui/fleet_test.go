@@ -277,3 +277,158 @@ func TestFleetFooter_ReportsClusterCount(t *testing.T) {
 		t.Error("footer should report the cluster count")
 	}
 }
+
+func TestFleetFooter_MentionsFilterKey(t *testing.T) {
+	m := newFleetModel(200, 50)
+	view := testansi.StripANSI(m.View())
+	if !strings.Contains(view, "/ filter") {
+		t.Error("footer should mention the / key for filtering")
+	}
+}
+
+func TestFleetFilter_EntersMode(t *testing.T) {
+	m := newFleetModel(200, 50)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if !m.filtering {
+		t.Error("/ should enter filter mode")
+	}
+}
+
+func TestFleetFilter_NarrowsList(t *testing.T) {
+	m := newFleetModel(200, 50)
+	total := len(m.clusters)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tenant-01")})
+
+	if m.filter != "tenant-01" {
+		t.Errorf("filter should be %q, got %q", "tenant-01", m.filter)
+	}
+	filtered := m.filteredClusters()
+	if len(filtered) >= total {
+		t.Errorf("filter should narrow from %d, got %d", total, len(filtered))
+	}
+	for _, c := range filtered {
+		if !strings.Contains(c.Name, "tenant-01") && !strings.Contains(c.Namespace, "tenant-01") {
+			t.Errorf("cluster %q does not match filter", c.Name)
+		}
+	}
+}
+
+func TestFleetFilter_CaseInsensitive(t *testing.T) {
+	m := newFleetModel(200, 50)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("TENANT")})
+	if len(m.filteredClusters()) == 0 {
+		t.Error("filter should be case-insensitive")
+	}
+}
+
+func TestFleetFilter_EnterExitsModeKeepsFilter(t *testing.T) {
+	m := newFleetModel(200, 50)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tenant")})
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.filtering {
+		t.Error("enter should exit filter mode")
+	}
+	if m.filter == "" {
+		t.Error("filter should be kept after enter")
+	}
+}
+
+func TestFleetFilter_EscClearsFilter(t *testing.T) {
+	m := newFleetModel(200, 50)
+	total := len(m.clusters)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tenant")})
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.filtering {
+		t.Error("esc should exit filter mode")
+	}
+	if m.filter != "" {
+		t.Error("esc should clear the filter")
+	}
+	if len(m.filteredClusters()) != total {
+		t.Errorf("after esc, should see all %d clusters, got %d", total, len(m.filteredClusters()))
+	}
+}
+
+func TestFleetFilter_BackspaceEdits(t *testing.T) {
+	m := newFleetModel(200, 50)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tenant-0")})
+	m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if m.filter != "tenant-" {
+		t.Errorf("backspace should remove last char, got %q", m.filter)
+	}
+}
+
+func TestFleetFilter_BackspaceEmptiesExitsMode(t *testing.T) {
+	m := newFleetModel(200, 50)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if m.filtering {
+		t.Error("backspace on empty filter should exit filter mode")
+	}
+	if m.filter != "" {
+		t.Error("filter should be empty after backspace on one char")
+	}
+}
+
+func TestFleetFilter_NoMatch(t *testing.T) {
+	m := newFleetModel(200, 50)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("zzz-no-match")})
+
+	view := testansi.StripANSI(m.View())
+	if !strings.Contains(view, "no clusters match") {
+		t.Errorf("should show a no-match message:\n%s", firstLines(view, 10))
+	}
+}
+
+func TestFleetFilter_FooterShowsFilteredCount(t *testing.T) {
+	m := newFleetModel(200, 50)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tenant")})
+
+	view := testansi.StripANSI(m.View())
+	if !strings.Contains(view, "/") || !strings.Contains(view, "clusters") {
+		t.Errorf("footer should show filtered count:\n%s", firstLines(view, 50))
+	}
+}
+
+func TestFleetFilter_EnterDrillsFromFiltered(t *testing.T) {
+	m := newFleetModel(200, 50)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tenant-01")})
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter should drill into the filtered cluster")
+	}
+	msg := cmd()
+	if _, ok := msg.(clusterDetailMsg); !ok {
+		t.Errorf("enter should produce clusterDetailMsg, got %T", msg)
+	}
+}
+
+func TestFleetFilter_SelectedClampedAfterNarrowing(t *testing.T) {
+	m := newFleetModel(200, 50)
+	for range len(m.clusters) {
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tenant-01")})
+
+	if m.selected >= len(m.filteredClusters()) {
+		t.Errorf("selected %d should be clamped below %d", m.selected, len(m.filteredClusters()))
+	}
+}
