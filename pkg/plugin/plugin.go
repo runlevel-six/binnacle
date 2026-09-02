@@ -1,9 +1,15 @@
 // Package plugin defines how optional subsystems contribute to the dashboard.
 //
 // A plugin bundles up to three capabilities, each an optional interface:
-// a [Source] that populates the store, a [PaneProvider] that contributes
-// widgets, and a [BannerProvider] that contributes health-strip cells. A
-// plugin implementing only [Plugin] is legal but inert.
+// a [Source] that populates the store, a [BannerProvider] that contributes
+// health-strip cells, and a [SummaryProvider] that contributes overview
+// blocks. A plugin implementing only [Plugin] is legal but inert.
+//
+// Pane contribution — [tui.PaneProvider] — lives in [pkg/tui], not here,
+// because it returns [tui.Pane], a terminal-rendered interface. A web server
+// that imports this package for [BannerProvider] and [SummaryProvider] must
+// not transitively depend on a terminal renderer. The [tui.Panes] function
+// in [pkg/tui] collects panes from a [Registry]'s active plugins.
 //
 // # Detection, not configuration
 //
@@ -41,8 +47,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/store"
-	"github.com/runlevel-six/binnacle/pkg/tui"
 )
 
 // Plugin is the minimum contract: a stable name used for registration,
@@ -71,18 +77,37 @@ type Source interface {
 	Run(ctx context.Context, s *store.Store) error
 }
 
-// PaneProvider contributes widgets to the dashboard. It is called once during
-// startup, after detection, so a provider may assume its subsystem is present.
-type PaneProvider interface {
-	Plugin
-	Panes(s *store.Store) []tui.Pane
-}
-
 // BannerProvider contributes cells to the health strip. Unlike panes, cells are
 // rebuilt on every render, so this must be cheap and must not block.
 type BannerProvider interface {
 	Plugin
-	Cells(s *store.Store) []tui.BannerCell
+	Cells(s *store.Store) []health.Cell
+}
+
+// SummaryBlock is a titled group of lines contributed to the overview pane.
+//
+// It exists so that a subsystem can put its headline where the eye starts without
+// the overview knowing what the subsystem is. The overview is core; Ceph, Cilium
+// and OpenStack are plugins, and core must not import them — so a plugin hands
+// over rendered lines and core decides where they go. A cluster without that
+// subsystem contributes nothing, which is how the CAPI-and-Metal3-first shape
+// survives: the slot exists, and on most clusters it stays empty.
+//
+// Two rules the overview enforces on whatever it is given, because a contributed
+// block must not be able to disturb the layout above every other pane:
+//
+// A block gets a column of its own or it does not appear. Stacking it under an
+// existing block would make the row taller, and the overview is a fixed-height
+// row at the top of the grid — growing it pushes everything else down, at the
+// exact moment a subsystem has started misbehaving.
+//
+// A block is trimmed to the height of the tallest core block, for the same
+// reason. A plugin cannot lengthen the row by sending more lines.
+type SummaryBlock struct {
+	// Title labels the block, in the same style as the overview's own.
+	Title string
+	// Lines are the body, already formatted. Keep to three: see the height rule.
+	Lines []string
 }
 
 // SummaryProvider is implemented by plugins that contribute a block to the
@@ -92,11 +117,11 @@ type BannerProvider interface {
 // answers no when its subsystem has nothing worth the space. That is what keeps a
 // summary slot from becoming a permanent tax on the pane above everything — a
 // healthy Ceph says nothing, a degraded one puts its headline where the eye
-// already starts. See [tui.SummaryBlock] for the rules the overview enforces on
+// already starts. See [SummaryBlock] for the rules the overview enforces on
 // whatever it is handed.
 type SummaryProvider interface {
 	Plugin
-	Summary(s *store.Store) (tui.SummaryBlock, bool)
+	Summary(s *store.Store) (SummaryBlock, bool)
 }
 
 // DetectResult records one plugin's detection outcome.
@@ -252,38 +277,17 @@ func (r *Registry) ActiveSources() []Source {
 	return out
 }
 
-// Panes collects widgets from every active [PaneProvider], in registration
-// order.
-//
-// It returns an error if two providers contribute the same pane ID. Pane IDs
-// key focus tracking and jump keys, so a collision would make one of the two
-// panes unreachable — better to fail at startup than to ship a dashboard with
-// an inaccessible pane. The returned slice is still complete on error, so a
-// caller that prefers to continue may.
-func (r *Registry) Panes(s *store.Store) ([]tui.Pane, error) {
-	var out []tui.Pane
-	owner := map[string]string{}
-	var err error
-	for _, p := range r.activePlugins() {
-		pp, ok := p.(PaneProvider)
-		if !ok {
-			continue
-		}
-		for _, pane := range pp.Panes(s) {
-			if prev, dup := owner[pane.ID()]; dup && err == nil {
-				err = fmt.Errorf("plugin: pane ID %q contributed by both %q and %q", pane.ID(), prev, p.Name())
-			}
-			owner[pane.ID()] = p.Name()
-			out = append(out, pane)
-		}
-	}
-	return out, err
+// ActivePlugins returns the plugins that detection activated, in registration
+// order. This is the exported accessor for [tui.Panes] and other callers that
+// need to iterate active plugins without going through a specific interface.
+func (r *Registry) ActivePlugins() []Plugin {
+	return r.activePlugins()
 }
 
 // BannerCells collects health-strip cells from every active [BannerProvider],
 // in registration order.
-func (r *Registry) BannerCells(s *store.Store) []tui.BannerCell {
-	var out []tui.BannerCell
+func (r *Registry) BannerCells(s *store.Store) []health.Cell {
+	var out []health.Cell
 	for _, p := range r.activePlugins() {
 		if bp, ok := p.(BannerProvider); ok {
 			out = append(out, bp.Cells(s)...)
@@ -294,8 +298,8 @@ func (r *Registry) BannerCells(s *store.Store) []tui.BannerCell {
 
 // Summaries collects the overview blocks the active plugins offer, in
 // registration order. A plugin that declines contributes nothing.
-func (r *Registry) Summaries(s *store.Store) []tui.SummaryBlock {
-	var out []tui.SummaryBlock
+func (r *Registry) Summaries(s *store.Store) []SummaryBlock {
+	var out []SummaryBlock
 	for _, p := range r.activePlugins() {
 		sp, ok := p.(SummaryProvider)
 		if !ok {

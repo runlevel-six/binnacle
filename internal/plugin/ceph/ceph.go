@@ -22,7 +22,7 @@ import (
 	"github.com/runlevel-six/binnacle/internal/plugin/kube"
 	"github.com/runlevel-six/binnacle/pkg/store"
 	cephstate "github.com/runlevel-six/binnacle/pkg/subsystem/ceph"
-	"github.com/runlevel-six/binnacle/pkg/tui"
+	"github.com/runlevel-six/binnacle/pkg/health"
 )
 
 // Name is the plugin's registration name.
@@ -266,44 +266,38 @@ func (p *Plugin) activeMgrName(ctx context.Context, pod string) (string, error) 
 	return ParseMgrStat([]byte(out))
 }
 
-// Summary implements plugin.SummaryProvider, delegating to the shared projection
-// so the overview block and the banner cannot disagree about Ceph's state.
-func (p *Plugin) Summary(s *store.Store) (tui.SummaryBlock, bool) {
-	return summaryBlock(s)
-}
-
 // Cells implements plugin.BannerProvider.
-func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
+func (p *Plugin) Cells(s *store.Store) []health.Cell {
 	state, ok := store.Get[State](s, KeyState)
 	if !ok {
 		return nil
 	}
 
-	cell := tui.BannerCell{Name: "Ceph"}
+	cell := health.Cell{Name: "Ceph"}
 	st := state.Status
 	switch {
 	case state.Err != nil:
-		cell.Status = tui.BannerWarn
+		cell.Status = health.StatusWarn
 		cell.Detail = "read error"
 	case state.Tier != kube.TierFull:
-		cell.Status = tui.BannerLoading
+		cell.Status = health.StatusLoading
 		cell.Detail = "no detail"
 	case st.Health == "HEALTH_ERR":
-		cell.Status = tui.BannerErr
+		cell.Status = health.StatusErr
 		cell.Detail = firstCheckName(st.Checks)
 	case st.Health == "HEALTH_WARN":
-		cell.Status = tui.BannerWarn
+		cell.Status = health.StatusWarn
 		cell.Detail = firstCheckName(st.Checks)
 	case !st.OSDs.Healthy():
 		// Ceph can report OK while an OSD is out, if the data is still replicated.
-		cell.Status = tui.BannerWarn
+		cell.Status = health.StatusWarn
 		cell.Detail = fmt.Sprintf("%d/%d OSDs up", st.OSDs.Up, st.OSDs.Total)
 	case st.HealthOK():
-		cell.Status = tui.BannerOK
+		cell.Status = health.StatusOK
 	default:
-		cell.Status = tui.BannerLoading
+		cell.Status = health.StatusLoading
 	}
-	return []tui.BannerCell{cell}
+	return []health.Cell{cell}
 }
 
 // firstCheckName names the check driving the status, so the cell says what is
@@ -315,21 +309,4 @@ func firstCheckName(checks []Check) string {
 	return checks[0].Name
 }
 
-// Panes implements plugin.PaneProvider.
-// Panes contributes none: Ceph reports through the overview instead.
-//
-// Storage is a prerequisite for what this tool watches rather than a peer of it —
-// you do not drain a host unless the cluster can lose it — so its headline belongs
-// beside the cluster and node summaries at the top, not in a bottom-row column
-// competing with the network and the cloud. See [summaryBlock].
-//
-// Giving up the column is also what lets the OpenStack pane grow into it, which is
-// what the server-migration table needed: a pair of real compute hostnames does
-// not fit in one column of four.
-//
-// The pane renderer itself is kept, and still under test, because this is a
-// presentation decision rather than a discovery that the detail was worthless. To
-// put Ceph back in the grid, return newPane(s) here.
-func (p *Plugin) Panes(*store.Store) []tui.Pane {
-	return nil
-}
+

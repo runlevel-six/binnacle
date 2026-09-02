@@ -16,6 +16,12 @@ import (
 	"github.com/runlevel-six/binnacle/internal/build"
 	"github.com/runlevel-six/binnacle/internal/config"
 	"github.com/runlevel-six/binnacle/internal/kube"
+	"github.com/runlevel-six/binnacle/internal/plugin/openstack"
+	cephpane "github.com/runlevel-six/binnacle/internal/plugin/ceph/pane"
+	ciliumpane "github.com/runlevel-six/binnacle/internal/plugin/cilium/pane"
+	metallbpane "github.com/runlevel-six/binnacle/internal/plugin/metallb/pane"
+	openstackpane "github.com/runlevel-six/binnacle/internal/plugin/openstack/pane"
+	ovnpane "github.com/runlevel-six/binnacle/internal/plugin/ovn/pane"
 	"github.com/runlevel-six/binnacle/internal/ui"
 	"github.com/runlevel-six/binnacle/pkg/collect"
 	"github.com/runlevel-six/binnacle/pkg/plugin"
@@ -258,19 +264,37 @@ func Run(ctx context.Context, s *Setup) error {
 	return s.runUI(runCtx)
 }
 
+// paneProviders builds the terminal pane providers for the dashboard. Each
+// provider's Name matches its data plugin in the registry, so [tui.Panes] and
+// [tui.Summaries] can gate on detection. The OpenStack provider needs the
+// namespace and target version from the resolved profile.
+func (s *Setup) paneProviders() []tui.PaneProvider {
+	var ns string
+	if raw, ok := s.Resolved.Profile.Plugins[openstack.Name]; ok {
+		ns = openstack.SettingsFrom(raw).Namespace
+	}
+	return []tui.PaneProvider{
+		cephpane.NewProvider(),
+		ciliumpane.NewProvider(),
+		metallbpane.NewProvider(),
+		ovnpane.NewProvider(),
+		openstackpane.NewProvider(ns, s.Resolved.TargetVersion),
+	}
+}
+
 // BuildModel assembles the dashboard from whatever is in the store.
 //
 // It is the one place panes are collected, so every entry point — the live
 // dashboard, the demo, a headless render — shows the same screen. A demo that
 // assembled its own would stop being evidence about the real one.
 func (s *Setup) BuildModel() (*ui.Model, error) {
-	// The overview asks the registry for contributed blocks on every render, so a
-	// subsystem's headline appears the moment it has one. Wired here because this
-	// is where both halves are in scope.
+	providers := s.paneProviders()
+	// The overview asks the pane providers for contributed blocks on every
+	// render, so a subsystem's headline appears the moment it has one.
 	panes := ui.CorePanes(s.Store, s.Resolved, func() []tui.SummaryBlock {
-		return s.Registry.Summaries(s.Store)
+		return tui.Summaries(s.Registry, s.Store, providers)
 	})
-	pluginPanes, err := s.Registry.Panes(s.Store)
+	pluginPanes, err := tui.Panes(s.Registry, s.Store, providers)
 	if err != nil {
 		// A duplicate pane ID is a programming error, and one of the two panes
 		// would be unreachable by focus and jump keys. Fail rather than ship a

@@ -26,7 +26,7 @@ import (
 	"github.com/runlevel-six/binnacle/internal/plugin/kube"
 	"github.com/runlevel-six/binnacle/pkg/store"
 	metallbstate "github.com/runlevel-six/binnacle/pkg/subsystem/metallb"
-	"github.com/runlevel-six/binnacle/pkg/tui"
+	"github.com/runlevel-six/binnacle/pkg/health"
 )
 
 // Name is the plugin's registration name.
@@ -538,45 +538,42 @@ func (p *Plugin) list(ctx context.Context, gk schema.GroupKind) ([]unstructured.
 }
 
 // Cells implements plugin.BannerProvider.
-func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
+func (p *Plugin) Cells(s *store.Store) []health.Cell {
 	state, ok := store.Get[State](s, KeyState)
 	if !ok {
 		return nil
 	}
 
-	cell := tui.BannerCell{Name: "MetalLB"}
+	cell := health.Cell{Name: "MetalLB"}
 	switch {
 	case state.Err != nil:
-		cell.Status = tui.BannerWarn
+		cell.Status = health.StatusWarn
 		cell.Detail = "read error"
 	case state.SpeakerDesired > 0 && state.SpeakerReady < state.SpeakerDesired:
-		cell.Status = tui.BannerErr
+		cell.Status = health.StatusErr
 		cell.Detail = fmt.Sprintf("speaker %d/%d", state.SpeakerReady, state.SpeakerDesired)
 	case state.PendingServices() > 0:
 		// A pending LoadBalancer usually means the pool is exhausted, which is
 		// the failure this plugin exists to make visible.
-		cell.Status = tui.BannerWarn
+		cell.Status = health.StatusWarn
 		cell.Detail = fmt.Sprintf("%d pending", state.PendingServices())
 	case len(state.ExhaustedPools()) > 0:
 		// Ahead of the pending Service rather than after it. A full pool is a
 		// LoadBalancer that will not come up the next time anyone asks for one,
 		// and the whole value of MetalLB publishing its own counts is that this
 		// can be said before the failure rather than during it.
-		cell.Status = tui.BannerWarn
+		cell.Status = health.StatusWarn
 		cell.Detail = fmt.Sprintf("%s full", strings.Join(state.ExhaustedPools(), ", "))
 	case len(state.UnadvertisedPools()) > 0:
-		cell.Status = tui.BannerWarn
+		cell.Status = health.StatusWarn
 		cell.Detail = fmt.Sprintf("%d pool(s) unadvertised", len(state.UnadvertisedPools()))
 	default:
-		cell.Status = tui.BannerOK
+		cell.Status = health.StatusOK
 	}
-	return []tui.BannerCell{cell}
+	return []health.Cell{cell}
 }
 
-// Panes implements plugin.PaneProvider.
-func (p *Plugin) Panes(s *store.Store) []tui.Pane {
-	return []tui.Pane{newPane(s)}
-}
+
 
 func containsString(haystack []string, needle string) bool {
 	for _, h := range haystack {

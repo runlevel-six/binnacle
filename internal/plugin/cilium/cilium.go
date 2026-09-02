@@ -25,7 +25,7 @@ import (
 	"github.com/runlevel-six/binnacle/internal/plugin/kube"
 	"github.com/runlevel-six/binnacle/pkg/store"
 	ciliumstate "github.com/runlevel-six/binnacle/pkg/subsystem/cilium"
-	"github.com/runlevel-six/binnacle/pkg/tui"
+	"github.com/runlevel-six/binnacle/pkg/health"
 )
 
 // Name is the plugin's registration name.
@@ -263,35 +263,32 @@ func (p *Plugin) flowRate(seen int64, now time.Time) float64 {
 }
 
 // Cells implements plugin.BannerProvider.
-func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
+func (p *Plugin) Cells(s *store.Store) []health.Cell {
 	state, ok := store.Get[State](s, KeyState)
 	if !ok {
 		return nil
 	}
 
-	cell := tui.BannerCell{Name: "Cilium"}
+	cell := health.Cell{Name: "Cilium"}
 	switch {
 	case state.Err != nil:
-		cell.Status = tui.BannerWarn
+		cell.Status = health.StatusWarn
 		cell.Detail = "read error"
 	case state.AgentsDesired > 0 && state.AgentsReady < state.AgentsDesired:
-		cell.Status = tui.BannerErr
+		cell.Status = health.StatusErr
 		cell.Detail = fmt.Sprintf("%d/%d agents", state.AgentsReady, state.AgentsDesired)
 	case state.Status.Controllers.Failing > 0:
-		cell.Status = tui.BannerWarn
+		cell.Status = health.StatusWarn
 		cell.Detail = fmt.Sprintf("%d controller(s) failing", state.Status.Controllers.Failing)
 	case state.Status.IPAM.Percent() >= 90:
 		// Pod-address exhaustion stops new pods scheduling, and nothing else on
 		// screen would explain why.
-		cell.Status = tui.BannerWarn
+		cell.Status = health.StatusWarn
 		cell.Detail = fmt.Sprintf("IPAM %d%%", state.Status.IPAM.Percent())
 	default:
-		cell.Status = tui.BannerOK
+		cell.Status = health.StatusOK
 	}
-	return []tui.BannerCell{cell}
+	return []health.Cell{cell}
 }
 
-// Panes implements plugin.PaneProvider.
-func (p *Plugin) Panes(s *store.Store) []tui.Pane {
-	return []tui.Pane{newPane(s)}
-}
+

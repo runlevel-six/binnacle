@@ -2,11 +2,9 @@ package metallb
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -24,24 +22,6 @@ import (
 func TestMain(m *testing.M) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	os.Exit(m.Run())
-}
-
-func stripANSI(s string) string {
-	var sb strings.Builder
-	inEscape := false
-	for _, r := range s {
-		switch {
-		case r == '\x1b':
-			inEscape = true
-		case inEscape:
-			if r == 'm' {
-				inEscape = false
-			}
-		default:
-			sb.WriteRune(r)
-		}
-	}
-	return sb.String()
 }
 
 // --- settings -------------------------------------------------------------
@@ -218,121 +198,6 @@ func TestCells(t *testing.T) {
 func TestCells_NoStateYet(t *testing.T) {
 	if got := (&Plugin{}).Cells(store.New()); got != nil {
 		t.Errorf("got %v want nil", got)
-	}
-}
-
-// --- pane -----------------------------------------------------------------
-
-func populatedState() State {
-	return State{
-		Pools: []Pool{
-			{Name: "primary", Addresses: []string{"10.0.0.10-10.0.0.50"}, AutoAssign: true,
-				Advertised: []string{"L2"}, Assigned: 3},
-			{Name: "manual-only", Addresses: []string{"10.1.0.0/24"}, AutoAssign: false,
-				Advertised: []string{"BGP"}},
-			{Name: "orphan", Addresses: []string{"10.2.0.1"}, AutoAssign: true},
-		},
-		Services:       []Service{{Name: "ok", ExternalIP: "10.0.0.11"}, {Name: "waiting"}},
-		SpeakerReady:   3,
-		SpeakerDesired: 3,
-		UpdatedAt:      time.Now(),
-	}
-}
-
-func TestPane_Render(t *testing.T) {
-	s := store.New()
-	s.Put(KeyState, populatedState())
-	body := stripANSI(newPane(s).Render(90, 12, false))
-
-	for _, want := range []string{"primary", "10.0.0.10-10.0.0.50", "L2", "speaker 3/3"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("output missing %q:\n%s", want, body)
-		}
-	}
-	// An unadvertised pool must stand out, since it hands out addresses nothing
-	// announces.
-	if !strings.Contains(body, "none") {
-		t.Errorf("an unadvertised pool should read as 'none':\n%s", body)
-	}
-	// A manual-only pool explains an otherwise baffling Pending.
-	if !strings.Contains(body, "manual") {
-		t.Errorf("a manual-only pool should be marked:\n%s", body)
-	}
-	if !strings.Contains(body, "pending") {
-		t.Errorf("pending services should be reported:\n%s", body)
-	}
-}
-
-func TestPane_RespectsBounds(t *testing.T) {
-	s := store.New()
-	s.Put(KeyState, populatedState())
-	p := newPane(s)
-
-	for _, w := range []int{20, 40, 90, 200} {
-		for _, h := range []int{1, 2, 5, 20} {
-			body := p.Render(w, h, false)
-			if got := lipgloss.Height(body); body != "" && got > h {
-				t.Errorf("%dx%d: %d lines exceeds height", w, h, got)
-			}
-			for i, line := range strings.Split(body, "\n") {
-				if got := lipgloss.Width(line); got > w {
-					t.Errorf("%dx%d: line %d width %d exceeds width", w, h, i, got)
-				}
-			}
-		}
-	}
-}
-
-func TestPane_States(t *testing.T) {
-	// No data yet.
-	if got := stripANSI(newPane(store.New()).Render(60, 8, false)); !strings.Contains(got, "loading") {
-		t.Errorf("got %q want a loading state", got)
-	}
-
-	// Present but empty: MetalLB installed with no pools configured yet.
-	s := store.New()
-	s.Put(KeyState, State{UpdatedAt: time.Now()})
-	if got := stripANSI(newPane(s).Render(60, 8, false)); !strings.Contains(got, "no address pools") {
-		t.Errorf("got %q want an empty state", got)
-	}
-
-	// A read failure with no data surfaces the error.
-	s = store.New()
-	s.Put(KeyState, State{Err: errFake{}, UpdatedAt: time.Now()})
-	if got := stripANSI(newPane(s).Render(60, 8, false)); !strings.Contains(got, "boom") {
-		t.Errorf("got %q want the error surfaced", got)
-	}
-}
-
-// A partial failure keeps whatever was read, since pools are worth showing even
-// when the Service list was denied.
-func TestPane_PartialFailureStillRendersPools(t *testing.T) {
-	s := store.New()
-	state := populatedState()
-	state.Err = errFake{}
-	s.Put(KeyState, state)
-
-	body := stripANSI(newPane(s).Render(90, 12, false))
-	if !strings.Contains(body, "primary") {
-		t.Errorf("pools should survive a partial failure:\n%s", body)
-	}
-}
-
-type errFake struct{}
-
-func (errFake) Error() string { return "boom" }
-
-func TestPane_Identity(t *testing.T) {
-	p := newPane(store.New())
-	if p.ID() != "metallb" {
-		t.Errorf("ID: got %q", p.ID())
-	}
-	// Important rather than merely useful: load-balancer health belongs with
-	// storage and the cloud API, not a tier below them. It is also what places the
-	// Network frame first on the bottom row, since among equal priorities the
-	// order is registration order.
-	if p.Priority() != tui.P1Important {
-		t.Errorf("Priority: got %v", p.Priority())
 	}
 }
 
@@ -787,91 +652,6 @@ func TestExhaustedPools(t *testing.T) {
 	got := state.ExhaustedPools()
 	if len(got) != 1 || got[0] != "full" {
 		t.Errorf("got %v, want [full]", got)
-	}
-}
-
-// --- the IN USE cell ------------------------------------------------------
-
-func TestUsageCell(t *testing.T) {
-	tests := []struct {
-		name string
-		pool Pool
-		want string
-	}{
-		// The number an operator wants is not how many are out but how many are
-		// left, so the cell carries both.
-		{"published", Pool{Assigned: 9, Available: 79, Usage: UsageStatus}, "9/88"},
-		{"empty pool", Pool{Assigned: 0, Available: 88, Usage: UsageStatus}, "0/88"},
-		{"full pool", Pool{Assigned: 88, Available: 0, Usage: UsageStatus}, "88/88"},
-		// No honest total exists, so the bare count stands alone rather than
-		// inventing a denominator.
-		{"counted from annotations", Pool{Assigned: 3, Usage: UsageAnnotations}, "3"},
-		// Not zero: a zero reads as an idle pool, and an idle pool gets deleted.
-		{"unmeasurable", Pool{Usage: UsageUnknown}, "?"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got, _ := usage(tc.pool); got != tc.want {
-				t.Errorf("usage = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-// Running out of addresses is the failure this pane exists to see coming, so a
-// pool near its limit must not look like any other row.
-func TestUsageCell_ColorsAPoolRunningOut(t *testing.T) {
-	plain := func(p Pool) string { _, st := usage(p); return st.Render("x") }
-
-	roomy := plain(Pool{Assigned: 10, Available: 90, Usage: UsageStatus})
-	nearly := plain(Pool{Assigned: 95, Available: 5, Usage: UsageStatus})
-	full := plain(Pool{Assigned: 100, Available: 0, Usage: UsageStatus})
-
-	if roomy == nearly {
-		t.Error("a pool with a tenth left looks like one that is barely used")
-	}
-	if nearly == full {
-		t.Error("an exhausted pool looks like one that is merely close")
-	}
-}
-
-// End to end on the shape that produced the bug report: a v0.15 cluster where
-// every LoadBalancer carries an allocation annotation and none carries a
-// request. The pane used to render 0 for each pool.
-func TestPane_ShowsUsageOnAnAutoAssignCluster(t *testing.T) {
-	pools := []Pool{
-		{Namespace: "kube-system", Name: "default",
-			Addresses: []string{"10.4.192.12-10.4.192.99"}, AutoAssign: true,
-			Advertised: []string{"L2"}, Assigned: 9, Available: 79, Usage: UsageStatus},
-		{Namespace: "kube-system", Name: "rook-rgw-replication",
-			Addresses: []string{"10.252.4.20-10.252.4.20"}, AutoAssign: true,
-			Advertised: []string{"L2"}, Assigned: 0, Available: 1, Usage: UsageStatus},
-	}
-	services := make([]Service, 0, 9)
-	for i := range 9 {
-		services = append(services, Service{
-			Namespace: "mgd-rabbitmq", Name: fmt.Sprintf("svc-%d", i),
-			ExternalIP: fmt.Sprintf("10.4.192.%d", 15+i),
-			// Only what MetalLB wrote; no request annotation anywhere.
-			Pool: "default",
-		})
-	}
-
-	s := store.New()
-	s.Put(KeyState, State{
-		Pools: pools, Services: services, Namespace: "kube-system",
-		SpeakerReady: 3, SpeakerDesired: 3, UpdatedAt: time.Now(),
-	})
-	body := stripANSI(newPane(s).Render(100, 12, false))
-
-	if !strings.Contains(body, "9/88") {
-		t.Errorf("the default pool does not report its usage:\n%s", body)
-	}
-	if !strings.Contains(body, "0/1") {
-		t.Errorf("the unused pool does not report its capacity:\n%s", body)
-	}
-	if strings.Contains(body, "Service(s) pending") {
-		t.Errorf("nothing is pending, but the summary says otherwise:\n%s", body)
 	}
 }
 

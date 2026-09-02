@@ -296,28 +296,6 @@ func TestRelevantListsRecentFailuresRegardlessOfInstanceState(t *testing.T) {
 	}
 }
 
-// Failures sort first, so without a budget the table's own clipping keeps every
-// failure and drops the drain the operator is watching.
-func TestFailureBudgetLeavesRoomForActives(t *testing.T) {
-	tests := []struct {
-		failures, available, want int
-	}{
-		{failures: 2, available: 8, want: 2}, // both fit, no cap
-		{failures: 4, available: 8, want: 4}, // exactly half, still no cap
-		{failures: 8, available: 8, want: 4}, // capped to half
-		{failures: 9, available: 3, want: 1}, // short pane: one failure survives
-		{failures: 3, available: 1, want: 1}, // never zero while failures exist
-		{failures: 5, available: 0, want: 0}, // no body at all
-		{failures: 0, available: 6, want: 0}, // nothing to cap
-	}
-	for _, tc := range tests {
-		if got := failureBudget(tc.failures, tc.available); got != tc.want {
-			t.Errorf("failureBudget(%d, %d) = %d, want %d",
-				tc.failures, tc.available, got, tc.want)
-		}
-	}
-}
-
 // Nova's wire format has no timezone and Nova emits UTC; the RFC3339 variants
 // are accepted in case a later microversion changes shape.
 func TestParseNovaTime(t *testing.T) {

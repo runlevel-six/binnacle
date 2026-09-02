@@ -1,4 +1,4 @@
-package ceph
+package pane
 
 import (
 	"fmt"
@@ -7,10 +7,57 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/runlevel-six/binnacle/internal/plugin/kube"
+	"github.com/runlevel-six/binnacle/pkg/plugin"
 	"github.com/runlevel-six/binnacle/pkg/store"
+	cephstate "github.com/runlevel-six/binnacle/pkg/subsystem/ceph"
 	"github.com/runlevel-six/binnacle/pkg/tui"
 	"github.com/runlevel-six/binnacle/pkg/tui/table"
 )
+
+const KeyState = cephstate.KeyState
+
+type (
+	State  = cephstate.State
+	Status = cephstate.Status
+	Mons   = cephstate.Mons
+	Mgr    = cephstate.Mgr
+	OSDs   = cephstate.OSDs
+	PGState = cephstate.PGState
+	PGs    = cephstate.PGs
+	IO     = cephstate.IO
+	Check  = cephstate.Check
+)
+
+// Provider contributes Ceph's overview block. It implements [tui.PaneProvider]
+// and [plugin.SummaryProvider].
+//
+// Panes contributes none: Ceph reports through the overview instead. See the
+// comment on [summaryBlock] for why.
+type Provider struct{}
+
+func NewProvider() *Provider { return &Provider{} }
+
+func (p *Provider) Name() string { return "ceph" }
+
+// Panes contributes none: Ceph reports through the overview instead.
+//
+// Storage is a prerequisite for what this tool watches rather than a peer of it —
+// you do not drain a host unless the cluster can lose it — so its headline belongs
+// beside the cluster and node summaries at the top, not in a bottom-row column
+// competing with the network and the cloud. See [summaryBlock].
+//
+// The pane renderer itself is kept, and still under test, because this is a
+// presentation decision rather than a discovery that the detail was worthless. To
+// put Ceph back in the grid, return newPane(s) here.
+func (p *Provider) Panes(s *store.Store) []tui.Pane {
+	return nil
+}
+
+// Summary implements [plugin.SummaryProvider], delegating to the shared projection
+// so the overview block and the banner cannot disagree about Ceph's state.
+func (p *Provider) Summary(s *store.Store) (plugin.SummaryBlock, bool) {
+	return summaryBlock(s)
+}
 
 // pane renders Ceph's health and capacity.
 type pane struct {
@@ -97,8 +144,6 @@ func healthText(st Status) string {
 	}
 	out := healthStyle(st.Health).Render(text)
 	if st.MutedChecks > 0 {
-		// A muted check is a suppressed warning, so an OK status with mutes is
-		// not the same as an unqualified OK.
 		out += "  " + tui.StyleWarn.Render(fmt.Sprintf("%d muted", st.MutedChecks))
 	}
 	return out
@@ -134,7 +179,6 @@ func monText(m Mons) string {
 	if m.Healthy() {
 		return tui.StyleOK.Render(text)
 	}
-	// A monitor out of quorum is one step from losing the cluster's control plane.
 	return tui.StyleErr.Render(text)
 }
 
@@ -144,8 +188,6 @@ func mgrText(m Mgr) string {
 	}
 	name := m.Active
 	if m.ActiveUnknown() {
-		// The summary-only mgrmap omits the name, and the follow-up query failed.
-		// That is a gap in the data, not a missing manager.
 		name = tui.StyleMuted.Render("name not reported")
 	}
 	return fmt.Sprintf("%s %s", tui.StyleOK.Render("active"), name) +
@@ -171,8 +213,6 @@ func pgText(p PGs) string {
 		return tui.StyleOK.Render(fmt.Sprintf("%d active+clean", p.Total)) +
 			tui.StyleMuted.Render(fmt.Sprintf("  %d pools, %s objects", p.Pools, count(p.Objects)))
 	}
-	// Name the states that are not clean; that is what says whether the cluster is
-	// recovering or stuck.
 	var parts []string
 	for _, s := range p.ByState {
 		if s.Name == "active+clean" {
@@ -184,11 +224,6 @@ func pgText(p PGs) string {
 		tui.StyleMuted.Render("  "+strings.Join(parts, ", "))
 }
 
-// capacityText reports raw usage, and stored data separately.
-//
-// Raw usage is what fills the cluster, and it includes replication — a three-way
-// pool consumes roughly three times its stored data. Showing only stored data
-// would understate a nearly full cluster by that factor.
 func capacityText(p PGs) string {
 	if p.TotalBytes <= 0 {
 		return tui.StyleMuted.Render("not reported")
@@ -215,7 +250,6 @@ func ioText(io IO) string {
 		tui.StyleMuted.Render(fmt.Sprintf("  %d/%d iops", io.ReadOpsPerSec, io.WriteOpsPerSec))
 }
 
-// bytes formats a byte count in binary units.
 func bytes(n int64) string {
 	const unit = 1024
 	if n < unit {
@@ -229,7 +263,6 @@ func bytes(n int64) string {
 	return fmt.Sprintf("%.1f%c", value, "KMGTP"[exp-1])
 }
 
-// count abbreviates a large object count, which routinely runs to millions.
 func count(n int64) string {
 	switch {
 	case n >= 1_000_000:
@@ -268,22 +301,19 @@ func clip(body string, w, h int) string {
 // eight rows into the budget. What does not fit — the placement-group breakdown,
 // client throughput, the manager's name — is the detail this deliberately trades
 // for the space.
-func summaryBlock(s *store.Store) (tui.SummaryBlock, bool) {
+func summaryBlock(s *store.Store) (plugin.SummaryBlock, bool) {
 	state, ok := store.Get[State](s, KeyState)
 	if !ok {
-		// Nothing published yet. A column saying "loading" would claim the space
-		// before earning it; the banner already reports a subsystem it cannot read.
-		return tui.SummaryBlock{}, false
+		return plugin.SummaryBlock{}, false
 	}
 	if state.Err != nil {
-		return tui.SummaryBlock{
+		return plugin.SummaryBlock{
 			Title: "Ceph",
 			Lines: []string{tui.StyleErr.Render(clipLine(state.Err.Error()))},
 		}, true
 	}
 	if state.Tier != kube.TierFull {
-		// Present but unreadable in detail. Say which, and why, in one line.
-		return tui.SummaryBlock{
+		return plugin.SummaryBlock{
 			Title: "Ceph",
 			Lines: []string{
 				row(9, "health", healthStyle(state.Status.Health).Render(orUnknown(state.Status.Health))),
@@ -294,8 +324,6 @@ func summaryBlock(s *store.Store) (tui.SummaryBlock, bool) {
 
 	st := state.Status
 	health := healthStyle(st.Health).Render(st.Health)
-	// The failing check rides on the health line: it names what is wrong, and it
-	// is only present when something is.
 	if len(st.Checks) > 0 {
 		health += "  " + tui.StyleWarn.Render(st.Checks[0].Name)
 	}
@@ -313,14 +341,13 @@ func summaryBlock(s *store.Store) (tui.SummaryBlock, bool) {
 		capacity += fmt.Sprintf("   pgs %d/%d clean", st.PGs.CleanPGs(), st.PGs.Total)
 	}
 
-	return tui.SummaryBlock{Title: "Ceph", Lines: []string{
+	return plugin.SummaryBlock{Title: "Ceph", Lines: []string{
 		row(9, "health", health),
 		row(9, "osds", osds),
 		row(9, "capacity", capacity),
 	}}, true
 }
 
-// clipLine keeps a contributed line inside a summary column.
 func clipLine(s string) string {
 	const max = 46
 	if len(s) > max {

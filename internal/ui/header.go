@@ -136,7 +136,7 @@ func (m *Model) bannerLine(hs headerStyles, width int) string {
 // outside the terminal reaches the same conclusions from the same store. Two
 // front ends disagreeing about whether a cluster is healthy would be worse than
 // either of them simply being wrong.
-func (m *Model) bannerCells() []tui.BannerCell {
+func (m *Model) bannerCells() []health.Cell {
 	cells := health.CoreCells(m.store, m.resolved.Profile.NodeRoles)
 	if m.registry != nil {
 		cells = append(cells, m.registry.BannerCells(m.store)...)

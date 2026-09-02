@@ -27,7 +27,7 @@ import (
 	"github.com/runlevel-six/binnacle/internal/plugin/kube"
 	"github.com/runlevel-six/binnacle/pkg/store"
 	ovnstate "github.com/runlevel-six/binnacle/pkg/subsystem/ovn"
-	"github.com/runlevel-six/binnacle/pkg/tui"
+	"github.com/runlevel-six/binnacle/pkg/health"
 )
 
 // Name is the plugin's registration name.
@@ -351,19 +351,19 @@ func (p *Plugin) statusFrom(ctx context.Context, db Database, pod string) (Clust
 }
 
 // Cells implements plugin.BannerProvider.
-func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
+func (p *Plugin) Cells(s *store.Store) []health.Cell {
 	state, ok := store.Get[State](s, KeyState)
 	if !ok {
 		return nil
 	}
 
-	cell := tui.BannerCell{Name: "OVN"}
+	cell := health.Cell{Name: "OVN"}
 	switch {
 	case state.Tier != kube.TierFull:
-		cell.Status = tui.BannerLoading
+		cell.Status = health.StatusLoading
 		cell.Detail = "no detail"
 	case len(state.Statuses) == 0:
-		cell.Status = tui.BannerLoading
+		cell.Status = health.StatusLoading
 	default:
 		var problems []string
 		for _, st := range state.Statuses {
@@ -379,7 +379,7 @@ func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
 			}
 		}
 		if len(problems) == 0 {
-			cell.Status = tui.BannerOK
+			cell.Status = health.StatusOK
 			// Nothing is known to be wrong, but say when the members could not be
 			// checked — a leader that cannot be reached leaves a gap in what this
 			// cell is asserting, and the gap should be visible rather than read as
@@ -396,10 +396,10 @@ func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
 			break
 		}
 		// A missing leader is an outage; a stale member is a degraded quorum.
-		cell.Status = tui.BannerWarn
+		cell.Status = health.StatusWarn
 		for _, pr := range problems {
 			if strings.Contains(pr, "no leader") {
-				cell.Status = tui.BannerErr
+				cell.Status = health.StatusErr
 			}
 		}
 		cell.Detail = strings.Join(problems, ", ")
@@ -420,14 +420,14 @@ func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
 			// The drift that will still be there next week unless somebody acts,
 			// so it is worth amber on a cell that is otherwise green.
 			note += " (manual)"
-			cell.Status = cell.Status.Worse(tui.BannerWarn)
+			cell.Status = cell.Status.Worse(health.StatusWarn)
 		}
 		if cell.Detail != "" {
 			note = cell.Detail + ", " + note
 		}
 		cell.Detail = note
 	}
-	return []tui.BannerCell{cell}
+	return []health.Cell{cell}
 }
 
 // databaseLabel shortens a database name for a cell.
@@ -440,7 +440,4 @@ func databaseLabel(name string) string {
 	return name
 }
 
-// Panes implements plugin.PaneProvider.
-func (p *Plugin) Panes(s *store.Store) []tui.Pane {
-	return []tui.Pane{newPane(s), newRolloutPane(s)}
-}
+

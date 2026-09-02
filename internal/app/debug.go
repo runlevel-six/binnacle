@@ -14,7 +14,9 @@ import (
 	"github.com/runlevel-six/binnacle/internal/plugin/kube"
 	"github.com/runlevel-six/binnacle/internal/plugin/metallb"
 	"github.com/runlevel-six/binnacle/internal/plugin/openstack"
+	openstackpane "github.com/runlevel-six/binnacle/internal/plugin/openstack/pane"
 	"github.com/runlevel-six/binnacle/internal/plugin/ovn"
+	ovnpane "github.com/runlevel-six/binnacle/internal/plugin/ovn/pane"
 	"github.com/runlevel-six/binnacle/pkg/collect"
 	"github.com/runlevel-six/binnacle/pkg/model"
 	"github.com/runlevel-six/binnacle/pkg/rollout"
@@ -279,7 +281,7 @@ func pluginRows(s *store.Store) []reportRow {
 			row.summary = fmt.Sprintf("cloud=%s region=%s: %s",
 				state.Cloud, state.Region, strings.Join(parts, ", "))
 			if down := state.DownAgents(); len(down) > 0 {
-				row.sample = fmt.Sprintf("down: %s@%s", down[0].Binary, openstack.ShortHost(down[0].Host))
+				row.sample = fmt.Sprintf("down: %s@%s", down[0].Binary, openstackpane.ShortHost(down[0].Host))
 			}
 		}
 		out = append(out, row)
@@ -355,16 +357,16 @@ func pluginRows(s *store.Store) []reportRow {
 				switch {
 				case d.Err != nil:
 					row.summary += fmt.Sprintf("; draining %s: %v",
-						openstack.ShortHost(d.Host), d.Err)
+						openstackpane.ShortHost(d.Host), d.Err)
 				default:
 					row.summary += fmt.Sprintf("; draining %s: %d left, %d moving, %d stuck",
-						openstack.ShortHost(d.Host), d.Remaining, d.Moving, d.Stuck)
+						openstackpane.ShortHost(d.Host), d.Remaining, d.Moving, d.Stuck)
 				}
 			}
 			if len(shown.Rows) > 0 {
 				m := shown.Rows[0]
 				row.sample = fmt.Sprintf("%s %s %s: %s -> %s", m.Status, m.Type, m.InstanceUUID,
-					openstack.ShortHost(m.SourceCompute), openstack.ShortHost(m.DestCompute))
+					openstackpane.ShortHost(m.SourceCompute), openstackpane.ShortHost(m.DestCompute))
 			}
 		}
 		out = append(out, row)
@@ -408,7 +410,7 @@ func pluginRows(s *store.Store) []reportRow {
 			// The plugin's own compact form, which names the leader and any lagging
 			// member by pod rather than by Raft ID. No sample: the summary already
 			// carries every database, so -v would only repeat itself.
-			row.summary = strings.Join(ovn.Summary(state), "; ")
+			row.summary = strings.Join(ovnpane.Summary(state), "; ")
 		}
 		out = append(out, row)
 	}

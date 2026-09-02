@@ -1,4 +1,4 @@
-package openstack
+package pane
 
 import (
 	"fmt"
@@ -6,10 +6,66 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/runlevel-six/binnacle/internal/plugin/openstack"
 	"github.com/runlevel-six/binnacle/pkg/store"
+	osstate "github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
 	"github.com/runlevel-six/binnacle/pkg/tui"
 	"github.com/runlevel-six/binnacle/pkg/tui/table"
 )
+
+const (
+	KeyState            = osstate.KeyState
+	KeyMigrations       = osstate.KeyMigrations
+	KeyInventory        = osstate.KeyInventory
+	ServiceCompute      = osstate.ServiceCompute
+	ServiceNetwork      = osstate.ServiceNetwork
+	ServiceBlockStorage = osstate.ServiceBlockStorage
+)
+
+type (
+	State         = osstate.State
+	ServiceSummary = osstate.ServiceSummary
+	Agent         = osstate.Agent
+	Migration     = osstate.Migration
+	Migrations    = osstate.Migrations
+	BrokenServer  = osstate.BrokenServer
+	Drain         = osstate.Drain
+	Inventory     = osstate.Inventory
+	Count         = osstate.Count
+	Shown         = osstate.Shown
+	Service       = openstack.Service
+	Services      = openstack.Services
+	Component     = openstack.Component
+)
+
+var (
+	ShortType     = osstate.ShortType
+	ShortStatus   = osstate.ShortStatus
+	DrainingHosts = osstate.DrainingHosts
+)
+
+// Provider contributes the OpenStack panes. It implements [tui.PaneProvider].
+type Provider struct {
+	namespace     string
+	targetVersion string
+}
+
+func NewProvider(namespace, targetVersion string) *Provider {
+	return &Provider{namespace: namespace, targetVersion: targetVersion}
+}
+
+func (p *Provider) Name() string { return "openstack" }
+
+// Panes contributes the cloud's control-plane health, service versions, resource
+// census, and server migrations.
+func (p *Provider) Panes(s *store.Store) []tui.Pane {
+	return []tui.Pane{
+		newPane(s),
+		newServicesPane(s, p.namespace),
+		newResourcesPane(s),
+		newCloudPane(s, p.targetVersion),
+	}
+}
 
 // pane renders the cloud's control-plane health.
 type pane struct {
@@ -25,7 +81,6 @@ func (p *pane) MinWidth() int          { return 46 }
 func (p *pane) MinHeight() int         { return 6 }
 func (p *pane) HeightWeight() int      { return 3 }
 
-// Group puts this pane in the shared "Cloud" frame; see [tui.GroupedPane].
 func (p *pane) GroupID() string    { return "cloud" }
 func (p *pane) GroupTitle() string { return "Cloud" }
 func (p *pane) GroupOrder() int    { return 0 }
@@ -37,11 +92,6 @@ var serviceCols = []table.Column{
 	{Header: "NOTE", Stretch: true, Transient: true},
 }
 
-// ContentWidth implements [tui.ContentWidthPane]: the service table.
-//
-// Not the agent detail beneath it. That line names the down and disabled binaries,
-// so it is the most volatile string in the pane, and pinning a tile width to it
-// would move the row every time an agent recovered.
 func (p *pane) ContentWidth() int {
 	cells, _, _ := p.content()
 	if len(cells) == 0 {
@@ -50,9 +100,6 @@ func (p *pane) ContentWidth() int {
 	return table.AppetiteWidth(serviceCols, cells)
 }
 
-// ContentHeight implements [tui.ContentHeightPane]: a header, one row per
-// OpenStack service, and the agent detail with its separator. The service list is
-// what the cloud has deployed, not what it is running.
 func (p *pane) ContentHeight(int) int {
 	cells, _, detail := p.content()
 	if len(cells) == 0 {
@@ -65,8 +112,6 @@ func (p *pane) ContentHeight(int) int {
 	return h
 }
 
-// content builds the service rows and the agent detail, shared by Render and the
-// extent methods.
 func (p *pane) content() (cells [][]string, styles [][]lipgloss.Style, detail string) {
 	state, ok := store.Get[State](p.store, KeyState)
 	if !ok || state.Err != nil || len(state.Services) == 0 {
@@ -81,7 +126,6 @@ func (p *pane) content() (cells [][]string, styles [][]lipgloss.Style, detail st
 	return cells, styles, agentDetail(state)
 }
 
-// Render implements tui.Pane.
 func (p *pane) Render(w, h int, _ bool) string {
 	state, ok := store.Get[State](p.store, KeyState)
 	if !ok {
@@ -113,8 +157,6 @@ func serviceRow(s ServiceSummary) []string {
 	}
 	note := ""
 	if len(s.DownBinaries) > 0 {
-		// Name the binaries rather than only counting them: "3 down" does not say
-		// whether it is every compute node or one scheduler.
 		note = "down: " + strings.Join(s.DownBinaries, ", ")
 	}
 	return []string{s.Service, fmt.Sprintf("%d/%d up", s.Up, s.Total), disabled, note}
@@ -130,8 +172,6 @@ func serviceStyles(s ServiceSummary) []lipgloss.Style {
 	case len(s.DownBinaries) > 0:
 		agentStyle = tui.StyleErr
 	case s.Disabled > 0 && s.Up < s.Total:
-		// Not everything is up, but only because something is disabled — which is
-		// deliberate, so this is not an error.
 		agentStyle = tui.StyleWarn
 	}
 
@@ -142,11 +182,6 @@ func serviceStyles(s ServiceSummary) []lipgloss.Style {
 	return []lipgloss.Style{{}, agentStyle, disabledStyle, tui.StyleErr}
 }
 
-// agentDetail names the specific agents needing attention.
-//
-// Down agents come first and are named by host, since that is the thing to go and
-// look at. Disabled ones follow, because a node left disabled after maintenance is
-// a common oversight and nothing else on screen would reveal it.
 func agentDetail(state State) string {
 	var lines []string
 	if down := state.DownAgents(); len(down) > 0 {
@@ -158,7 +193,6 @@ func agentDetail(state State) string {
 	return strings.Join(lines, "\n")
 }
 
-// hostList formats agents as "binary@host".
 func hostList(agents []Agent) []string {
 	out := make([]string, 0, len(agents))
 	for _, a := range agents {
@@ -168,9 +202,6 @@ func hostList(agents []Agent) []string {
 }
 
 // ShortHost trims a host to its first DNS label.
-//
-// Compute hosts are FQDNs — "compute-node-1.site-a.example.com" — and the domain
-// is identical on every row, so it is pure noise in a table.
 func ShortHost(host string) string {
 	if i := strings.Index(host, "."); i > 0 {
 		return host[:i]

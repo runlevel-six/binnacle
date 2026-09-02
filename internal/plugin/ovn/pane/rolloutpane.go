@@ -1,4 +1,4 @@
-package ovn
+package pane
 
 import (
 	"fmt"
@@ -14,12 +14,6 @@ import (
 
 // rolloutPane reports whether the switching layer is running the version its
 // charts ask for.
-//
-// A section of its own rather than a line under the Raft table, because the two
-// answer different questions on different clocks. Raft health is about this
-// second and is usually fine; a rollout is about a change someone started and may
-// not have finished, and on the Open vSwitch path it can sit half-done for weeks
-// with nothing else on the dashboard saying so.
 type rolloutPane struct {
 	store *store.Store
 }
@@ -33,7 +27,6 @@ func (p *rolloutPane) MinWidth() int          { return 44 }
 func (p *rolloutPane) MinHeight() int         { return 4 }
 func (p *rolloutPane) HeightWeight() int      { return 2 }
 
-// Group puts this pane in the shared "Network" frame; see [tui.GroupedPane].
 func (p *rolloutPane) GroupID() string    { return "network" }
 func (p *rolloutPane) GroupTitle() string { return "Network" }
 func (p *rolloutPane) GroupOrder() int    { return 3 }
@@ -44,9 +37,6 @@ var rolloutCols = []table.Column{
 	{Header: "PENDING", Stretch: true, Transient: true},
 }
 
-// ContentWidth implements [tui.ContentWidthPane]: the component table. The
-// rollout summary is not counted — it exists only while something is behind, so a
-// tile sized to it would grow when a rollout started and shrink when it finished.
 func (p *rolloutPane) ContentWidth() int {
 	state, ok := store.Get[State](p.store, KeyState)
 	if !ok || len(state.Components) == 0 {
@@ -56,12 +46,6 @@ func (p *rolloutPane) ContentWidth() int {
 	return table.AppetiteWidth(rolloutCols, rows)
 }
 
-// ContentHeight implements [tui.ContentHeightPane]: a header, one row per OVN
-// component, and the summary line when there is one.
-//
-// The full component list rather than the folded one Render falls back to. Folding
-// is what this pane does when it is not given the height it asked for, so
-// reporting the folded height would be asking for the shortfall.
 func (p *rolloutPane) ContentHeight(int) int {
 	state, ok := store.Get[State](p.store, KeyState)
 	if !ok || len(state.Components) == 0 {
@@ -74,7 +58,6 @@ func (p *rolloutPane) ContentHeight(int) int {
 	return h
 }
 
-// componentRows renders one row per component.
 func (p *rolloutPane) componentRows(cs []Component) (rows [][]string, styles [][]lipgloss.Style) {
 	rows = make([][]string, 0, len(cs))
 	styles = make([][]lipgloss.Style, 0, len(cs))
@@ -85,7 +68,6 @@ func (p *rolloutPane) componentRows(cs []Component) (rows [][]string, styles [][
 	return rows, styles
 }
 
-// Render implements tui.Pane.
 func (p *rolloutPane) Render(w, h int, _ bool) string {
 	state, ok := store.Get[State](p.store, KeyState)
 	if !ok {
@@ -95,8 +77,6 @@ func (p *rolloutPane) Render(w, h int, _ bool) string {
 		return table.Placeholder(w, h, "no OVN workloads found")
 	}
 
-	// Too short for a table; see the same rule in the OpenStack services pane. A
-	// header over "+ 4 more" is two lines that name nothing.
 	if h < 3 {
 		line := rolloutSummary(state.Components)
 		if line == "" {
@@ -105,12 +85,6 @@ func (p *rolloutPane) Render(w, h int, _ bool) string {
 		return table.ClipLines(table.PadOrTrunc(line, w), h)
 	}
 
-	// The converged components are the first thing to give up when the frame is
-	// short, and giving them up costs nothing: "ovsdb-nb 3/3" is a row that says
-	// the same thing every day for months. Dropping them in favor of the ones
-	// that are behind is the difference between a table that truncates to
-	// "+ 4 more" — hiding the only rows worth reading — and one that shows the
-	// work outstanding and counts the rest on a single line.
 	shown := state.Components
 	folded := 0
 	if len(shown)+2 > h {
@@ -139,19 +113,11 @@ func componentRow(c Component) []string {
 	}
 
 	if c.Manual {
-		// The distinction the whole pane exists for, and it has to be legible at a
-		// glance rather than spelled out per row: a prose prefix on every line ate
-		// the width the node names needed, and the summary underneath already says
-		// what the marker means.
 		count += " ⚠"
 	}
 
 	note := ""
 	if len(c.StaleNodes) > 0 {
-		// Named rather than counted, because finishing a manual rollout is a
-		// per-host job and the next host is the only thing the operator needs.
-		// Two fit beside the count in one grid column; the rest are already in
-		// the fraction to the left.
 		shown, more := kube.ShortNodeNames(c.StaleNodes, 2)
 		note = strings.Join(shown, ", ")
 		if more > 0 {
@@ -168,19 +134,12 @@ func componentStyles(c Component) []lipgloss.Style {
 	case c.Converged():
 		return []lipgloss.Style{{}, tui.StyleOK, {}}
 	case c.Manual:
-		// Amber, not red. Nothing is broken — an operator has work to do, which
-		// is a different thing and must not read as an outage.
 		return []lipgloss.Style{{}, tui.StyleWarn, tui.StyleWarn}
 	default:
 		return []lipgloss.Style{{}, tui.StyleAccent, tui.StyleMuted}
 	}
 }
 
-// rolloutSummary is the one-line headline, or empty when everything is current.
-//
-// Silent when converged, on the same rule the overview blocks follow: a line that
-// is always present is one nobody reads, and this pane's whole value is being
-// noticed on the day it has something to say.
 func rolloutSummary(cs []Component) string {
 	pending := PendingComponents(cs)
 	if len(pending) == 0 {

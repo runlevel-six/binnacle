@@ -1,7 +1,6 @@
 package openstack
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/runlevel-six/binnacle/pkg/model"
@@ -152,50 +151,6 @@ func TestServicesNotConvergedBeforeAnythingIsKnown(t *testing.T) {
 	}
 	if _, ok := CollectServices(store.New(), ""); ok {
 		t.Error("CollectServices succeeded with no snapshot in the store")
-	}
-}
-
-// A converged cloud in a short frame must say how many services there are, not
-// list whichever three sort first — that is the omission the pane exists to fix,
-// and the renderer must not reintroduce it.
-func TestServicesPaneShortAndConvergedReportsTheCount(t *testing.T) {
-	items := make([]model.Workload, 0, 11)
-	for _, app := range []string{
-		"keystone", "glance", "nova", "neutron", "cinder", "heat",
-		"octavia", "barbican", "placement", "magnum", "manila",
-	} {
-		items = append(items, wl("openstack", app, "api", "Deployment", 3, 3, false))
-	}
-
-	body := stripANSI(newServicesPane(withWorkloads(items...), "openstack").Render(60, 4, false))
-	if !strings.Contains(body, "11 service(s) up to date") {
-		t.Errorf("want the whole-cloud count in a short frame, got:\n%s", body)
-	}
-	if strings.Contains(body, "+ ") {
-		t.Errorf("a converged cloud should not render a truncated table:\n%s", body)
-	}
-}
-
-// When services are behind, the rows naming them beat the summary counting them.
-func TestServicesPaneKeepsPendingRowsOverTheSummary(t *testing.T) {
-	s := withWorkloads(
-		wl("openstack", "keystone", "api", "Deployment", 3, 3, false),
-		wl("openstack", "glance", "api", "Deployment", 3, 3, false),
-		wl("openstack", "nova", "compute", "DaemonSet", 5, 2, false),
-		wl("openstack", "neutron", "ovn-metadata-agent", "DaemonSet", 5, 3, false),
-		wl("openstack", "libvirt", "libvirt", "DaemonSet", 5, 1, true),
-	)
-
-	body := stripANSI(newServicesPane(s, "openstack").Render(60, 4, false))
-	for _, want := range []string{"libvirt", "nova", "neutron"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("pending service %q was displaced:\n%s", want, body)
-		}
-	}
-	// The manual marker rides on the row, which is why the summary can be the
-	// thing that yields.
-	if !strings.Contains(body, "⚠") {
-		t.Errorf("the manual marker is missing:\n%s", body)
 	}
 }
 

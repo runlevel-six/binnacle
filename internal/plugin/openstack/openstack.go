@@ -35,7 +35,7 @@ import (
 
 	"github.com/runlevel-six/binnacle/pkg/store"
 	osstate "github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
-	"github.com/runlevel-six/binnacle/pkg/tui"
+	"github.com/runlevel-six/binnacle/pkg/health"
 )
 
 // Name is the plugin's registration name.
@@ -509,33 +509,33 @@ func summarize(agents []Agent) []ServiceSummary {
 }
 
 // Cells implements plugin.BannerProvider.
-func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
+func (p *Plugin) Cells(s *store.Store) []health.Cell {
 	state, ok := store.Get[State](s, KeyState)
 	if !ok {
 		return nil
 	}
 
-	cell := tui.BannerCell{Name: "OpenStack"}
+	cell := health.Cell{Name: "OpenStack"}
 	switch {
 	case state.Err != nil:
-		cell.Status = tui.BannerErr
+		cell.Status = health.StatusErr
 		cell.Detail = "unreachable"
 	case len(state.Agents) == 0 && len(state.Services) == 0:
-		cell.Status = tui.BannerLoading
+		cell.Status = health.StatusLoading
 	default:
 		down := state.DownAgents()
 		disabled := state.DisabledAgents()
 		switch {
 		case len(down) > 0:
-			cell.Status = tui.BannerErr
+			cell.Status = health.StatusErr
 			cell.Detail = fmt.Sprintf("%d agent(s) down", len(down))
 		case len(disabled) > 0:
 			// Deliberate, so amber rather than red — but still worth showing,
 			// since a node left disabled after maintenance is a common oversight.
-			cell.Status = tui.BannerWarn
+			cell.Status = health.StatusWarn
 			cell.Detail = fmt.Sprintf("%d disabled", len(disabled))
 		default:
-			cell.Status = tui.BannerOK
+			cell.Status = health.StatusOK
 		}
 	}
 
@@ -546,25 +546,14 @@ func (p *Plugin) Cells(s *store.Store) []tui.BannerCell {
 		note := fmt.Sprintf("%d pod(s) behind", svcs.StalePods())
 		if svcs.NeedsOperator() {
 			note += " (manual)"
-			cell.Status = cell.Status.Worse(tui.BannerWarn)
+			cell.Status = cell.Status.Worse(health.StatusWarn)
 		}
 		if cell.Detail != "" {
 			note = cell.Detail + ", " + note
 		}
 		cell.Detail = note
 	}
-	return []tui.BannerCell{cell}
+	return []health.Cell{cell}
 }
 
-// Panes implements plugin.PaneProvider.
-//
-// Control-plane health comes first: an agent that is down is a fault, whereas the
-// second pane is either activity to watch or an inventory to browse.
-func (p *Plugin) Panes(s *store.Store) []tui.Pane {
-	return []tui.Pane{
-		newPane(s),
-		newServicesPane(s, p.settings.Namespace),
-		newResourcesPane(s),
-		newCloudPane(s, p.settings.TargetVersion),
-	}
-}
+

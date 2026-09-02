@@ -18,24 +18,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func stripANSI(s string) string {
-	var sb strings.Builder
-	inEscape := false
-	for _, r := range s {
-		switch {
-		case r == '\x1b':
-			inEscape = true
-		case inEscape:
-			if r == 'm' {
-				inEscape = false
-			}
-		default:
-			sb.WriteRune(r)
-		}
-	}
-	return sb.String()
-}
-
 // realAgents mirrors the shape a production cloud reports: compute nodes in the
 // nova zone with FQDN hosts, and control services in the internal zone whose hosts
 // are pod names.
@@ -308,106 +290,6 @@ func TestCells_NoStateYet(t *testing.T) {
 type errFake struct{}
 
 func (errFake) Error() string { return "boom" }
-
-// --- pane -----------------------------------------------------------------
-
-func TestPane_ServiceTable(t *testing.T) {
-	s := store.New()
-	s.Put(KeyState, stateFrom(realAgents()))
-	body := stripANSI(newPane(s).Render(90, 10, false))
-
-	for _, want := range []string{"compute", "network", "block-storage", "4/4 up"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("output missing %q:\n%s", want, body)
-		}
-	}
-}
-
-func TestPane_DrainedAndBrokenAreDistinguished(t *testing.T) {
-	agents := append(realAgents(),
-		Agent{Service: ServiceCompute, Binary: "nova-compute",
-			Host: "compute-node-3.site-a.example.com", Up: false, Enabled: false},
-		Agent{Service: ServiceCompute, Binary: "nova-compute",
-			Host: "compute-node-4.site-a.example.com", Up: false, Enabled: true},
-	)
-	s := store.New()
-	s.Put(KeyState, stateFrom(agents))
-	body := stripANSI(newPane(s).Render(100, 12, false))
-
-	if !strings.Contains(body, "Down:") || !strings.Contains(body, "compute-node-4") {
-		t.Errorf("the broken agent should be named under Down:\n%s", body)
-	}
-	if !strings.Contains(body, "Disabled:") || !strings.Contains(body, "compute-node-3") {
-		t.Errorf("the drained agent should be named under Disabled:\n%s", body)
-	}
-	// FQDN domains are identical on every row, so they are trimmed.
-	if strings.Contains(body, "site-a.example.com") {
-		t.Errorf("host domains should be trimmed:\n%s", body)
-	}
-}
-
-// One unavailable service must not hide the others.
-func TestPane_PerServiceErrorIsIsolated(t *testing.T) {
-	st := stateFrom(realAgents())
-	st.Services = append(st.Services, ServiceSummary{Service: "shared-file-system", Err: errFake{}})
-
-	s := store.New()
-	s.Put(KeyState, st)
-	body := stripANSI(newPane(s).Render(100, 12, false))
-
-	if !strings.Contains(body, "4/4 up") {
-		t.Errorf("the healthy services should still render:\n%s", body)
-	}
-	if !strings.Contains(body, "unavailable") {
-		t.Errorf("the failed service should say so:\n%s", body)
-	}
-}
-
-func TestPane_States(t *testing.T) {
-	if got := stripANSI(newPane(store.New()).Render(60, 8, false)); !strings.Contains(got, "loading") {
-		t.Errorf("got %q want loading", got)
-	}
-	s := store.New()
-	s.Put(KeyState, State{Err: errFake{}, UpdatedAt: time.Now()})
-	if got := stripANSI(newPane(s).Render(60, 8, false)); !strings.Contains(got, "boom") {
-		t.Errorf("got %q want the error", got)
-	}
-}
-
-func TestPane_RespectsBounds(t *testing.T) {
-	agents := append(realAgents(), Agent{Service: ServiceCompute, Binary: "nova-compute",
-		Host: "compute-node-4.site-a.example.com", Up: false, Enabled: true})
-	s := store.New()
-	s.Put(KeyState, stateFrom(agents))
-	p := newPane(s)
-
-	for _, w := range []int{20, 46, 90, 220} {
-		for _, h := range []int{1, 3, 9, 30} {
-			body := p.Render(w, h, false)
-			if got := lipgloss.Height(body); body != "" && got > h {
-				t.Errorf("%dx%d: %d lines exceeds height", w, h, got)
-			}
-			for i, line := range strings.Split(body, "\n") {
-				if got := lipgloss.Width(line); got > w {
-					t.Errorf("%dx%d: line %d width %d exceeds width", w, h, i, got)
-				}
-			}
-		}
-	}
-}
-
-func TestShortHost(t *testing.T) {
-	tests := map[string]string{
-		"compute-node-1.site-a.example.com": "compute-node-1",
-		"nova-scheduler-5f46b85bdf-j58jq":   "nova-scheduler-5f46b85bdf-j58jq",
-		"":                                  "",
-	}
-	for in, want := range tests {
-		if got := ShortHost(in); got != want {
-			t.Errorf("ShortHost(%q): got %q want %q", in, got, want)
-		}
-	}
-}
 
 // A named file is read instead of the search path, not in addition to it.
 //

@@ -1,4 +1,4 @@
-package metallb
+package pane
 
 import (
 	"fmt"
@@ -7,9 +7,34 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/runlevel-six/binnacle/pkg/store"
+	metallbstate "github.com/runlevel-six/binnacle/pkg/subsystem/metallb"
 	"github.com/runlevel-six/binnacle/pkg/tui"
 	"github.com/runlevel-six/binnacle/pkg/tui/table"
 )
+
+const (
+	KeyState          = metallbstate.KeyState
+	UsageUnknown      = metallbstate.UsageUnknown
+	UsageAnnotations  = metallbstate.UsageAnnotations
+	UsageStatus       = metallbstate.UsageStatus
+)
+
+type (
+	Pool       = metallbstate.Pool
+	UsageSource = metallbstate.UsageSource
+	Service    = metallbstate.Service
+	State      = metallbstate.State
+)
+
+type Provider struct{}
+
+func NewProvider() *Provider { return &Provider{} }
+
+func (p *Provider) Name() string { return "metallb" }
+
+func (p *Provider) Panes(s *store.Store) []tui.Pane {
+	return []tui.Pane{newPane(s)}
+}
 
 // pane renders MetalLB's pools and their advertisement state.
 type pane struct {
@@ -38,10 +63,6 @@ var poolCols = []table.Column{
 }
 
 // ContentWidth implements [tui.ContentWidthPane]: the pool table.
-//
-// Not the speaker summary under it. That line grows a clause whenever a Service is
-// waiting for an address, and a tile that resized when it did would move every
-// boundary in its row for a sentence that truncates harmlessly.
 func (p *pane) ContentWidth() int {
 	cells, _ := p.content()
 	if len(cells) == 0 {
@@ -51,9 +72,7 @@ func (p *pane) ContentWidth() int {
 }
 
 // ContentHeight implements [tui.ContentHeightPane]: a header, one row per address
-// pool, and the summary line with its blank separator. A cluster's pools are
-// configuration rather than fleet, so this is a number that changes when someone
-// changes it and not otherwise.
+// pool, and the summary line with its blank separator.
 func (p *pane) ContentHeight(int) int {
 	cells, summary := p.content()
 	if len(cells) == 0 {
@@ -66,9 +85,6 @@ func (p *pane) ContentHeight(int) int {
 	return h
 }
 
-// content builds the pool rows and the summary line, shared by the extent methods
-// so the pane cannot declare one shape and draw another. The cell styles are left
-// to Render, which is the only caller that paints anything.
 func (p *pane) content() (cells [][]string, summary string) {
 	state, ok := store.Get[State](p.store, KeyState)
 	if !ok || len(state.Pools) == 0 {
@@ -100,7 +116,6 @@ func (p *pane) Render(w, h int, _ bool) string {
 	return clip(body.Render(w, h-2)+"\n\n"+summary, w, h)
 }
 
-// poolRows renders one row per address pool.
 func (p *pane) poolRows(state State) (cells [][]string, styles [][]lipgloss.Style) {
 	cells = make([][]string, 0, len(state.Pools))
 	styles = make([][]lipgloss.Style, 0, len(state.Pools))
@@ -111,8 +126,6 @@ func (p *pane) poolRows(state State) (cells [][]string, styles [][]lipgloss.Styl
 		}
 		name := pool.Name
 		if !pool.AutoAssign {
-			// A manual-only pool will never satisfy a Service that does not ask
-			// for it by name, which explains an otherwise baffling Pending.
 			name += " (manual)"
 		}
 		used, usedStyle := usage(pool)
@@ -127,22 +140,8 @@ func (p *pane) poolRows(state State) (cells [][]string, styles [][]lipgloss.Styl
 	return cells, styles
 }
 
-// nearlyFull is the fraction of a pool left at which its remaining addresses are
-// worth a color.
-//
-// A tenth is late enough not to cry wolf on a pool that is merely being used,
-// and early enough to be a warning rather than a postmortem: a /24 flags with
-// twenty-five addresses to go, which is a few days of ordinary churn.
 const nearlyFull = 0.1
 
-// usage renders the IN USE cell.
-//
-// Where MetalLB publishes a pool's counts the cell is used-of-total, because the
-// number an operator wants is not how many addresses are out but how many are
-// left — this pane's stated reason for existing. Where only Services could be
-// attributed there is no honest total, so the bare count stands alone. Where
-// nothing could attribute them the cell says so: a zero would read as an idle
-// pool, and an idle pool is a pool somebody deletes.
 func usage(pool Pool) (string, lipgloss.Style) {
 	switch pool.Usage {
 	case UsageUnknown:
@@ -161,8 +160,6 @@ func usage(pool Pool) (string, lipgloss.Style) {
 	return cell, lipgloss.Style{}
 }
 
-// summary reports the speaker and any pending Services — the two things that
-// explain why a LoadBalancer is not working.
 func (p *pane) summary(state State) string {
 	speaker := tui.StyleOK.Render(fmt.Sprintf("speaker %d/%d", state.SpeakerReady, state.SpeakerDesired))
 	if state.SpeakerDesired == 0 {
@@ -172,8 +169,6 @@ func (p *pane) summary(state State) string {
 	}
 
 	parts := []string{speaker}
-	// Version drift, only while there is any: a speaker fleet mid-roll is worth a
-	// word, a converged one is not.
 	if r := state.Rollout; r.Known() && !r.Converged() {
 		parts = append(parts, tui.StyleAccent.Render(
 			fmt.Sprintf("%d/%d updated", r.Updated, r.Desired)))
@@ -186,7 +181,6 @@ func (p *pane) summary(state State) string {
 	return strings.Join(parts, "  ")
 }
 
-// clip bounds a composed body, since this pane appends a summary after a table.
 func clip(body string, w, h int) string {
 	lines := strings.Split(body, "\n")
 	if len(lines) > h {

@@ -1,4 +1,4 @@
-package cilium
+package pane
 
 import (
 	"fmt"
@@ -8,9 +8,32 @@ import (
 
 	"github.com/runlevel-six/binnacle/internal/plugin/kube"
 	"github.com/runlevel-six/binnacle/pkg/store"
+	ciliumstate "github.com/runlevel-six/binnacle/pkg/subsystem/cilium"
 	"github.com/runlevel-six/binnacle/pkg/tui"
 	"github.com/runlevel-six/binnacle/pkg/tui/table"
 )
+
+const KeyState = ciliumstate.KeyState
+
+type (
+	IPAM       = ciliumstate.IPAM
+	Hubble     = ciliumstate.Hubble
+	Controllers = ciliumstate.Controllers
+	MeshPeer   = ciliumstate.MeshPeer
+	ClusterMesh = ciliumstate.ClusterMesh
+	Status     = ciliumstate.Status
+	State      = ciliumstate.State
+)
+
+type Provider struct{}
+
+func NewProvider() *Provider { return &Provider{} }
+
+func (p *Provider) Name() string { return "cilium" }
+
+func (p *Provider) Panes(s *store.Store) []tui.Pane {
+	return []tui.Pane{newPane(s)}
+}
 
 // pane renders Cilium's state, showing only what the current tier supports.
 type pane struct {
@@ -88,15 +111,10 @@ func (p *pane) statusLines(state State) []string {
 			lines = append(lines, row("cluster mesh", meshText(st.ClusterMesh)))
 		}
 		if len(st.Unreadable) > 0 {
-			// Naming the sections we could not read distinguishes "this release
-			// changed shape" from "this feature is off", which look identical
-			// otherwise.
 			lines = append(lines, row("unreadable",
 				tui.StyleWarn.Render(strings.Join(st.Unreadable, ", "))))
 		}
 	} else {
-		// A reduced tier says so and says why, rather than silently showing less
-		// and leaving the reader to wonder what is missing.
 		lines = append(lines, "", tui.StyleMuted.Render("detail unavailable — "+state.TierReason))
 	}
 
@@ -112,11 +130,6 @@ func row(label, value string) string {
 	return tui.StyleMuted.Render(table.PadOrTrunc(label, labelWidth)) + " " + value
 }
 
-// agentText reports readiness, and version drift beside it when there is any.
-//
-// Folded into the one line rather than given a row of its own, because a second
-// permanent row saying "up to date" on every healthy cluster is a row nobody
-// reads. It appears only mid-rollout, which is when it means something.
 func agentText(s State) string {
 	text := fmt.Sprintf("%d/%d ready", s.AgentsReady, s.AgentsDesired)
 	if r := s.Rollout; r.Known() && !r.Converged() {
@@ -131,15 +144,11 @@ func agentText(s State) string {
 	return tui.StyleOK.Render(text)
 }
 
-// ipamText labels the pod it came from, because these figures are per-node and an
-// unlabelled percentage reads as cluster-wide.
 func ipamText(i IPAM, pod string) string {
 	if i.Total() == 0 {
 		return tui.StyleMuted.Render("no allocations reported")
 	}
 	if !i.ExhaustionKnown() {
-		// This release does not report a remaining count, so a percentage would be
-		// a fabrication.
 		return fmt.Sprintf("%d allocated %s", i.Used, tui.StyleMuted.Render("(on "+pod+")"))
 	}
 
