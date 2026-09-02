@@ -69,6 +69,7 @@ type options struct {
 
 	configPath    string
 	serverURL     string
+	serverCluster string
 	token         string
 	listContexts  bool
 	listProfiles  bool
@@ -80,6 +81,7 @@ type options struct {
 	writeConfig   bool
 	dryRun        bool
 	demo          bool
+	demoFleet     bool
 	render        string
 }
 
@@ -119,12 +121,32 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	// --server takes precedence over every other mode: it reads from a
 	// binnacle deployment rather than a kubeconfig, so none of the cluster
 	// resolution, profiling, or debug flags apply.
-	if opts.serverURL != "" {
+	//
+	// The flag, --token, and --server-cluster fall back to the config file's
+	// server: section and the SEXTANT_SERVER* env vars, which MergeEnv and
+	// MergeFile have already layered underneath the flags.
+	serverURL := firstNonEmpty(opts.serverURL, opts.cfg.Server.URL)
+	if serverURL != "" {
+		token := firstNonEmpty(opts.token, opts.cfg.Server.Token)
+		cluster := firstNonEmpty(opts.serverCluster, opts.cfg.Server.Cluster)
 		theme, err := tui.LookupTheme(opts.cfg.Theme)
 		if err != nil {
 			return err
 		}
-		return app.RunServer(ctx, opts.serverURL, opts.token, buildInfo(), theme)
+		return app.RunServer(ctx, serverURL, token, cluster, buildInfo(), theme)
+	}
+
+	// --demo-fleet is the fleet-screen counterpart of --demo: no server,
+	// no kubeconfig, just fixture data.
+	if opts.demoFleet {
+		if opts.render != "" {
+			w, h, err := parseSize(opts.render)
+			if err != nil {
+				return err
+			}
+			return app.RenderFleetDemo(ctx, opts.cfg, buildInfo(), out, w, h)
+		}
+		return app.RunFleetDemo(ctx, opts.cfg, buildInfo())
 	}
 
 	// The demo path resolves nothing against a kubeconfig, so it branches before
@@ -144,7 +166,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		return app.RunDemo(ctx, setup)
 	}
 	if opts.render != "" {
-		return errors.New("--render only applies with --demo")
+		return errors.New("--render only applies with --demo or --demo-fleet")
 	}
 
 	// An ambiguous context pattern asks, when someone is there to answer, and
@@ -179,6 +201,15 @@ func parseSize(s string) (width, height int, err error) {
 		return 0, 0, fmt.Errorf("--render %q: want WIDTHxHEIGHT, e.g. 200x50", s)
 	}
 	return width, height, nil
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // parseFlags returns nil options when --help was served, so the caller exits
@@ -220,10 +251,14 @@ func parseFlags(args []string, out io.Writer) (*options, error) {
 		"resolve configuration and print what would be watched, without starting the dashboard")
 	fs.BoolVar(&o.demo, "demo", false,
 		"run against invented data, with no kubeconfig and no cluster")
+	fs.BoolVar(&o.demoFleet, "demo-fleet", false,
+		"run the fleet screen against invented fleet data, with no server and no cluster")
 	fs.StringVar(&o.render, "render", "",
-		"with --demo, print one frame at WIDTHxHEIGHT and exit (e.g. 200x50)")
+		"with --demo or --demo-fleet, print one frame at WIDTHxHEIGHT and exit (e.g. 200x50)")
 	fs.StringVar(&o.serverURL, "server", "",
 		"connect to a binnacle server at this URL instead of reading a kubeconfig")
+	fs.StringVar(&o.serverCluster, "server-cluster", "",
+		"with --server, skip the fleet screen and go straight to this cluster (namespace/name)")
 	fs.StringVar(&o.token, "token", "",
 		"bearer token for --server; a server with --allow-unauthenticated does not need one")
 
@@ -269,12 +304,19 @@ func usage(out io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(out, "  # Connect to a binnacle server instead of a kubeconfig:")
 	fmt.Fprintln(out, "  sextant --server http://binnacle:8080")
 	fmt.Fprintln(out)
+	fmt.Fprintln(out, "  # Connect and go straight to one cluster's detail:")
+	fmt.Fprintln(out, "  sextant --server http://binnacle:8080 --server-cluster managed-clusters/tenant-03-cluster")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "  # Preview the fleet screen with fixture data:")
+	fmt.Fprintln(out, "  sextant --demo-fleet")
+	fmt.Fprintln(out)
 	fmt.Fprintln(out, "  # Boldly go:")
 	fmt.Fprintln(out, "  sextant --theme lcars")
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "Environment: %s, %s, %s, %s, %s, %s\n",
+	fmt.Fprintf(out, "Environment: %s, %s, %s, %s, %s, %s, %s, %s, %s\n",
 		config.EnvManagementContext, config.EnvWorkloadContext,
-		config.EnvProfile, config.EnvTargetVersion, config.EnvTheme, config.EnvOSCloud)
+		config.EnvProfile, config.EnvTargetVersion, config.EnvTheme, config.EnvOSCloud,
+		config.EnvServerURL, config.EnvServerCluster, config.EnvServerToken)
 }
 
 func writeExampleConfig(out io.Writer, path string) error {

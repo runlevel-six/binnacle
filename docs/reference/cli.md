@@ -34,7 +34,8 @@ candidates when nothing is attached to answer. See
 | Flag | Purpose |
 |---|---|
 | `--demo` | Run against invented data. No kubeconfig, no cluster, no network. |
-| `--render WxH` | With `--demo`, print one frame at that size and exit. No TTY needed. |
+| `--demo-fleet` | Run the fleet screen against invented fleet data. No server, no kubeconfig, no network. |
+| `--render WxH` | With `--demo` or `--demo-fleet`, print one frame at that size and exit. No TTY needed. |
 | `--dry-run` | Resolve configuration, print what would be watched, and stop. |
 | `--debug-snapshot` | Start the watchers, summarize every data source, and exit. The first thing to reach for when a pane is empty. |
 | `--debug-duration` | How long `--debug-snapshot` waits for caches to warm. Default 10s. |
@@ -44,6 +45,21 @@ candidates when nothing is attached to answer. See
 | `--list-themes` | Every color scheme. |
 | `--init` | Write an example config file and exit. |
 | `--version` | Print version, commit, build date and toolchain. The version alone is also shown in the dashboard header, beside the name. |
+
+## Fleet mode
+
+Instead of reading a kubeconfig, sextant can connect to a binnacle server and
+show a fleet of clusters. The server provides the JSON API and SSE stream;
+sextant renders the fleet list and per-cluster detail in the terminal.
+
+| Flag | Purpose |
+|---|---|
+| `--server URL` | Connect to a binnacle server at this URL instead of reading a kubeconfig. |
+| `--server-cluster NS/NAME` | With `--server`, skip the fleet list and go straight to one cluster's detail. Press Esc to return to the fleet. |
+| `--token` | Bearer token for `--server`. A server running with `--allow-unauthenticated` does not need one. |
+
+These can also be set in the config file's `server:` section or via environment
+variables; see [Configuration](configuration.md).
 
 ## Environment variables
 
@@ -57,6 +73,9 @@ Each corresponds to a flag. The flag wins; see
 | `SEXTANT_PROFILE` | `--profile` |
 | `SEXTANT_TARGET_VERSION` | `--target-version` |
 | `SEXTANT_THEME` | `--theme` |
+| `SEXTANT_SERVER` | `--server` |
+| `SEXTANT_SERVER_CLUSTER` | `--server-cluster` |
+| `SEXTANT_SERVER_TOKEN` | `--token` |
 | `OS_CLOUD` | `--os-cloud` |
 
 `OS_CLOUD` is deliberately not `SEXTANT_`-prefixed. It is the OpenStack
@@ -64,6 +83,8 @@ ecosystem's own variable, read by the `openstack` CLI and every SDK; an operator
 switching between clouds has already exported it.
 
 ## Keys
+
+### Single-cluster dashboard
 
 | Key | Action |
 |---|---|
@@ -76,6 +97,17 @@ switching between clouds has already exported it.
 | `\` | Back to automatic column count. |
 | `p` | Freeze the display. Watchers keep running; the screen stops changing. |
 | `T` | Cycle themes. |
+
+### Fleet screen (`--server` or `--demo-fleet`)
+
+| Key | Action |
+|---|---|
+| `?` | Toggle the key hints in the footer. |
+| `↑` / `↓` or `k` / `j` | Move selection up or down. |
+| `enter` | Drill into the selected cluster's detail. |
+| `esc` | Return to the fleet list. |
+| `r` | Reverse sort order (worst-first ↔ worst-last). |
+| `q` | Quit. |
 
 `z` is the answer to "this table is truncating". On a large cluster a pane may show
 `+ 38 more`; zooming gives it every row the terminal has, and its full width — so any

@@ -62,6 +62,15 @@ theme: default
 
 # Which clouds.yaml entry the OpenStack plugin should use.
 os_cloud: my-cloud
+
+# Fleet mode: connect to a binnacle server instead of reading a kubeconfig.
+# Also settable with --server, --server-cluster, --token, or the SEXTANT_SERVER,
+# SEXTANT_SERVER_CLUSTER, SEXTANT_SERVER_TOKEN environment variables.
+server:
+  url: http://binnacle:8080
+  token: s3cr3t
+  # Skip the fleet list and go straight to one cluster (namespace/name):
+  # cluster: managed-clusters/tenant-03-cluster
 ```
 
 Every key is optional, and an absent key is not the same as an empty one: omitting

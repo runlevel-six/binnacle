@@ -18,10 +18,14 @@ import (
 // "http://binnacle:8080"). token, when non-empty, is sent as a Bearer header;
 // a server running with --allow-unauthenticated does not need one.
 //
+// serverCluster, when non-empty, skips the fleet list and goes straight to
+// that cluster's detail view. It is a "namespace/name" pair identifying one
+// cluster in the fleet. Esc returns to the fleet list.
+//
 // theme is applied before the UI starts, so the first frame is in the right
 // palette. The remote source's SSE subscriber runs in the background and
 // drives redraws through Changed.
-func RunServer(ctx context.Context, serverURL, token string, info build.Info, theme tui.Theme) error {
+func RunServer(ctx context.Context, serverURL, token, serverCluster string, info build.Info, theme tui.Theme) error {
 	tui.ApplyTheme(theme)
 
 	src := remote.New(serverURL, token)
@@ -37,6 +41,14 @@ func RunServer(ctx context.Context, serverURL, token string, info build.Info, th
 	}()
 
 	model := ui.NewFleet(src, serverURL, info)
+
+	// --server-cluster skips the fleet list and goes straight to the
+	// cluster's detail. The initial fleet fetch still runs, so Esc from
+	// the detail view returns to a populated list.
+	if serverCluster != "" {
+		model.SetAutoSelect(serverCluster)
+	}
+
 	program := tea.NewProgram(model,
 		tea.WithAltScreen(),
 		tea.WithContext(ctx),

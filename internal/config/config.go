@@ -32,6 +32,9 @@ const (
 	EnvProfile           = "SEXTANT_PROFILE"
 	EnvTargetVersion     = "SEXTANT_TARGET_VERSION"
 	EnvTheme             = "SEXTANT_THEME"
+	EnvServerURL         = "SEXTANT_SERVER"
+	EnvServerCluster     = "SEXTANT_SERVER_CLUSTER"
+	EnvServerToken       = "SEXTANT_SERVER_TOKEN"
 
 	// EnvOSCloud is deliberately *not* SEXTANT_-prefixed. OS_CLOUD is the
 	// OpenStack ecosystem's own variable, read by the openstack CLI and every
@@ -62,6 +65,22 @@ type Config struct {
 	// cloud, not how a cloud is laid out — an operator with several clouds
 	// switches between them without editing a profile.
 	OSCloud string `yaml:"os_cloud,omitempty"`
+	// Server configures fleet mode: instead of reading a kubeconfig, sextant
+	// connects to a binnacle deployment's JSON API. When URL is empty, all
+	// three fields are ignored and the kubeconfig path is used.
+	Server ServerConfig `yaml:"server,omitempty"`
+}
+
+// ServerConfig holds the connection details for fleet mode.
+type ServerConfig struct {
+	// URL is the root of the binnacle deployment (e.g. "http://binnacle:8080").
+	URL string `yaml:"url,omitempty"`
+	// Token is sent as a Bearer header. A server running with
+	// --allow-unauthenticated does not need one.
+	Token string `yaml:"token,omitempty"`
+	// Cluster, when set, skips the fleet list and goes straight to this
+	// cluster's detail view. Format is "namespace/name".
+	Cluster string `yaml:"cluster,omitempty"`
 }
 
 // Cluster identifies one cluster to watch.
@@ -152,6 +171,9 @@ func (c *Config) MergeFile(path string) error {
 	setIfEmpty(&c.KubeconfigPath, loaded.KubeconfigPath)
 	setIfEmpty(&c.OSCloud, loaded.OSCloud)
 	setIfEmpty(&c.Theme, loaded.Theme)
+	setIfEmpty(&c.Server.URL, loaded.Server.URL)
+	setIfEmpty(&c.Server.Token, loaded.Server.Token)
+	setIfEmpty(&c.Server.Cluster, loaded.Server.Cluster)
 	if len(c.Management.Namespaces) == 0 {
 		c.Management.Namespaces = loaded.Management.Namespaces
 	}
@@ -169,6 +191,9 @@ func (c *Config) MergeEnv() {
 	setIfEmpty(&c.TargetVersion, os.Getenv(EnvTargetVersion))
 	setIfEmpty(&c.OSCloud, os.Getenv(EnvOSCloud))
 	setIfEmpty(&c.Theme, os.Getenv(EnvTheme))
+	setIfEmpty(&c.Server.URL, os.Getenv(EnvServerURL))
+	setIfEmpty(&c.Server.Token, os.Getenv(EnvServerToken))
+	setIfEmpty(&c.Server.Cluster, os.Getenv(EnvServerCluster))
 }
 
 // Resolve turns a Config plus a kubeconfig and profile into a [Resolved].
@@ -296,6 +321,15 @@ management:
 # or the standard OS_CLOUD environment variable, which take precedence over this.
 # Useful here when you always watch the same cloud from this machine.
 # os_cloud: my-cloud
+
+# Fleet mode: connect to a binnacle server instead of reading a kubeconfig.
+# Also settable with --server, --server-cluster, --token, or the SEXTANT_SERVER,
+# SEXTANT_SERVER_CLUSTER, SEXTANT_SERVER_TOKEN environment variables.
+# server:
+#   url: http://binnacle:8080
+#   token: s3cr3t
+#   # Skip the fleet list and go straight to one cluster (namespace/name):
+#   # cluster: managed-clusters/tenant-03-cluster
 `
 
 // WriteExample writes [ExampleConfig] to path, creating parent directories.

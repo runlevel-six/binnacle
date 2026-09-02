@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,10 +35,12 @@ type FleetModel struct {
 
 	clusters []fleet.ClusterView
 	storage  fleet.Storage
+	reversed bool
 
 	selected int
 	detail   *fleet.ClusterDetail
 	viewing  string // "fleet" or "detail"
+	autoSelect string // "namespace/name" to drill into on first load
 
 	width, height int
 	keys          fleetKeymap
@@ -55,10 +58,19 @@ func NewFleet(src fleetSource, serverURL string, info build.Info) *FleetModel {
 	}
 }
 
-// fleetUpdateMsg carries a fresh fleet view.
-type fleetUpdateMsg struct {
-	clusters []fleet.ClusterView
-	storage  fleet.Storage
+// SetAutoSelect pins a cluster to drill into as soon as the fleet list
+// arrives. This is the --server-cluster path: the fleet list still loads
+// (so Esc returns to a populated list), but the first frame shows the
+// cluster's detail.
+func (m *FleetModel) SetAutoSelect(clusterID string) {
+	m.autoSelect = clusterID
+}
+
+// FleetUpdateMsg carries a fresh fleet view. Exported so the render path
+// can populate the model without running the event loop.
+type FleetUpdateMsg struct {
+	Clusters []fleet.ClusterView
+	Storage  fleet.Storage
 }
 
 // changedMsg signals that the source reported a change.
@@ -73,9 +85,9 @@ type clusterDetailMsg struct {
 // fetchFleet reads the current fleet view from the source.
 func fetchFleet(src fleetSource) tea.Cmd {
 	return func() tea.Msg {
-		return fleetUpdateMsg{
-			clusters: src.View(),
-			storage:  src.Storage(),
+		return FleetUpdateMsg{
+			Clusters: src.View(),
+			Storage:  src.Storage(),
 		}
 	}
 }
@@ -108,11 +120,22 @@ func (m *FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 
-	case fleetUpdateMsg:
-		m.clusters = msg.clusters
-		m.storage = msg.storage
+	case FleetUpdateMsg:
+		m.clusters = m.sortClusters(msg.Clusters)
+		m.storage = msg.Storage
 		if m.selected >= len(m.clusters) {
 			m.selected = max(len(m.clusters)-1, 0)
+		}
+		// --server-cluster: drill into the named cluster as soon as the
+		// fleet list arrives. The list is still loaded so Esc returns to
+		// a populated screen.
+		if m.autoSelect != "" {
+			for _, c := range m.clusters {
+				if c.Namespace+"/"+c.Name == m.autoSelect {
+					m.autoSelect = ""
+					return m, fetchCluster(m.source, c.Namespace, c.Name)
+				}
+			}
 		}
 		return m, nil
 
@@ -132,6 +155,28 @@ func (m *FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// sortClusters orders clusters worst-first (by status severity, then
+// namespace, then name). When reversed, the order flips so the healthy
+// end leads — for scanning which clusters are fine.
+func (m *FleetModel) sortClusters(views []fleet.ClusterView) []fleet.ClusterView {
+	out := append([]fleet.ClusterView(nil), views...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Status != out[j].Status {
+			return out[i].Status > out[j].Status
+		}
+		if out[i].Namespace != out[j].Namespace {
+			return out[i].Namespace < out[j].Namespace
+		}
+		return out[i].Name < out[j].Name
+	})
+	if m.reversed {
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
+	}
+	return out
+}
+
 func (m *FleetModel) handleFleetKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.viewing == "detail" {
 		switch {
@@ -148,6 +193,10 @@ func (m *FleetModel) handleFleetKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
+	case key.Matches(msg, m.keys.Reverse):
+		m.reversed = !m.reversed
+		m.clusters = m.sortClusters(m.clusters)
+		return m, nil
 	case key.Matches(msg, m.keys.Up):
 		if m.selected > 0 {
 			m.selected--
@@ -184,13 +233,13 @@ func (m *FleetModel) renderFleet() string {
 	footer := m.fleetFooter(th)
 
 	lines := []string{header, body}
-	if h := m.height - lipgloss.Height(header) - lipgloss.Height(footer); h > 0 {
+	if h := m.height - lipgloss.Height(header) - lipgloss.Height(body) - lipgloss.Height(footer); h > 0 {
 		lines = append(lines, strings.Repeat("\n", h-1))
 	}
 	lines = append(lines, footer)
 
 	result := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	return padToWidth(result, m.width)
+	return padLines(result, m.width)
 }
 
 func (m *FleetModel) fleetHeader() string {
@@ -269,7 +318,7 @@ func (m *FleetModel) fleetFooter(th tui.Theme) string {
 	if len(m.storage.Clusters) > 0 {
 		count += fmt.Sprintf(" · %d storage clusters", len(m.storage.Clusters))
 	}
-	hint := "? help · ↑↓ navigate · enter detail · q quit"
+	hint := "? help · ↑↓ navigate · enter detail · r reverse · q quit"
 	return groundLine(
 		status.Render(count)+status.Render(th.Separator)+status.Render(hint),
 		m.width, th.Text, th.ScreenBG(),
@@ -374,7 +423,7 @@ func (m *FleetModel) renderDetail() string {
 	footer := "\n" + tui.StyleMuted.Render("esc back · q quit")
 	sb.WriteString(footer)
 
-	return padToWidth(sb.String(), m.width)
+	return padLines(sb.String(), m.width)
 }
 
 func statusGlyph(s health.Status, th tui.Theme) string {
@@ -409,23 +458,36 @@ func truncateStr(s string, max int) string {
 	return s[:max-1] + "…"
 }
 
+// padLines ensures every line of a multi-line string is exactly width columns,
+// truncating wide lines and padding narrow ones. This is the multi-line
+// counterpart to padToWidth, which only handles a single line.
+func padLines(s string, width int) string {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = padToWidth(ln, width)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // fleetKeymap is the key set for the fleet model.
 type fleetKeymap struct {
-	Up    key.Binding
-	Down  key.Binding
-	Enter key.Binding
-	Back  key.Binding
-	Quit  key.Binding
-	Help  key.Binding
+	Up     key.Binding
+	Down   key.Binding
+	Enter  key.Binding
+	Back   key.Binding
+	Quit   key.Binding
+	Help   key.Binding
+	Reverse key.Binding
 }
 
 func defaultFleetKeymap() fleetKeymap {
 	return fleetKeymap{
-		Up:    key.NewBinding(key.WithKeys("up", "k")),
-		Down:  key.NewBinding(key.WithKeys("down", "j")),
-		Enter: key.NewBinding(key.WithKeys("enter")),
-		Back:  key.NewBinding(key.WithKeys("esc", "backspace")),
-		Quit:  key.NewBinding(key.WithKeys("q", "ctrl+c")),
-		Help:  key.NewBinding(key.WithKeys("?")),
+		Up:      key.NewBinding(key.WithKeys("up", "k")),
+		Down:    key.NewBinding(key.WithKeys("down", "j")),
+		Enter:   key.NewBinding(key.WithKeys("enter")),
+		Back:    key.NewBinding(key.WithKeys("esc", "backspace")),
+		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c")),
+		Help:    key.NewBinding(key.WithKeys("?")),
+		Reverse: key.NewBinding(key.WithKeys("r")),
 	}
 }

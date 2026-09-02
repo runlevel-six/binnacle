@@ -551,3 +551,58 @@ func TestTheme_UnknownIsAnError(t *testing.T) {
 		t.Errorf("error should name the bad theme: %v", err)
 	}
 }
+
+// --- server (fleet mode) --------------------------------------------------
+
+func TestServer_PrecedenceChain(t *testing.T) {
+	path := writeConfig(t, `
+server:
+  url: http://from-file:8080
+  token: file-token
+  cluster: managed-clusters/from-file
+`)
+	t.Setenv(EnvServerURL, "http://from-env:9090")
+	t.Setenv(EnvServerToken, "env-token")
+
+	// Flag beats env and file.
+	flagged := Config{Server: ServerConfig{URL: "http://from-flag:7070"}}
+	flagged.MergeEnv()
+	if err := flagged.MergeFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if flagged.Server.URL != "http://from-flag:7070" {
+		t.Errorf("URL: got %q want from-flag", flagged.Server.URL)
+	}
+	// Token and cluster fall through to env/file.
+	if flagged.Server.Token != "env-token" {
+		t.Errorf("Token: got %q want env-token", flagged.Server.Token)
+	}
+	if flagged.Server.Cluster != "managed-clusters/from-file" {
+		t.Errorf("Cluster: got %q want from-file", flagged.Server.Cluster)
+	}
+
+	// Env beats file for URL.
+	var env Config
+	env.MergeEnv()
+	if err := env.MergeFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if env.Server.URL != "http://from-env:9090" {
+		t.Errorf("URL: got %q want from-env", env.Server.URL)
+	}
+
+	// File is the fallback.
+	t.Setenv(EnvServerURL, "")
+	t.Setenv(EnvServerToken, "")
+	var file Config
+	file.MergeEnv()
+	if err := file.MergeFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if file.Server.URL != "http://from-file:8080" {
+		t.Errorf("URL: got %q want from-file", file.Server.URL)
+	}
+	if file.Server.Token != "file-token" {
+		t.Errorf("Token: got %q want file-token", file.Server.Token)
+	}
+}
