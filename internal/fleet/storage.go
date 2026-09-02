@@ -36,7 +36,9 @@ const (
 // cells — and a storage layer has none of that. What it has is hosts, which is
 // what this reports.
 //
-// Its health is borrowed rather than collected. Ceph's own status arrives
+// Its health is borrowed rather than collected, and rendered from the typed
+// state rather than from the plugin's own text — see the ceph-status template
+// for why that is presentation rather than a second opinion. Ceph's own status arrives
 // through a subsystem plugin keyed to a *workload cluster's* store, and there
 // is no datacenter-level collector — but `ceph -s` reports the fsid, and the
 // fsid is exactly what the cluster-id label holds, so a cluster's report can be
@@ -62,11 +64,6 @@ type StorageCluster struct {
 	// saying rather than an empty section: hardware labeled for a Ceph nobody
 	// is talking to.
 	Status *ceph.Status
-	// Summary is the plugin's own rendering of that status, the same lines the
-	// cluster pages and the fleet cards show. Borrowed rather than re-derived,
-	// so the datacenter panel and the cluster pane cannot describe one Ceph
-	// differently.
-	Summary *SummaryBlock
 	// ReportedBy names the clusters reporting this fsid, in the order the fleet
 	// lists them. Several is the normal case for a shared Ceph and is worth
 	// showing: it is what says this storage is shared rather than one
@@ -110,8 +107,6 @@ type CephReport struct {
 	// Cluster names the cluster reporting, for attribution and for a link.
 	Cluster ClusterRef
 	Status  ceph.Status
-	// Summary is the plugin's own rendering, or nil if it published none.
-	Summary *SummaryBlock
 }
 
 // RoleHosts counts hosts by their role label, for one storage cluster.
@@ -200,7 +195,6 @@ func StorageFor(hosts []model.BareMetalHost, reports []CephReport) Storage {
 				// matter; who is reporting does, and every one of them is named.
 				status := r.Status
 				c.Status = &status
-				c.Summary = r.Summary
 			}
 		}
 		s.Clusters = append(s.Clusters, c)
@@ -329,17 +323,10 @@ func (f *Fleet) Storage() Storage {
 			}
 		}
 		if state, ok := store.Get[ceph.State](t.store, ceph.KeyState); ok {
-			r := CephReport{
+			reports = append(reports, CephReport{
 				Cluster: ClusterRef{Namespace: t.discovered.Namespace, Name: t.discovered.Name},
 				Status:  state.Status,
-			}
-			for _, b := range t.registry.Summaries(t.store) {
-				if b.Title == "Ceph" {
-					r.Summary = &SummaryBlock{Title: b.Title, Lines: b.Lines}
-					break
-				}
-			}
-			reports = append(reports, r)
+			})
 		}
 	}
 

@@ -164,24 +164,7 @@
       <div class="panes inner">
         <div class="sub">
           <h4>Reported</h4>
-          {{with .Summary}}<pre class="summary">{{range .Lines}}{{.}}
-{{end}}</pre>
-          {{else}}{{/* The plugin published state but no summary block. Falling
-               back to the fields keeps the panel from showing a colored border
-               with nothing to justify it — the border is a claim, and it has to
-               be answerable. */}}
-          {{with .Status}}<p class="ceph-health{{if not .HealthOK}} warnish{{end}}">{{.Health}}
-            &middot; mons {{.Mons.InQuorum}}/{{.Mons.Total}} &middot; osds {{.OSDs.Up}}/{{.OSDs.Total}} up</p>{{end}}
-          {{end}}
-          {{with .Status}}{{if .Checks}}
-          <table class="checks">
-            <tbody>
-            {{range .Checks}}
-              <tr><td class="warnish nowrap">{{.Name}}</td><td class="msg">{{.Message}}</td></tr>
-            {{end}}
-            </tbody>
-          </table>
-          {{end}}{{end}}
+          {{with .Status}}{{template "ceph-status" .}}{{end}}
         </div>
 
         <div class="sub">

@@ -73,14 +73,24 @@
       {{end}}
     </section>
 
-    {{if .Summaries}}
+    {{/* Ceph now reaches this pane as typed state rather than as a summary
+         block, so the pane's own condition cannot key on Summaries alone. */}}
+    {{if or .Subsystems.Ceph .Summaries}}
     <section class="pane">
       <h3>Subsystems</h3>
-      {{range .Summaries}}
+      {{with .Subsystems.Ceph}}
+      <h4>Ceph</h4>
+      {{template "ceph-status" .Status}}
+      {{end}}
+      {{/* Any other plugin's headline, still in its own words. Ceph is skipped
+           because it is rendered above from its typed state; a plugin whose
+           types stay internal has nothing but its SummaryBlock, and that is
+           what this is for. */}}
+      {{range .Summaries}}{{if ne .Title "Ceph"}}
         <h4>{{.Title}}</h4>
         <pre class="summary">{{range .Lines}}{{.}}
   {{end}}</pre>
-      {{end}}
+      {{end}}{{end}}
     </section>
     {{end}}
 
@@ -380,6 +390,52 @@
 {{/* The three big tables render twice: once for the rows that need reading and
      once inside the disclosure holding the quiet remainder. Defining each row
      shape once keeps the two halves from drifting apart. */}}
+
+{{/* Ceph's status, laid out for a page rather than for a terminal.
+
+     The plugin also publishes a SummaryBlock — three lines of monospace with
+     its columns set in spaces — and this used to render that. It read as
+     cramped at every pane width, because pre-formatted text cannot wrap, spread
+     or share a row: it is one fixed-width block whatever it is given.
+
+     Rendering the fields instead is not a second opinion about Ceph. Every
+     judgement here is still sextant's, called through the exported methods on
+     the type — HealthOK, Mons.Healthy, OSDs.Healthy, PGs.AllClean, UsedPercent.
+     Only the arrangement is ours, and arrangement is what a SummaryBlock cannot
+     carry across the boundary. The same distinction shortID rests on: how to
+     print a thing is not a claim about it.
+
+     The block exists so a plugin whose types are internal can still contribute
+     a headline. Ceph's types are public, so this consumer does not need it. */}}
+{{define "ceph-status"}}
+<div class="nums">
+  <div class="num"><div class="k">Health</div>
+    <div class="v{{if not .HealthOK}} warnish{{end}}">{{.Health}}</div></div>
+  {{if .Mons.Total}}<div class="num"><div class="k">Mons</div>
+    <div class="v{{if not .Mons.Healthy}} warnish{{end}}">{{.Mons.InQuorum}}/{{.Mons.Total}}</div></div>{{end}}
+  {{if .OSDs.Total}}<div class="num"><div class="k">OSDs</div>
+    <div class="v{{if not .OSDs.Healthy}} warnish{{end}}">{{.OSDs.Up}}/{{.OSDs.Total}} up &middot; {{.OSDs.In}} in</div></div>{{end}}
+  {{/* -1 means the capacity figures did not come back, which is not zero. */}}
+  {{if ge .PGs.UsedPercent 0}}<div class="num"><div class="k">Capacity</div>
+    <div class="v">{{.PGs.UsedPercent}}% used</div></div>{{end}}
+  {{if .PGs.Total}}<div class="num"><div class="k">Placement groups</div>
+    <div class="v{{if not .PGs.AllClean}} warnish{{end}}">{{.PGs.CleanPGs}}/{{.PGs.Total}} clean</div></div>{{end}}
+  {{if .PGs.Pools}}<div class="num"><div class="k">Pools</div>
+    <div class="v">{{.PGs.Pools}}</div></div>{{end}}
+</div>
+{{/* The health tile says HEALTH_WARN; these say what Ceph is warning about.
+     The summary block named only the first and stopped. */}}
+{{if .Checks}}
+<table class="checks">
+  <tbody>
+  {{range .Checks}}
+    <tr><td class="warnish nowrap">{{.Name}}</td><td class="msg">{{.Message}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
+{{if .Unreadable}}<p class="empty">unreadable: {{range $i, $u := .Unreadable}}{{if $i}}, {{end}}{{$u}}{{end}}</p>{{end}}
+{{end}}
 
 {{define "event-table"}}
 <table class="fit">

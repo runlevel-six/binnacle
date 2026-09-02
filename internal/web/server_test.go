@@ -274,9 +274,18 @@ func TestClusterPage_RendersTheCorePanes(t *testing.T) {
 				{Role: "Control Plane", Name: "tenant-01-kcp", Ready: 3, Desired: 3, Version: "v1.36.2"},
 			},
 			Nodes: fleet.NodeCount{Ready: 5, Total: 5}, NodesKnown: true,
-			Summaries: []fleet.SummaryBlock{{Title: "Ceph", Lines: []string{"health  HEALTH_OK"}}},
 			UpdatedAt: time.Now(),
 		},
+		// Ceph renders from its typed state now, not from the plugin's summary
+		// block: see the ceph-status template.
+		Subsystems: fleet.Subsystems{Ceph: &ceph.State{Status: ceph.Status{
+			Health: "HEALTH_OK",
+			Mons:   ceph.Mons{Total: 3, InQuorum: 3},
+			OSDs:   ceph.OSDs{Total: 36, Up: 36, In: 36},
+			PGs: ceph.PGs{Total: 1953, Pools: 14,
+				ByState:   []ceph.PGState{{Name: "active+clean", Count: 1953}},
+				UsedBytes: 13, TotalBytes: 100},
+		}}},
 		Machines: fleet.Split[model.Machine]{Shown: []model.Machine{{Name: "tenant-01-machine-1", Phase: "Running",
 			Version: "v1.36.2", NodeName: "node-1.site-a.example", Age: 31 * 24 * time.Hour}}},
 		Hosts: fleet.Split[model.BareMetalHost]{Shown: []model.BareMetalHost{{Name: "host-1.site-a.example", State: "provisioned",
@@ -622,7 +631,6 @@ func TestFleetPage_EveryCardBranchRenders(t *testing.T) {
 	}, []fleet.CephReport{{
 		Cluster: fleet.ClusterRef{Namespace: "capi", Name: "tenant-01"},
 		Status:  ceph.Status{FSID: "fsid", Health: "HEALTH_WARN"},
-		Summary: &fleet.SummaryBlock{Title: "Ceph", Lines: []string{"health  HEALTH_WARN"}},
 	}})
 
 	s, err := New(&fakeFleet{
@@ -657,6 +665,50 @@ func TestClusterPage_EventsTableFitsItsContent(t *testing.T) {
 	// columns should share the pane.
 	if n := strings.Count(body, `class="fit"`); n != 1 {
 		t.Errorf("%d tables are sized to content, want only the events table", n)
+	}
+}
+
+// Ceph renders from its typed state, not from the plugin's summary block.
+//
+// The block is pre-formatted text — three lines with the columns set in spaces
+// — and pre-formatted text cannot wrap, spread or share a row, so it read as
+// cramped at every pane width it was given. The fields carry the same
+// judgements through exported methods, so laying them out here is presentation
+// rather than a second opinion.
+func TestCephRendersFromItsFields(t *testing.T) {
+	d := richDetail()
+	d.Subsystems.Ceph = &ceph.State{Status: ceph.Status{
+		Health: "HEALTH_WARN",
+		Mons:   ceph.Mons{Total: 3, InQuorum: 2},
+		OSDs:   ceph.OSDs{Total: 36, Up: 35, In: 36},
+		PGs: ceph.PGs{Total: 1953, Pools: 14,
+			ByState:   []ceph.PGState{{Name: "active+clean", Count: 1950}},
+			UsedBytes: 13, TotalBytes: 100},
+		Checks: []ceph.Check{{Name: "OSD_DOWN", Message: "1 osds down"}},
+	}}
+	// A plugin with no public types still gets its block rendered.
+	d.Summaries = []fleet.SummaryBlock{{Title: "Widget", Lines: []string{"widgets  fine"}}}
+
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+
+	for _, want := range []string{
+		"HEALTH_WARN", "2/3", "35/36 up", "13% used", "1950/1953 clean", "OSD_DOWN",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the Ceph pane is missing %q", want)
+		}
+	}
+	// Each figure carries its own verdict, so a healthy total does not hide an
+	// unhealthy part.
+	if n := strings.Count(body, `class="v warnish"`); n < 3 {
+		t.Errorf("only %d Ceph figures are marked unhealthy; health, mons, osds and pgs all are", n)
+	}
+	// The other plugin's block is untouched, and Ceph's is not rendered twice.
+	if !strings.Contains(body, "widgets  fine") {
+		t.Error("a plugin's own summary block was dropped")
+	}
+	if strings.Contains(body, `<pre class="summary">health`) {
+		t.Error("Ceph rendered through the summary block as well as its fields")
 	}
 }
 
@@ -948,7 +1000,6 @@ func TestFleetPage_StoragePanel(t *testing.T) {
 		Status: ceph.Status{FSID: "fsid-known", Health: "HEALTH_WARN",
 			Mons: ceph.Mons{Total: 3, InQuorum: 2}, OSDs: ceph.OSDs{Total: 36, Up: 35, In: 36},
 			Checks: []ceph.Check{{Name: "OSD_DOWN", Message: "1 osds down"}}},
-		Summary: &fleet.SummaryBlock{Title: "Ceph", Lines: []string{"health  HEALTH_WARN"}},
 	}})
 
 	s, err := New(&fakeFleet{

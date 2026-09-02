@@ -300,25 +300,28 @@ func (d *Demo) Storage() Storage {
 			State: "available", OperationalStatus: "OK",
 		})
 	}
-	// One reporting cluster, so the demo exercises the join and the borrowed
-	// summary rather than only the hardware half.
+	// One reporting cluster, so the demo exercises the join as well as the
+	// hardware half. Capacity is given in bytes because that is what Ceph
+	// reports and what UsedPercent divides: a fixture that carried the
+	// percentage would not exercise the arithmetic the panel depends on.
 	return StorageFor(hosts, []CephReport{{
 		Cluster: ClusterRef{Namespace: "managed-clusters", Name: "tenant-01"},
 		Status: ceph.Status{
 			FSID: "24413730-08bc-11ef-b140-23a2dd2fc842", Health: "HEALTH_WARN",
 			Mons: ceph.Mons{Total: 3, InQuorum: 3},
 			OSDs: ceph.OSDs{Total: 36, Up: 36, In: 36},
-			PGs:  ceph.PGs{Total: 1953, Pools: 14},
+			PGs: ceph.PGs{
+				Total: 1953, Pools: 14, Objects: 4_812_663,
+				ByState:    []ceph.PGState{{Name: "active+clean", Count: 1953}},
+				UsedBytes:  13 * 1 << 40,
+				AvailBytes: 87 * 1 << 40,
+				TotalBytes: 100 * 1 << 40,
+			},
 			Checks: []ceph.Check{{
 				Name: "AUTH_INSECURE_GLOBAL_ID_RECLAIM", Severity: "HEALTH_WARN",
 				Message: "client is using insecure global_id reclaim",
 			}},
 		},
-		Summary: &SummaryBlock{Title: "Ceph", Lines: []string{
-			"health    HEALTH_WARN  AUTH_INSECURE_GLOBAL_ID_RECLAIM",
-			"osds      36/36 up, 36 in   mons 3/3",
-			"capacity  13% used   pgs 1953/1953 clean",
-		}},
 	}})
 }
 
