@@ -125,14 +125,32 @@ func TestDump_EmptyStore(t *testing.T) {
 	}
 }
 
-func TestLoad_InvalidJSONSkipped(t *testing.T) {
+// TestLoad_InvalidJSONPublishesTheReason: unparseable data under a key the
+// client knows is not the same as an unknown key. Skipping it would leave
+// whatever the store already held, so the pane would keep rendering the last
+// good snapshot as though it were current. The reason is stored instead.
+//
+// This test previously asserted the opposite — that nothing was stored — which
+// is the behavior that let a stale snapshot outlive the cluster it described.
+func TestLoad_InvalidJSONPublishesTheReason(t *testing.T) {
 	s := store.New()
-	entries := []Entry{
+	s.Put(model.KeyWorkloadNodes, model.Snapshot[model.Node]{
+		Items: []model.Node{{Name: "n1", Status: "Ready"}},
+	})
+
+	Load([]Entry{
 		{Key: model.KeyWorkloadNodes, Data: json.RawMessage(`not valid json`)},
+	}, s)
+
+	got, ok := store.Get[model.Snapshot[model.Node]](s, model.KeyWorkloadNodes)
+	if !ok {
+		t.Fatal("the key was dropped, leaving the pane with no signal at all")
 	}
-	Load(entries, s)
-	if _, ok := s.Raw(model.KeyWorkloadNodes); ok {
-		t.Error("invalid JSON should not be stored")
+	if got.Err == nil {
+		t.Fatal("unparseable data decoded as a healthy snapshot")
+	}
+	if len(got.Items) != 0 {
+		t.Errorf("the stale node survived unparseable data: %v", got.Items)
 	}
 }
 
@@ -141,18 +159,18 @@ func TestRoundTrip_AllCoreKeys(t *testing.T) {
 	now := time.Now()
 
 	src.Put(model.KeyMgmtClusters, model.Snapshot[model.Cluster]{
-		Items: []model.Cluster{{Name: "c1", Namespace: "ns", Phase: "Provisioned"}},
+		Items:     []model.Cluster{{Name: "c1", Namespace: "ns", Phase: "Provisioned"}},
 		UpdatedAt: now,
 	})
 	src.Put(model.KeyWorkloadPods, model.Snapshot[model.Pod]{
-		Items: []model.Pod{{Name: "pod-1", Namespace: "default", IsHealthy: true}},
+		Items:     []model.Pod{{Name: "pod-1", Namespace: "default", IsHealthy: true}},
 		UpdatedAt: now,
 	})
 	src.Put(cilium.KeyState, cilium.State{
-		Tier:         2,
-		AgentsReady:  5,
+		Tier:          2,
+		AgentsReady:   5,
 		AgentsDesired: 5,
-		UpdatedAt:    now,
+		UpdatedAt:     now,
 	})
 
 	entries := Dump(src)
