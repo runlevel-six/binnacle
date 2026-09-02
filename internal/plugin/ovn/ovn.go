@@ -141,7 +141,7 @@ func (p *Plugin) Detect(ctx context.Context) (bool, error) {
 		p.tier = kube.TierFull
 	case forbidden:
 		p.tier = kube.TierInformer
-		p.tierReason = "no pods/exec permission on " + ns
+		p.tierReason = "no pods/exec permission on " + ns + " — use --server for full detail"
 	default:
 		// Not a verdict — poll re-derives this every time.
 		p.tier = kube.TierInformer
@@ -263,7 +263,7 @@ func (p *Plugin) poll(ctx context.Context) State {
 	}
 	state.Tier = kube.TierInformer
 	if denied {
-		state.TierReason = "no pods/exec permission on " + p.namespace
+		state.TierReason = "no pods/exec permission on " + p.namespace + " — use --server for full detail"
 	} else {
 		state.TierReason = "no ovsdb pod answered"
 	}

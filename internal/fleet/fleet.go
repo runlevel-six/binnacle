@@ -266,6 +266,7 @@ func (f *Fleet) start(ctx context.Context, d Discovered) {
 			Registry:   t.registry,
 			Management: f.opts.Management,
 			Workload:   d.Config,
+			ExecConfig: d.ExecConfig,
 			Profile:    f.opts.Profile,
 			// Narrow the management-side objects to this cluster. Without it
 			// every collector would publish every cluster's Machines into its

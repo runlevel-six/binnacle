@@ -148,7 +148,7 @@ func (p *Plugin) Detect(ctx context.Context) (bool, error) {
 		p.tier = kube.TierFull
 	case forbidden:
 		p.tier = kube.TierInformer
-		p.tierReason = "no pods/exec permission on " + p.settings.Namespace
+		p.tierReason = "no pods/exec permission on " + p.settings.Namespace + " — use --server for full detail"
 	default:
 		// Not a verdict: name the pod that did not answer, and let poll try
 		// another one.
@@ -211,7 +211,7 @@ func (p *Plugin) poll(ctx context.Context) State {
 	if err != nil {
 		state.Tier = kube.TierInformer
 		if kube.Forbidden(err) {
-			state.TierReason = "no pods/exec permission on " + p.settings.Namespace
+			state.TierReason = "no pods/exec permission on " + p.settings.Namespace + " — use --server for full detail"
 		} else {
 			state.TierReason = fmt.Sprintf("no agent pod answered (tried %d)", len(pods))
 		}

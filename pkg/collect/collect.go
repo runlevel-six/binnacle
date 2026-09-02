@@ -64,6 +64,12 @@ type Options struct {
 	// plugins observe. Nil means the management cluster is also the workload
 	// cluster, which is the single-cluster case.
 	Workload *rest.Config
+	// ExecConfig is the identity used for pods/exec on the workload cluster.
+	// Nil means exec uses Workload — the historical behavior, and what local
+	// sextant does. When set, reads come from Workload and exec comes from
+	// this config, which should be a ServiceAccount with pods/exec scoped to
+	// the namespaces where Ceph, Cilium, and OVN pods run.
+	ExecConfig *rest.Config
 
 	// Profile describes how this site is laid out — node roles, event
 	// filtering, per-plugin settings. Use [profile.Default] for the built-in.
@@ -189,7 +195,7 @@ func Activate(ctx context.Context, reg *plugin.Registry, s *store.Store) []plugi
 // Plugins observe the *workload* cluster, since that is where a CNI, a load
 // balancer and a storage layer live. The management cluster runs controllers.
 func registerPlugins(opts Options, cfg *rest.Config) error {
-	client, err := pluginkube.NewClient(cfg)
+	client, err := pluginkube.NewClientWithExec(cfg, opts.ExecConfig)
 	if err != nil {
 		return fmt.Errorf("plugin client: %w", err)
 	}

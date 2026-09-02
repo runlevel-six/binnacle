@@ -52,13 +52,21 @@ const (
 )
 
 // Client bundles what a plugin needs to probe and read a cluster.
+//
+// ExecConfig, when non-nil, is the identity used for pods/exec calls. This
+// separates the read identity (typically a CAPI-minted kubeconfig) from the
+// exec identity (a dedicated ServiceAccount with pods/exec scoped to the
+// namespaces where Ceph, Cilium, and OVN pods run). When nil, exec falls back
+// to Config — which is the historical behavior and what local sextant still
+// does.
 type Client struct {
-	Typed  kubernetes.Interface
-	Config *rest.Config
-	Mapper meta.RESTMapper
+	Typed      kubernetes.Interface
+	Config     *rest.Config
+	ExecConfig *rest.Config
+	Mapper     meta.RESTMapper
 }
 
-// NewClient builds a Client from a REST config.
+// NewClient builds a Client from a REST config. Exec uses the same config.
 func NewClient(cfg *rest.Config) (*Client, error) {
 	typed, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
@@ -73,6 +81,27 @@ func NewClient(cfg *rest.Config) (*Client, error) {
 		Config: cfg,
 		Mapper: restmapper.NewDeferredDiscoveryRESTMapper(cachedDiscovery{disc}),
 	}, nil
+}
+
+// NewClientWithExec builds a Client that reads with cfg but execs with
+// execCfg. execCfg may be nil, in which case exec falls back to cfg — the
+// same behavior as NewClient.
+func NewClientWithExec(cfg, execCfg *rest.Config) (*Client, error) {
+	c, err := NewClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	c.ExecConfig = execCfg
+	return c, nil
+}
+
+// execConfig returns the config to use for pods/exec: ExecConfig when set,
+// otherwise Config.
+func (c *Client) execConfig() *rest.Config {
+	if c.ExecConfig != nil {
+		return c.ExecConfig
+	}
+	return c.Config
 }
 
 // HasKind reports whether a CRD is registered.
@@ -294,7 +323,7 @@ func (c *Client) Exec(ctx context.Context, namespace, pod, container string, com
 			Stderr:    true,
 		}, scheme.ParameterCodec)
 
-	executor, err := remotecommand.NewSPDYExecutor(c.Config, "POST", req.URL())
+	executor, err := remotecommand.NewSPDYExecutor(c.execConfig(), "POST", req.URL())
 	if err != nil {
 		return "", &ExecError{Pod: pod, Command: command, Err: fmt.Errorf("spdy executor: %w", err)}
 	}
