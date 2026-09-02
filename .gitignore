@@ -4,6 +4,11 @@
 
 # Local plan and working notes: they name real clusters and real people.
 /docs/plan.md
+/docs/consolidation-plan.md
+/docs/consolidation-flaws.md
+/docs/management-cluster.md
+/docs/sextant-refactor.md
+/docs/master-plan.md
 /docs/notes/
 
 # Site overlays: real hostnames, real registries, real namespaces. The tracked
