@@ -173,6 +173,54 @@ sextant sits at informer-only for Ceph, Cilium, and OVN **by design**. The
 pane says so: *"no pods/exec permission — use --server for full detail."*
 The server is the supported path to full-tier data.
 
+### Per-user scoping
+
+Once the collector holds exec privilege and human roles are read-only,
+`--server` is the only path to full-tier Ceph, Cilium, and OVN detail. Without
+scoping, every authenticated user sees exec-derived data for the entire fleet
+— which means the RBAC posture hasn't actually improved, it just moved.
+
+Scoping limits which clusters each user can see, based on their OIDC group
+membership. It is opt-in: without a `--scope-file`, every authenticated user
+sees the entire fleet (the historical behavior, and what a single-team
+deployment wants).
+
+Create a scope file mapping OIDC groups to namespaces:
+
+```yaml
+groups:
+  platform-admins:
+    - "*"               # sees everything
+  site-a-ops:
+    - site-a            # sees only clusters in the site-a namespace
+    - site-a-infra
+  site-b-ops:
+    - site-b
+```
+
+Then point binnacle at it:
+
+```
+binnacle --oidc-issuer ... --scope-file /etc/binnacle/scopes.yaml
+```
+
+The namespace is the CAPI Cluster object's namespace on the management cluster.
+A user in no mapped group sees nothing — which is a configuration error worth
+making visible, rather than silently widening to everything.
+
+Scoping applies to all routes: the HTML fleet page, cluster detail pages, the
+JSON API, and the SSE stream. A cluster outside the user's scope returns 404,
+not 403: *"there is no such cluster"* and *"you may not see this cluster"* must
+not render differently, because revealing the existence of a hidden cluster
+would defeat the scoping.
+
+The storage panel is scoped by the reporting cluster's namespace. A Ceph
+cluster visible from both site-a and site-b is visible to users scoped to
+either; one reported only by site-b is hidden from users scoped to site-a.
+The hardware inventory (BareMetalHosts) is datacenter-wide and cannot be
+narrowed per-namespace — it is either shown or hidden with the storage cluster
+it belongs to.
+
 ## Ingress and Server-Sent Events
 
 The fleet page is pushed over SSE, so the connection is long-lived by design.

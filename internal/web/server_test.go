@@ -41,7 +41,7 @@ func (f *fakeFleet) Cluster(namespace, name string) (fleet.ClusterDetail, bool) 
 
 func serve(t *testing.T, clusters ...fleet.ClusterView) http.Handler {
 	t.Helper()
-	s, err := New(&fakeFleet{clusters: clusters, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
+	s, err := New(&fakeFleet{clusters: clusters, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestFleetPage_EmptyFleetSaysSo(t *testing.T) {
 // A probe has no session, so gating it would make the deployment
 // unschedulable.
 func TestHealthz_IsNotGated(t *testing.T) {
-	s, err := New(&fakeFleet{changed: make(chan struct{})}, auth.Open{}, "test", "site-a")
+	s, err := New(&fakeFleet{changed: make(chan struct{})}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestFleetPage_SiteNamesTheDeployment(t *testing.T) {
 // A single local instance has nothing to be confused with, so an unset site is
 // absence rather than an empty badge.
 func TestFleetPage_UnnamedSiteRendersNothingExtra(t *testing.T) {
-	s, err := New(&fakeFleet{changed: make(chan struct{}, 1)}, auth.Open{}, "test", "")
+	s, err := New(&fakeFleet{changed: make(chan struct{}, 1)}, auth.Open{}, "test", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func serveDetail(t *testing.T, d fleet.ClusterDetail) http.Handler {
 	s, err := New(&fakeFleet{
 		detail:  map[string]fleet.ClusterDetail{d.Namespace + "/" + d.Name: d},
 		changed: make(chan struct{}, 1),
-	}, auth.Open{}, "test", "site-a")
+	}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -636,7 +636,7 @@ func TestFleetPage_EveryCardBranchRenders(t *testing.T) {
 	s, err := New(&fakeFleet{
 		clusters: []fleet.ClusterView{rich, broken}, storage: st,
 		changed: make(chan struct{}, 1),
-	}, auth.Open{}, "test", "site-a")
+	}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -778,7 +778,7 @@ func fleetPageWithFoldedStorage(t *testing.T) string {
 	}
 	s, err := New(&fakeFleet{
 		storage: fleet.StorageFor(hosts, nil), changed: make(chan struct{}, 1),
-	}, auth.Open{}, "test", "site-a")
+	}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -946,7 +946,7 @@ func fleetPageWithStorage(t *testing.T) string {
 		{Namespace: "machines", Name: "r0102-01-cephmon", State: "provisioned", OperationalStatus: "OK",
 			Labels: map[string]string{fleet.LabelRole: "cephmon", fleet.LabelClusterID: "fsid"}},
 	}, nil)
-	s, err := New(&fakeFleet{storage: st, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
+	s, err := New(&fakeFleet{storage: st, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1006,7 +1006,7 @@ func TestFleetPage_StoragePanel(t *testing.T) {
 		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01"}},
 		storage:  labeled,
 		changed:  make(chan struct{}, 1),
-	}, auth.Open{}, "test", "site-a")
+	}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1038,7 +1038,7 @@ func TestFleetPage_StoragePanelSaysWhenNobodyReports(t *testing.T) {
 			Labels: map[string]string{fleet.LabelRole: "cephosd", fleet.LabelClusterID: "fsid-orphan"}},
 	}, nil)
 
-	s, err := New(&fakeFleet{storage: silent, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
+	s, err := New(&fakeFleet{storage: silent, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1060,7 +1060,7 @@ func TestFleetPage_StoragePanelWithoutLabeledHardware(t *testing.T) {
 		Status:  ceph.Status{FSID: "fsid-only-reported", Health: "HEALTH_OK"},
 	}})
 
-	s, err := New(&fakeFleet{storage: unlabeled, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
+	s, err := New(&fakeFleet{storage: unlabeled, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

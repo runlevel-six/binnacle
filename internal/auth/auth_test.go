@@ -82,7 +82,7 @@ func testOIDC(t *testing.T) *OIDC {
 func TestSession_RoundTrip(t *testing.T) {
 	a := testOIDC(t)
 	rec := httptest.NewRecorder()
-	a.setSession(rec, "someone@example.com")
+	a.setSession(rec, "someone@example.com", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	for _, c := range rec.Result().Cookies() {
@@ -92,8 +92,8 @@ func TestSession_RoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("valid session rejected")
 	}
-	if who != "someone@example.com" {
-		t.Errorf("got %q", who)
+	if who.Who != "someone@example.com" {
+		t.Errorf("got %q", who.Who)
 	}
 }
 
@@ -102,19 +102,19 @@ func TestSession_RoundTrip(t *testing.T) {
 func TestSession_TamperedCookieRejected(t *testing.T) {
 	a := testOIDC(t)
 	rec := httptest.NewRecorder()
-	a.setSession(rec, "someone@example.com")
+	a.setSession(rec, "someone@example.com", nil)
 	cookie := rec.Result().Cookies()[0]
 
 	// Re-sign with a different key: the payload is well-formed, the signature
 	// is not ours.
 	other := testOIDC(t)
 	forged := httptest.NewRecorder()
-	other.setSession(forged, "admin@example.com")
+	other.setSession(forged, "admin@example.com", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(forged.Result().Cookies()[0])
 	if who, ok := a.session(req); ok {
-		t.Errorf("accepted a cookie signed with another key, as %q", who)
+		t.Errorf("accepted a cookie signed with another key, as %q", who.Who)
 	}
 
 	// A truncated value is not a panic either.
@@ -129,7 +129,7 @@ func TestSession_ExpiredRejected(t *testing.T) {
 	a := testOIDC(t)
 	// Sign a payload that is already in the past, the way a cookie kept past
 	// its TTL would look.
-	payload := "someone@example.com|" + "1000000000"
+	payload := "someone@example.com||1000000000"
 	value := payload + "|" + a.sign(payload)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: encode(value)})

@@ -17,16 +17,23 @@ type fleetResponse struct {
 }
 
 // handleAPIFleet returns the full fleet view as JSON.
-func (s *Server) handleAPIFleet(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleAPIFleet(w http.ResponseWriter, r *http.Request) {
+	scope := s.scopeFor(r)
 	writeJSON(w, fleetResponse{
-		Clusters: s.fleet.View(),
-		Storage:  s.fleet.Storage(),
+		Clusters: filterViews(s.fleet.View(), scope),
+		Storage:  filterStorage(s.fleet.Storage(), scope),
 	})
 }
 
 // handleAPICluster returns one cluster's detail as JSON.
 func (s *Server) handleAPICluster(w http.ResponseWriter, r *http.Request) {
-	d, ok := s.fleet.Cluster(r.PathValue("namespace"), r.PathValue("name"))
+	scope := s.scopeFor(r)
+	ns := r.PathValue("namespace")
+	if !scope.Allows(ns) {
+		http.NotFound(w, r)
+		return
+	}
+	d, ok := s.fleet.Cluster(ns, r.PathValue("name"))
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -35,8 +42,9 @@ func (s *Server) handleAPICluster(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAPIStorage returns the datacenter storage layer as JSON.
-func (s *Server) handleAPIStorage(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, s.fleet.Storage())
+func (s *Server) handleAPIStorage(w http.ResponseWriter, r *http.Request) {
+	scope := s.scopeFor(r)
+	writeJSON(w, filterStorage(s.fleet.Storage(), scope))
 }
 
 // handleAPIEvents streams fleet state as JSON over Server-Sent Events.
@@ -54,10 +62,12 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
+	scope := s.scopeFor(r)
+
 	send := func() bool {
 		resp := fleetResponse{
-			Clusters: s.fleet.View(),
-			Storage:  s.fleet.Storage(),
+			Clusters: filterViews(s.fleet.View(), scope),
+			Storage:  filterStorage(s.fleet.Storage(), scope),
 		}
 		data, err := json.Marshal(resp)
 		if err != nil {

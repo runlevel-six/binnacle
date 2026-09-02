@@ -1,0 +1,24 @@
+# Per-user scoping for binnacle.
+#
+# Map OIDC group names to the namespaces a member of that group may see.
+# "*" means all namespaces. A user in no mapped group sees nothing.
+#
+# The namespace is the CAPI Cluster object's namespace on the management
+# cluster. Apply this with --scope-file /etc/binnacle/scopes.yaml.
+#
+# This is opt-in: without a --scope-file, every authenticated user sees
+# the entire fleet.
+
+groups:
+  # Platform admins see everything.
+  platform-admins:
+    - "*"
+
+  # Site A operators see only their clusters.
+  site-a-ops:
+    - site-a
+    - site-a-infra
+
+  # Site B operators see only theirs.
+  site-b-ops:
+    - site-b

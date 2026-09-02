@@ -44,6 +44,7 @@ type options struct {
 	oidcRedirect   string
 	insecureCookie bool
 	allowUnauth    bool
+	scopeFile      string
 }
 
 func main() {
@@ -72,6 +73,7 @@ func run(args []string) error {
 	fs.BoolVar(&o.allowUnauth, "allow-unauthenticated", false,
 		"serve without authentication on a non-loopback address; every reader sees every cluster binnacle can read")
 	fs.BoolVar(&o.insecureCookie, "insecure-cookies", false, "send session cookies without the Secure flag; for testing over plain HTTP only")
+	fs.StringVar(&o.scopeFile, "scope-file", "", "path to a YAML file mapping OIDC groups to namespaces; empty means no scoping (everyone sees everything)")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "binnacle serves a fleet view of Cluster API clusters.")
 		fmt.Fprintln(fs.Output())
@@ -112,7 +114,12 @@ func run(args []string) error {
 		return err
 	}
 
-	srv, err := web.New(source, authenticator, version, o.site)
+	groupScopes, err := web.LoadGroupScopes(o.scopeFile)
+	if err != nil {
+		return err
+	}
+
+	srv, err := web.New(source, authenticator, version, o.site, groupScopes)
 	if err != nil {
 		return err
 	}

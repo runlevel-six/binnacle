@@ -36,6 +36,23 @@ const (
 	sessionTTL    = 8 * time.Hour
 )
 
+// Identity is the signed-in user, available in request context when the
+// authenticator is OIDC. The [Open] and [Unauthenticated] schemes do not
+// provide one, which is how the server knows to skip scoping.
+type Identity struct {
+	Who    string
+	Groups []string
+}
+
+type identityKey struct{}
+
+// IdentityFromContext returns the signed-in user's identity, or false when
+// the authenticator does not provide one.
+func IdentityFromContext(ctx context.Context) (Identity, bool) {
+	id, ok := ctx.Value(identityKey{}).(Identity)
+	return id, ok
+}
+
 // Open lets every request through.
 type Open struct{}
 
@@ -134,6 +151,11 @@ type OIDCConfig struct {
 	// Secure marks the cookies secure. Leave true unless testing over plain
 	// HTTP on loopback.
 	Secure bool
+	// GroupScopes maps OIDC group names to the namespaces a member of that
+	// group may see. "*" means all namespaces. When nil, scoping is off and
+	// every authenticated user sees the entire fleet — the historical
+	// behavior, and what a single-team deployment wants.
+	GroupScopes map[string][]string
 }
 
 // OIDC authenticates against an OpenID Connect provider using the authorization
@@ -204,8 +226,9 @@ func (a *OIDC) Routes(mux *http.ServeMux) {
 // design is trying to avoid.
 func (a *OIDC) Middleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := a.session(r); ok {
-			h.ServeHTTP(w, r)
+		id, ok := a.session(r)
+		if ok {
+			h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), identityKey{}, id)))
 			return
 		}
 		if r.Header.Get("Accept") == "text/event-stream" {
@@ -261,8 +284,9 @@ func (a *OIDC) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var claims struct {
-		Email             string `json:"email"`
-		PreferredUsername string `json:"preferred_username"`
+		Email             string   `json:"email"`
+		PreferredUsername string   `json:"preferred_username"`
+		Groups            []string `json:"groups"`
 	}
 	_ = idToken.Claims(&claims)
 	who := claims.Email
@@ -273,7 +297,7 @@ func (a *OIDC) handleCallback(w http.ResponseWriter, r *http.Request) {
 		who = idToken.Subject
 	}
 
-	a.setSession(w, who)
+	a.setSession(w, who, claims.Groups)
 	next := "/"
 	if _, after, found := strings.Cut(cookie.Value, ":"); found && after != "" {
 		next = after
@@ -286,11 +310,13 @@ func (a *OIDC) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-// setSession writes the signed cookie. The value is "who|expiry|signature";
+// setSession writes the signed cookie. The value is "who|groups|expiry|signature";
 // nothing secret is in it, so the signature is what makes it a session rather
-// than a suggestion.
-func (a *OIDC) setSession(w http.ResponseWriter, who string) {
-	payload := who + "|" + strconv.FormatInt(time.Now().Add(sessionTTL).Unix(), 10)
+// than a suggestion. Groups is a comma-separated list, empty when the provider
+// does not issue a groups claim.
+func (a *OIDC) setSession(w http.ResponseWriter, who string, groups []string) {
+	groupsCSV := strings.Join(groups, ",")
+	payload := who + "|" + groupsCSV + "|" + strconv.FormatInt(time.Now().Add(sessionTTL).Unix(), 10)
 	value := payload + "|" + a.sign(payload)
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: encode(value),
@@ -301,31 +327,32 @@ func (a *OIDC) setSession(w http.ResponseWriter, who string) {
 
 // session returns who the request is, and whether the cookie is valid and
 // unexpired.
-func (a *OIDC) session(r *http.Request) (string, bool) {
+func (a *OIDC) session(r *http.Request) (Identity, bool) {
 	cookie, err := r.Cookie(sessionCookie)
 	if err != nil {
-		return "", false
+		return Identity{}, false
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(cookie.Value)
 	if err != nil {
-		return "", false
+		return Identity{}, false
 	}
-	who, rest, ok := strings.Cut(string(decoded), "|")
-	if !ok {
-		return "", false
+	parts := strings.SplitN(string(decoded), "|", 4)
+	if len(parts) != 4 {
+		return Identity{}, false
 	}
-	expiry, sig, ok := strings.Cut(rest, "|")
-	if !ok {
-		return "", false
-	}
-	if !hmac.Equal([]byte(sig), []byte(a.sign(who+"|"+expiry))) {
-		return "", false
+	who, groupsCSV, expiry, sig := parts[0], parts[1], parts[2], parts[3]
+	if !hmac.Equal([]byte(sig), []byte(a.sign(who+"|"+groupsCSV+"|"+expiry))) {
+		return Identity{}, false
 	}
 	unix, err := strconv.ParseInt(expiry, 10, 64)
 	if err != nil || time.Now().After(time.Unix(unix, 0)) {
-		return "", false
+		return Identity{}, false
 	}
-	return who, true
+	var groups []string
+	if groupsCSV != "" {
+		groups = strings.Split(groupsCSV, ",")
+	}
+	return Identity{Who: who, Groups: groups}, true
 }
 
 func (a *OIDC) sign(payload string) string {
