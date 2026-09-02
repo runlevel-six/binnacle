@@ -1,6 +1,12 @@
 # Build output
 /binnacle
+/sextant
 /dist/
+
+# Test and coverage artifacts
+*.test
+*.out
+coverage.txt
 
 # Local plan and working notes: they name real clusters and real people.
 /docs/plan.md
@@ -10,6 +16,10 @@
 /docs/sextant-refactor.md
 /docs/master-plan.md
 /docs/notes/
+
+# Local tooling
+/bin/
+/.claude/
 
 # Site overlays: real hostnames, real registries, real namespaces. The tracked
 # manifests in deploy/ stay generic; what actually gets applied does not.
@@ -29,3 +39,6 @@
 *.kubeconfig
 clouds.yaml
 .env
+
+# Editor and OS files belong in your global gitignore, not here:
+#   git config --global core.excludesfile ~/.gitignore

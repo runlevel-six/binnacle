@@ -1,0 +1,6 @@
+{
+  "fsid": "abc",
+  "health": {"status": "HEALTH_OK", "checks": {}, "mutes": []},
+  "osdmap": "this release put a string here",
+  "pgmap": {"num_pgs": 10, "num_pools": 2, "pgs_by_state": [{"state_name": "active+clean", "count": 10}]}
+}

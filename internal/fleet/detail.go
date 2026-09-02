@@ -4,10 +4,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/runlevel-six/sextant/pkg/health"
-	"github.com/runlevel-six/sextant/pkg/model"
-	"github.com/runlevel-six/sextant/pkg/store"
-	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
+	"github.com/runlevel-six/binnacle/pkg/health"
+	"github.com/runlevel-six/binnacle/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/store"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
 )
 
 // Caps on what one page will render.

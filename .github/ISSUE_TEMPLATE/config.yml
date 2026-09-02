@@ -1,0 +1,8 @@
+---
+blank_issues_enabled: true
+contact_links:
+  - name: Tell us your cluster shape
+    url: https://github.com/runlevel-six/sextant/issues/new?labels=cluster-shape
+    about: >-
+      Not a bug — just describing how your Metal3 / CAPI cluster is laid out.
+      These reports directly improve the default profile.

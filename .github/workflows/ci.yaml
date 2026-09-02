@@ -76,10 +76,6 @@ jobs:
       # toolchain its own binary was built with. This release is built with
       # go1.26.2, which covers go.mod's 1.26.1. Bumping go.mod past that needs a
       # linter bump in the same commit.
-      #
-      # go.mod deliberately targets the same Go version as sextant, which this
-      # module depends on. Keeping them together means one toolchain validates
-      # both, and a linter that runs on one runs on the other.
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.12.2
@@ -102,3 +98,31 @@ jobs:
 
       - name: Check spelling
         run: misspell -error -locale US $(git ls-files '*.go' '*.md' '*.yaml' '*.html')
+
+  # Confirms the release pipeline stays valid without publishing anything.
+  goreleaser-check:
+    name: GoReleaser Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          # Pinned for the same reason as golangci-lint above: a GoReleaser
+          # release can change what a config file is allowed to say, and a
+          # release pipeline is the worst place to discover that.
+          version: v2.17.1
+          args: check
+
+      - name: Dry-run build
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.17.1
+          args: build --snapshot --clean --single-target

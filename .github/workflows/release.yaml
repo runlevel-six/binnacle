@@ -1,0 +1,50 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+#
+# Tag-driven releases. To cut a release:
+#
+#   git tag -a v0.1.0 -m "Release v0.1.0" && git push origin v0.1.0
+#
+# This deliberately replaces v1's "auto-release every merge to master, with
+# [bump:minor] markers in the PR title" scheme. Public consumers need release
+# notes and a stable tag they can pin; an automatic patch bump on every merge
+# produces neither.
+#
+# edge.yaml does publish binaries on every merge, which covers the case that
+# scheme was really serving — a build of main without a source checkout — without
+# spending a version number to do it.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test before publishing
+        run: go test ./...
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          # Pinned so that publishing a tag is reproducible: the version that
+          # validated the config in CI is the version that builds the release.
+          version: v2.17.1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

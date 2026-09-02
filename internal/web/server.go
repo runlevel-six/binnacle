@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
 
 	"github.com/runlevel-six/binnacle/internal/fleet"
 )

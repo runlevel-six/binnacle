@@ -3,7 +3,7 @@ package fleet
 import (
 	"sort"
 
-	"github.com/runlevel-six/sextant/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/model"
 )
 
 // collapseAfter is how many quiet rows a table tolerates before folding them

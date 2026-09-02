@@ -1,0 +1,51 @@
+---
+# The default profile: a vanilla Cluster API + Metal3 management cluster.
+#
+# This must stay assumption-free. It is what a user with no configuration gets,
+# and the whole design depends on that path producing something useful. Anything
+# specific to a platform belongs in a profile that extends this one.
+name: metal3
+description: Vanilla Cluster API + Metal3 management cluster
+
+clusters:
+  management:
+    # Empty means all namespaces, which is correct upstream: there is no
+    # conventional namespace for Cluster objects, and per-cluster namespaces are
+    # common. Narrow this only where your site actually has a convention.
+    namespaces: []
+  # Nothing here names a Cluster API cluster, which is right when a management
+  # cluster owns one. If yours owns several and you watch them one at a time, say
+  # which — otherwise every cluster's Machines appear beside a single cluster's
+  # Nodes, and the two counts disagree for no visible reason:
+  #
+  #   workload:
+  #     capi_name: prod                    # the Cluster object's name, or
+  #     capi_name_pattern: 'prod-\d+'      # derived from the context name
+  #
+  # Either is matched against a Cluster's name exactly or as a prefix, since the
+  # Cluster object usually carries a suffix a context name does not. A rolling
+  # upgrade of a cluster you are *not* watching then stays out of this dashboard,
+  # which is the other half of what this setting buys.
+
+node_roles:
+  # The upstream convention encodes the role in the label *key*
+  # (node-role.kubernetes.io/control-plane) with an empty value, which the "/*"
+  # suffix selects. A platform that instead uses one key whose *value* is the
+  # role should list that key first, so it takes precedence over this fallback.
+  label_keys:
+    - node-role.kubernetes.io/*
+
+events:
+  # Deliberately narrow. A busy cluster emits hundreds of events per second, and
+  # an unfiltered pane is unreadable — the filter is about volume, not relevance.
+  namespaces:
+    - kube-system
+
+layout:
+  top_row:
+    - overview
+  grid:
+    - machines
+    - nodes
+    - pods
+    - events

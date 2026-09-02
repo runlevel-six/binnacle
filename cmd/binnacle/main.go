@@ -17,7 +17,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/runlevel-six/sextant/pkg/profile"
+	"github.com/runlevel-six/binnacle/pkg/profile"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 

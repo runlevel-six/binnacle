@@ -3,7 +3,7 @@ package fleet
 import (
 	"strings"
 
-	"github.com/runlevel-six/sextant/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/model"
 )
 
 // eventQuiet is the rank at or above which an event group folds away. See

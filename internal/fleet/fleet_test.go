@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/runlevel-six/sextant/pkg/health"
-	"github.com/runlevel-six/sextant/pkg/model"
-	"github.com/runlevel-six/sextant/pkg/plugin"
-	"github.com/runlevel-six/sextant/pkg/profile"
-	"github.com/runlevel-six/sextant/pkg/store"
+	"github.com/runlevel-six/binnacle/pkg/health"
+	"github.com/runlevel-six/binnacle/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/plugin"
+	"github.com/runlevel-six/binnacle/pkg/profile"
+	"github.com/runlevel-six/binnacle/pkg/store"
 )
 
 func newTracked(ns, name string) *tracked {
