@@ -51,6 +51,11 @@ type FleetModel struct {
 	width, height int
 	keys          fleetKeymap
 	err           string
+
+	// builder, when non-nil, causes Enter to emit a DrillDownMsg instead
+	// of fetching the text detail view. The router sets this; standalone
+	// fleet mode (no router) leaves it nil and gets the text detail.
+	builder ClusterBuilder
 }
 
 // NewFleet builds a fleet model reading from src.
@@ -66,10 +71,17 @@ func NewFleet(src fleetSource, serverURL string, info build.Info) *FleetModel {
 
 // SetAutoSelect pins a cluster to drill into as soon as the fleet list
 // arrives. This is the --server-cluster path: the fleet list still loads
-// (so Esc returns to a populated list), but the first frame shows the
+// (so Esc returns to a populated screen), but the first frame shows the
 // cluster's detail.
 func (m *FleetModel) SetAutoSelect(clusterID string) {
 	m.autoSelect = clusterID
+}
+
+// SetBuilder enables dashboard drill-down. When set, Enter emits a
+// DrillDownMsg for the router to catch; when nil, Enter falls back to
+// the text detail view.
+func (m *FleetModel) SetBuilder(b ClusterBuilder) {
+	m.builder = b
 }
 
 // FleetUpdateMsg carries a fresh fleet view. Exported so the render path
@@ -221,6 +233,11 @@ func (m *FleetModel) handleFleetKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		fc := m.filteredClusters()
 		if len(fc) > 0 && m.selected < len(fc) {
 			c := fc[m.selected]
+			if m.builder != nil {
+				return m, func() tea.Msg {
+					return DrillDownMsg{Namespace: c.Namespace, Name: c.Name}
+				}
+			}
 			return m, fetchCluster(m.source, c.Namespace, c.Name)
 		}
 	}
