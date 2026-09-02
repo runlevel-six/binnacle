@@ -16,6 +16,11 @@
 // the field names alone.
 package health
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // Status is one subsystem's health, ordered by severity so that the worst wins
 // when several readings are folded into one.
 type Status int
@@ -81,4 +86,31 @@ func Worst(cells []Cell) Status {
 		worst = worst.Worse(c.Status)
 	}
 	return worst
+}
+
+// MarshalJSON renders Status as its stable string name, so a JSON consumer
+// reads "ok" rather than 1 and does not have to learn the integer mapping.
+func (s Status) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
+}
+
+// UnmarshalJSON reads Status from its string name.
+func (s *Status) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+	switch str {
+	case "loading":
+		*s = StatusLoading
+	case "ok":
+		*s = StatusOK
+	case "warn":
+		*s = StatusWarn
+	case "err":
+		*s = StatusErr
+		default:
+			return fmt.Errorf("health: unknown status %q", str)
+		}
+	return nil
 }

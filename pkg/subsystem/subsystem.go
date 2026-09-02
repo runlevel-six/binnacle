@@ -10,6 +10,11 @@
 // which subsystem it is.
 package subsystem
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // Tier is how much detail a plugin can currently provide.
 type Tier int
 
@@ -36,6 +41,34 @@ func (t Tier) String() string {
 		return "full"
 	}
 	return "?"
+}
+
+// MarshalJSON renders Tier as its stable string name.
+func (t Tier) MarshalJSON() ([]byte, error) {
+	return json.Marshal(t.String())
+}
+
+// UnmarshalJSON reads Tier from its string name.
+func (t *Tier) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+	switch str {
+	case "absent":
+		*t = TierAbsent
+	case "informer-only":
+		*t = TierInformer
+	case "full":
+		*t = TierFull
+	default:
+		return errUnknownTier(str)
+	}
+	return nil
+}
+
+func errUnknownTier(s string) error {
+	return fmt.Errorf("subsystem: unknown tier %q", s)
 }
 
 // Rollout is one workload's progress toward its own current pod template.

@@ -24,6 +24,7 @@ import (
 	"github.com/runlevel-six/binnacle/internal/app"
 	"github.com/runlevel-six/binnacle/internal/build"
 	"github.com/runlevel-six/binnacle/internal/config"
+	"github.com/runlevel-six/binnacle/pkg/tui"
 )
 
 // Build metadata, injected via -ldflags. Source builds report "dev".
@@ -67,6 +68,8 @@ type options struct {
 	cfg config.Config
 
 	configPath    string
+	serverURL     string
+	token         string
 	listContexts  bool
 	listProfiles  bool
 	listThemes    bool
@@ -111,6 +114,17 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if opts.listContexts {
 		return app.ListContexts(out, opts.cfg)
+	}
+
+	// --server takes precedence over every other mode: it reads from a
+	// binnacle deployment rather than a kubeconfig, so none of the cluster
+	// resolution, profiling, or debug flags apply.
+	if opts.serverURL != "" {
+		theme, err := tui.LookupTheme(opts.cfg.Theme)
+		if err != nil {
+			return err
+		}
+		return app.RunServer(ctx, opts.serverURL, opts.token, buildInfo(), theme)
 	}
 
 	// The demo path resolves nothing against a kubeconfig, so it branches before
@@ -208,6 +222,10 @@ func parseFlags(args []string, out io.Writer) (*options, error) {
 		"run against invented data, with no kubeconfig and no cluster")
 	fs.StringVar(&o.render, "render", "",
 		"with --demo, print one frame at WIDTHxHEIGHT and exit (e.g. 200x50)")
+	fs.StringVar(&o.serverURL, "server", "",
+		"connect to a binnacle server at this URL instead of reading a kubeconfig")
+	fs.StringVar(&o.token, "token", "",
+		"bearer token for --server; a server with --allow-unauthenticated does not need one")
 
 	fs.Usage = func() { usage(out, fs) }
 
@@ -247,6 +265,9 @@ func usage(out io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "  # Watch a management cluster and a separate workload cluster:")
 	fmt.Fprintln(out, "  sextant --management-context mgmt --workload-context prod")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "  # Connect to a binnacle server instead of a kubeconfig:")
+	fmt.Fprintln(out, "  sextant --server http://binnacle:8080")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "  # Boldly go:")
 	fmt.Fprintln(out, "  sextant --theme lcars")

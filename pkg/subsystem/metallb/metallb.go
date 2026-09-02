@@ -6,6 +6,8 @@
 package metallb
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/runlevel-six/binnacle/pkg/subsystem"
@@ -56,6 +58,43 @@ const (
 	// Available is unknown.
 	UsageAnnotations
 )
+
+// String returns the usage source's name.
+func (u UsageSource) String() string {
+	switch u {
+	case UsageUnknown:
+		return "unknown"
+	case UsageStatus:
+		return "status"
+	case UsageAnnotations:
+		return "annotations"
+	}
+	return "unknown"
+}
+
+// MarshalJSON renders UsageSource as its stable string name.
+func (u UsageSource) MarshalJSON() ([]byte, error) {
+	return json.Marshal(u.String())
+}
+
+// UnmarshalJSON reads UsageSource from its string name.
+func (u *UsageSource) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+	switch str {
+	case "unknown":
+		*u = UsageUnknown
+	case "status":
+		*u = UsageStatus
+	case "annotations":
+		*u = UsageAnnotations
+	default:
+		return fmt.Errorf("metallb: unknown usage source %q", str)
+	}
+	return nil
+}
 
 // Total is the pool's size, when that is known.
 func (p Pool) Total() int { return p.Assigned + p.Available }

@@ -120,6 +120,10 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /events", s.handleEvents)
 	protected.HandleFunc("GET /cluster/{namespace}/{name}", s.handleCluster)
 	protected.HandleFunc("GET /cluster/{namespace}/{name}/events", s.handleClusterEvents)
+	protected.HandleFunc("GET /api/v1/fleet", s.handleAPIFleet)
+	protected.HandleFunc("GET /api/v1/clusters/{namespace}/{name}", s.handleAPICluster)
+	protected.HandleFunc("GET /api/v1/storage", s.handleAPIStorage)
+	protected.HandleFunc("GET /api/v1/events", s.handleAPIEvents)
 	mux.Handle("/", s.auth.Middleware(protected))
 	return mux
 }
