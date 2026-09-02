@@ -111,6 +111,23 @@
      the node pools pane: without it the labels sit against the last row and
      read as a fourth column of it. */
   .nums { display: flex; gap: 1.25rem; margin: .8rem 0 .7rem; flex-wrap: wrap; }
+  /* In a pane, tiles spread; on a card they stay packed.
+     
+     Flexed at a fixed gap, six Ceph figures sat in the left four hundred pixels
+     of a nine-hundred-pixel pane with seventeen pixels between them — dense
+     text with half the pane empty beside it, which is the same complaint the
+     tables had before they spread. A card is the other case: it is a summary,
+     its width belongs to the fleet grid rather than to its contents, and packed
+     is what it should be.
+     
+     The track has a maximum as well as a minimum, so three tiles in a wide pane
+     stop at a readable width and leave the slack at the edge rather than
+     standing three hundred pixels apart. Same rule as the tables: spread, but
+     not past the point where a row stops reading as one. */
+  .pane .nums {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 14rem));
+    gap: .9rem 1.25rem;
+  }
   .num .k { color: var(--dim); font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; }
   .num .v { font-variant-numeric: tabular-nums; }
 

@@ -599,9 +599,30 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 			UpdatedAt:     now.Add(-22 * time.Minute)},
 	}}
 
-	detail.Summaries = []SummaryBlock{{
-		Title: "Ceph",
-		Lines: []string{"health  HEALTH_OK", "osds    36/36 up, 36 in", "capacity 13% used"},
-	}}
+	// Ceph as typed state, because that is what the pane renders from now. The
+	// SummaryBlock this replaced is still the path a plugin with internal types
+	// takes, and the fleet cards still use it — see [Demo.View].
+	detail.Subsystems.Ceph = &ceph.State{
+		Tier: subsystem.TierFull, Pod: "ceph-tools-0",
+		Status: ceph.Status{
+			FSID: "24413730-08bc-11ef-b140-23a2dd2fc842", Health: "HEALTH_WARN",
+			Mons: ceph.Mons{Total: 3, InQuorum: 3},
+			// One OSD down, so the tile disagrees with the total beside it —
+			// which is the thing the pre-formatted block could not show.
+			OSDs: ceph.OSDs{Total: 36, Up: 35, In: 36},
+			PGs: ceph.PGs{
+				Total: 1953, Pools: 14, Objects: 4_812_663,
+				ByState:    []ceph.PGState{{Name: "active+clean", Count: 1951}},
+				UsedBytes:  13 * 1 << 40,
+				AvailBytes: 87 * 1 << 40,
+				TotalBytes: 100 * 1 << 40,
+			},
+			Checks: []ceph.Check{
+				{Name: "OSD_DOWN", Severity: "HEALTH_WARN", Message: "1 osds down"},
+				{Name: "AUTH_INSECURE_GLOBAL_ID_RECLAIM", Severity: "HEALTH_WARN",
+					Message: "client is using insecure global_id reclaim"},
+			},
+		},
+	}
 	return detail, true
 }
