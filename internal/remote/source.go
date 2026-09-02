@@ -122,6 +122,15 @@ func (s *Source) Storage() fleet.Storage {
 	return st
 }
 
+// Management returns an empty ManagementView. The management cluster is a
+// web-only feature: its node and controller health is rendered server-side
+// and is not exposed through the API. A terminal client does not need it —
+// the fleet screen shows one line per workload cluster, and a management
+// view is a separate screen shape that does not exist yet.
+func (s *Source) Management() fleet.ManagementView {
+	return fleet.ManagementView{}
+}
+
 // Changed returns a channel that ticks when the fleet may have moved.
 func (s *Source) Changed() <-chan struct{} { return s.changed }
 

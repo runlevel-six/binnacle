@@ -95,6 +95,8 @@ type Fleet struct {
 	opts       Options
 	discoverer *Discoverer
 
+	mgmt *mgmtCollector
+
 	mu       sync.Mutex
 	clusters map[string]*tracked
 
@@ -146,6 +148,7 @@ func (f *Fleet) notify() {
 // frozen at whatever it last saw, which is the failure mode a status board can
 // least afford.
 func (f *Fleet) Run(ctx context.Context) error {
+	f.startManagement(ctx)
 	if err := f.reconcile(ctx); err != nil {
 		return err
 	}
@@ -155,6 +158,9 @@ func (f *Fleet) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			f.stopAll()
+			if f.mgmt != nil {
+				f.mgmt.cancel()
+			}
 			return ctx.Err()
 		case <-ticker.C:
 			// A failed re-list leaves the existing collectors running. The

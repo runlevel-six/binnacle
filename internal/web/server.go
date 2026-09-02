@@ -68,6 +68,12 @@ type Source interface {
 	// Storage returns the datacenter's storage layer, which belongs to no
 	// cluster and so cannot be reached through View.
 	Storage() fleet.Storage
+	// Management returns the management cluster's own health. The management
+	// cluster is not a CAPI Cluster object — it hosts them — so it does not
+	// appear in View. Its node and controller health is fleet-wide
+	// infrastructure: a user who can see any workload cluster should see
+	// whether the thing managing them is itself healthy.
+	Management() fleet.ManagementView
 	// Changed ticks when something may have moved.
 	Changed() <-chan struct{}
 }
@@ -137,7 +143,11 @@ func (s *Server) Handler() http.Handler {
 }
 
 type pageData struct {
-	Clusters []fleet.ClusterView
+	// Management is the management cluster's own health. First on the page
+	// because its failure is the fleet-wide alarm: every card below may be
+	// stale, and the reader should see the cause before the symptoms.
+	Management fleet.ManagementView
+	Clusters   []fleet.ClusterView
 	// Storage is the datacenter's Ceph hardware. Its own field rather than a
 	// cluster's, because it is not one.
 	Storage fleet.Storage
@@ -166,13 +176,14 @@ type clusterData struct {
 func (s *Server) page(r *http.Request) pageData {
 	scope := s.scopeFor(r)
 	return pageData{
-		Clusters: filterViews(s.fleet.View(), scope),
-		Storage:  filterStorage(s.fleet.Storage(), scope),
-		Auth:     s.auth.Describe(),
-		Warning:  s.auth.Warning(),
-		Version:  s.version,
-		Site:     s.site,
-		Now:      time.Now(),
+		Management: s.fleet.Management(),
+		Clusters:   filterViews(s.fleet.View(), scope),
+		Storage:    filterStorage(s.fleet.Storage(), scope),
+		Auth:       s.auth.Describe(),
+		Warning:    s.auth.Warning(),
+		Version:    s.version,
+		Site:       s.site,
+		Now:        time.Now(),
 	}
 }
 

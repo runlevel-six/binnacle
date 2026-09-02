@@ -523,5 +523,49 @@
   .backlink:hover { text-decoration: underline; }
   .card-link { color: inherit; text-decoration: none; }
   .card-link:hover h2 { text-decoration: underline; text-decoration-color: var(--brass); }
+
+  /* The management cluster is a peer of the cluster grid and the storage
+     panel: the management cluster, the workload clusters, and the storage
+     clusters are the three things a datacenter contains. It sits above the
+     cards because its failure is the fleet-wide alarm — every card below
+     may be stale, and the reader should see the cause before the symptoms. */
+  .management {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: .7rem .9rem;
+    margin-bottom: 1rem;
+    background: var(--panel);
+  }
+  .management[data-status="err"] { border-color: var(--err); }
+  .management[data-status="warn"] { border-color: var(--warn); }
+  .management-header {
+    display: flex; align-items: baseline; gap: .7rem;
+    margin-bottom: .4rem;
+  }
+  .management-title {
+    font-weight: 600; font-size: .95rem;
+  }
+  .management-version {
+    font-family: var(--mono, ui-monospace, monospace);
+    font-size: .78rem; color: var(--dim);
+  }
+  .management-updated {
+    margin-left: auto; font-size: .75rem; color: var(--dim);
+  }
+  .management-error { font-weight: 600; color: var(--err); }
+  .management-warning { font-size: .78rem; color: var(--dim); margin-top: .3rem; }
+  .management .controller-health { margin-top: .4rem; }
+  .management .controller-health table { width: 100%; font-size: .78rem; }
+  .management .controller-health th {
+    text-align: left; font-weight: 600; padding: .2rem .5rem;
+    border-bottom: 1px solid var(--line); font-size: .72rem;
+  }
+  .management .controller-health td { padding: .2rem .5rem; }
+  .management .controller-health tr.err td:first-child { color: var(--err); }
+  .management .controller-health tr.warn td:first-child { color: var(--warn); }
+  .management .controller-health tr.ok td:first-child { color: var(--ok); }
+  .management .unhealthy-count {
+    margin-top: .3rem; font-size: .75rem; color: var(--warn);
+  }
 </style>
 {{end}}
