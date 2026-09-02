@@ -18,7 +18,7 @@ import (
 // testBuilder builds a cluster dashboard model from the demo fixture.
 // It mirrors what app.BuildModel does, without importing the app package
 // (which would be a circular dependency).
-func testBuilder(_, _ string) (*Model, error) {
+func testBuilder(_, _ string) (*Model, func(), error) {
 	theme := tui.DefaultTheme()
 	tui.ApplyTheme(theme)
 	resolved := demo.Resolved(theme)
@@ -33,7 +33,7 @@ func testBuilder(_, _ string) (*Model, error) {
 	all := tui.Group(append(panes, pluginPanes...))
 	m := New(resolved, store, reg, all).
 		WithBuild(build.Info{Version: "test", Commit: "abc", Date: "2026-09-01T00:00:00Z"})
-	return m, nil
+	return m, nil, nil
 }
 
 func newSextant(w, h int) *SextantModel {

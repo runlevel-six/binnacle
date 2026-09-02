@@ -45,8 +45,9 @@ func RunFleetDemo(ctx context.Context, cfg config.Config, info build.Info) error
 
 	// The cluster builder creates a fresh demo store + registry each time,
 	// so every drill-down starts from the current fixture state.
-	builder := func(_, _ string) (*ui.Model, error) {
-		return buildDemoClusterModel(theme, info)
+	builder := func(_, _ string) (*ui.Model, func(), error) {
+		m, err := buildDemoClusterModel(theme, info)
+		return m, nil, err
 	}
 	fleetModel.SetBuilder(builder)
 

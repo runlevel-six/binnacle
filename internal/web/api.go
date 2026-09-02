@@ -41,6 +41,84 @@ func (s *Server) handleAPICluster(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, d)
 }
 
+// handleAPIClusterSnapshot returns one cluster's raw store contents as
+// a JSON array of wire entries. This is the synchronous poll endpoint;
+// the stream endpoint delivers the same shape over SSE.
+func (s *Server) handleAPIClusterSnapshot(w http.ResponseWriter, r *http.Request) {
+	scope := s.scopeFor(r)
+	ns := r.PathValue("namespace")
+	if !scope.Allows(ns) {
+		http.NotFound(w, r)
+		return
+	}
+	entries, ok := s.fleet.StoreSnapshot(ns, r.PathValue("name"))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, entries)
+}
+
+// handleAPIClusterStream streams one cluster's raw store contents as
+// JSON wire entries over Server-Sent Events. Each Changed tick produces
+// a full snapshot — the store is small (a few hundred KB) and the client
+// decodes each entry independently, so a full dump is simpler and more
+// robust than a delta protocol.
+func (s *Server) handleAPIClusterStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	scope := s.scopeFor(r)
+	ns := r.PathValue("namespace")
+	if !scope.Allows(ns) {
+		http.NotFound(w, r)
+		return
+	}
+
+	send := func() bool {
+		entries, ok := s.fleet.StoreSnapshot(ns, r.PathValue("name"))
+		if !ok {
+			return false
+		}
+		data, err := json.Marshal(entries)
+		if err != nil {
+			return false
+		}
+		fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", data)
+		flusher.Flush()
+		return true
+	}
+
+	if !send() {
+		http.NotFound(w, r)
+		return
+	}
+
+	keepalive := time.NewTicker(25 * time.Second)
+	defer keepalive.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.fleet.Changed():
+			if !send() {
+				return
+			}
+		case <-keepalive.C:
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
 // handleAPIStorage returns the datacenter storage layer as JSON.
 func (s *Server) handleAPIStorage(w http.ResponseWriter, r *http.Request) {
 	scope := s.scopeFor(r)

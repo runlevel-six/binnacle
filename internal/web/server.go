@@ -21,6 +21,7 @@ import (
 	"github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
 
 	"github.com/runlevel-six/binnacle/internal/fleet"
+	"github.com/runlevel-six/binnacle/internal/wire"
 )
 
 //go:embed templates/*.html
@@ -65,6 +66,10 @@ type Source interface {
 	// cluster has no nodes" and "there is no such cluster" are different
 	// claims and must not render the same.
 	Cluster(namespace, name string) (fleet.ClusterDetail, bool)
+	// StoreSnapshot returns the raw store contents for one cluster as wire
+	// entries, for streaming to a terminal client's dashboard. False means
+	// no such cluster is tracked.
+	StoreSnapshot(namespace, name string) ([]wire.Entry, bool)
 	// Storage returns the datacenter's storage layer, which belongs to no
 	// cluster and so cannot be reached through View.
 	Storage() fleet.Storage
@@ -136,6 +141,8 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /cluster/{namespace}/{name}/events", s.handleClusterEvents)
 	protected.HandleFunc("GET /api/v1/fleet", s.handleAPIFleet)
 	protected.HandleFunc("GET /api/v1/clusters/{namespace}/{name}", s.handleAPICluster)
+	protected.HandleFunc("GET /api/v1/clusters/{namespace}/{name}/snapshot", s.handleAPIClusterSnapshot)
+	protected.HandleFunc("GET /api/v1/clusters/{namespace}/{name}/stream", s.handleAPIClusterStream)
 	protected.HandleFunc("GET /api/v1/storage", s.handleAPIStorage)
 	protected.HandleFunc("GET /api/v1/events", s.handleAPIEvents)
 	mux.Handle("/", s.auth.Middleware(protected))

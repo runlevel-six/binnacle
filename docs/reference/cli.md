@@ -104,7 +104,7 @@ switching between clouds has already exported it.
 |---|---|
 | `?` | Toggle the key hints in the footer. |
 | `↑` / `↓` or `k` / `j` | Move selection up or down. |
-| `enter` | Drill into the selected cluster. In `--demo-fleet`, shows the full dashboard from the demo fixture. In `--server` mode, shows the cluster's text detail (full dashboard drill-down is step 4). |
+| `enter` | Drill into the selected cluster. In `--demo-fleet`, shows the full dashboard from the demo fixture. In `--server` mode, opens a per-cluster SSE stream and shows the full dashboard from live data. |
 | `esc` | Return to the fleet list. |
 | `r` | Reverse sort order (worst-first ↔ worst-last). |
 | `/` | Filter clusters by substring (case-insensitive). Type to narrow, enter to apply, esc to clear. |

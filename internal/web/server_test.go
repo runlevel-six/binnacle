@@ -21,6 +21,7 @@ import (
 
 	"github.com/runlevel-six/binnacle/internal/auth"
 	"github.com/runlevel-six/binnacle/internal/fleet"
+	"github.com/runlevel-six/binnacle/internal/wire"
 )
 
 type fakeFleet struct {
@@ -41,6 +42,10 @@ func (f *fakeFleet) Management() fleet.ManagementView {
 func (f *fakeFleet) Cluster(namespace, name string) (fleet.ClusterDetail, bool) {
 	d, ok := f.detail[namespace+"/"+name]
 	return d, ok
+}
+
+func (f *fakeFleet) StoreSnapshot(_, _ string) ([]wire.Entry, bool) {
+	return nil, false
 }
 
 func serve(t *testing.T, clusters ...fleet.ClusterView) http.Handler {

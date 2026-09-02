@@ -16,8 +16,9 @@ type DrillDownMsg struct {
 
 // ClusterBuilder builds a single-cluster dashboard model for the named
 // cluster. The router calls it on drill-down; the fleet model never
-// builds a cluster screen itself.
-type ClusterBuilder func(namespace, name string) (*Model, error)
+// builds a cluster screen itself. The returned cleanup function is
+// called when the operator returns to the fleet list, and may be nil.
+type ClusterBuilder func(namespace, name string) (*Model, func(), error)
 
 // SextantModel is the top-level router for --server and --demo-fleet
 // modes. It owns the fleet screen and, when the operator drills into a
@@ -33,6 +34,7 @@ type SextantModel struct {
 
 	screen  string // "fleet" or "cluster"
 	cluster *Model
+	cleanup func() // called when leaving the cluster screen; may be nil
 
 	width, height int
 }
@@ -68,11 +70,12 @@ func (m *SextantModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case DrillDownMsg:
-		cluster, err := m.builder(msg.Namespace, msg.Name)
+		cluster, cleanup, err := m.builder(msg.Namespace, msg.Name)
 		if err != nil || cluster == nil {
 			return m, nil
 		}
 		m.cluster = cluster
+		m.cleanup = cleanup
 		m.cluster.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.screen = "cluster"
 		return m, m.cluster.Init()
@@ -80,7 +83,11 @@ func (m *SextantModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.screen == "cluster" && m.cluster != nil {
 			if msg.Type == tea.KeyEsc || msg.String() == "backspace" {
+				if m.cleanup != nil {
+					m.cleanup()
+				}
 				m.cluster = nil
+				m.cleanup = nil
 				m.screen = "fleet"
 				return m, nil
 			}

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -19,7 +20,7 @@ import (
 // a server running with --allow-unauthenticated does not need one.
 //
 // serverCluster, when non-empty, skips the fleet list and goes straight to
-// that cluster's detail view. It is a "namespace/name" pair identifying one
+// that cluster's dashboard. It is a "namespace/name" pair identifying one
 // cluster in the fleet. Esc returns to the fleet list.
 //
 // theme is applied before the UI starts, so the first frame is in the right
@@ -40,16 +41,35 @@ func RunServer(ctx context.Context, serverURL, token, serverCluster string, info
 		errCh <- src.Run(subCtx)
 	}()
 
-	model := ui.NewFleet(src, serverURL, info)
+	fleetModel := ui.NewFleet(src, serverURL, info)
+
+	// The cluster builder opens a per-cluster SSE stream, populates a store,
+	// and builds a dashboard model. Cleanup cancels the stream when the
+	// operator returns to the fleet.
+	clusterCfg := ServerClusterConfig{
+		ServerURL: serverURL,
+		Token:     token,
+		Theme:     theme,
+		BuildInfo: info,
+	}
+	builder := func(ns, name string) (*ui.Model, func(), error) {
+		return BuildServerClusterModel(clusterCfg, ns, name)
+	}
+	fleetModel.SetBuilder(builder)
+
+	router := ui.NewSextant(fleetModel, builder, info)
 
 	// --server-cluster skips the fleet list and goes straight to the
-	// cluster's detail. The initial fleet fetch still runs, so Esc from
-	// the detail view returns to a populated list.
+	// cluster's dashboard. The initial fleet fetch still runs, so Esc from
+	// the dashboard returns to a populated list.
 	if serverCluster != "" {
-		model.SetAutoSelect(serverCluster)
+		parts := strings.SplitN(serverCluster, "/", 2)
+		if len(parts) == 2 {
+			router.Update(ui.DrillDownMsg{Namespace: parts[0], Name: parts[1]})
+		}
 	}
 
-	program := tea.NewProgram(model,
+	program := tea.NewProgram(router,
 		tea.WithAltScreen(),
 		tea.WithContext(ctx),
 	)

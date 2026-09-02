@@ -4,6 +4,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/runlevel-six/binnacle/internal/wire"
 	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/model"
 	"github.com/runlevel-six/binnacle/pkg/store"
@@ -159,6 +160,23 @@ func (f *Fleet) Cluster(namespace, name string) (ClusterDetail, bool) {
 		d.Drains = m.Drains
 	}
 	return d, true
+}
+
+// StoreSnapshot returns the raw store contents for one cluster as wire
+// entries, for streaming to a terminal client's dashboard. The dashboard
+// panes read typed snapshots from the store; this is the same data,
+// unfiltered and uncapped, as opposed to Cluster which is a curated
+// projection.
+//
+// The bool is false when no such cluster is tracked.
+func (f *Fleet) StoreSnapshot(namespace, name string) ([]wire.Entry, bool) {
+	f.mu.Lock()
+	t, ok := f.clusters[namespace+"/"+name]
+	f.mu.Unlock()
+	if !ok {
+		return nil, false
+	}
+	return wire.Dump(t.store), true
 }
 
 func (d *ClusterDetail) readNodes(s *store.Store) {

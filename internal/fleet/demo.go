@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/runlevel-six/binnacle/internal/wire"
 	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/model"
 	"github.com/runlevel-six/binnacle/pkg/rollout"
@@ -46,6 +47,13 @@ func NewDemo() *Demo {
 
 // Changed satisfies the same contract as [Fleet.Changed].
 func (d *Demo) Changed() <-chan struct{} { return d.changed }
+
+// StoreSnapshot returns nil for the demo. The fleet demo drills into
+// the single-cluster demo fixture through the router, not through the
+// store-stream API endpoint.
+func (d *Demo) StoreSnapshot(_, _ string) ([]wire.Entry, bool) {
+	return nil, false
+}
 
 // Run advances the fixture until ctx is canceled.
 func (d *Demo) Run(ctx context.Context) {

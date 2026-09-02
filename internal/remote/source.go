@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/runlevel-six/binnacle/internal/fleet"
+	"github.com/runlevel-six/binnacle/internal/wire"
 )
 
 // Source is a [web.Source] backed by a binnacle server's JSON API.
@@ -129,6 +130,27 @@ func (s *Source) Storage() fleet.Storage {
 // view is a separate screen shape that does not exist yet.
 func (s *Source) Management() fleet.ManagementView {
 	return fleet.ManagementView{}
+}
+
+// StoreSnapshot fetches one cluster's raw store contents from the server's
+// stream endpoint. It is a synchronous poll used by ClusterSource.Detect;
+// the streaming path uses the SSE endpoint directly.
+func (s *Source) StoreSnapshot(namespace, name string) ([]wire.Entry, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := s.get(ctx, fmt.Sprintf("/api/v1/clusters/%s/%s/snapshot", namespace, name))
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false
+	}
+	var entries []wire.Entry
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		return nil, false
+	}
+	return entries, true
 }
 
 // Changed returns a channel that ticks when the fleet may have moved.
