@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/runlevel-six/sextant/pkg/collect"
-	"github.com/runlevel-six/sextant/pkg/health"
-	"github.com/runlevel-six/sextant/pkg/model"
-	"github.com/runlevel-six/sextant/pkg/plugin"
-	"github.com/runlevel-six/sextant/pkg/profile"
-	"github.com/runlevel-six/sextant/pkg/rollout"
-	"github.com/runlevel-six/sextant/pkg/store"
+	"github.com/runlevel-six/binnacle/pkg/collect"
+	"github.com/runlevel-six/binnacle/pkg/health"
+	"github.com/runlevel-six/binnacle/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/plugin"
+	"github.com/runlevel-six/binnacle/pkg/profile"
+	"github.com/runlevel-six/binnacle/pkg/rollout"
+	"github.com/runlevel-six/binnacle/pkg/store"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -95,6 +95,8 @@ type Fleet struct {
 	opts       Options
 	discoverer *Discoverer
 
+	mgmt *mgmtCollector
+
 	mu       sync.Mutex
 	clusters map[string]*tracked
 
@@ -146,6 +148,7 @@ func (f *Fleet) notify() {
 // frozen at whatever it last saw, which is the failure mode a status board can
 // least afford.
 func (f *Fleet) Run(ctx context.Context) error {
+	f.startManagement(ctx)
 	if err := f.reconcile(ctx); err != nil {
 		return err
 	}
@@ -155,6 +158,9 @@ func (f *Fleet) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			f.stopAll()
+			if f.mgmt != nil {
+				f.mgmt.cancel()
+			}
 			return ctx.Err()
 		case <-ticker.C:
 			// A failed re-list leaves the existing collectors running. The
@@ -266,6 +272,7 @@ func (f *Fleet) start(ctx context.Context, d Discovered) {
 			Registry:   t.registry,
 			Management: f.opts.Management,
 			Workload:   d.Config,
+			ExecConfig: d.ExecConfig,
 			Profile:    f.opts.Profile,
 			// Narrow the management-side objects to this cluster. Without it
 			// every collector would publish every cluster's Machines into its

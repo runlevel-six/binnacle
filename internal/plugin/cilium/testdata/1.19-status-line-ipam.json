@@ -1,0 +1,26 @@
+{
+  "_comment": "Reduced from a real Cilium 1.19.6 agent. The allocation lists are truncated and anonymised; the shape is what matters. Note that the version is in cilium.msg, ipam.ipv4 is a bare array of address strings, and ipam.status is the only place the pool total appears.",
+  "cilium": {
+    "msg": "1.19.6 (v1.19.6-9a898243)",
+    "state": "Ok"
+  },
+  "kube-proxy-replacement": {"mode": "True"},
+  "encryption": {"mode": "Disabled"},
+  "ipam": {
+    "allocations": {
+      "10.0.0.1": "ns-a/workload-a [restored]",
+      "10.0.0.2": "ns-b/workload-b [restored]",
+      "10.0.0.3": "health",
+      "10.0.0.4": "router"
+    },
+    "ipv4": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
+    "ipv6": null,
+    "status": "IPv4: 124/254 allocated from 10.0.0.0/24, "
+  },
+  "hubble": {
+    "state": "Ok",
+    "observer": {"seen-flows": 155951, "uptime": "48h32m1.234s"}
+  },
+  "controllers": [{"status": {"success-count": 12, "consecutive-failure-count": 0}}],
+  "cluster-mesh": null
+}

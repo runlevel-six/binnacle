@@ -1,0 +1,37 @@
+---
+name: Feature request
+description: Suggest a pane, a data source, or a profile field
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What can't you see right now?
+      description: >-
+        Describe the operational question you're trying to answer. "I can't tell
+        whether X is progressing" is more useful than a proposed UI.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What shape do you think this is?
+      options:
+        - A new pane
+        - A new data source / plugin
+        - A profile field (something hardcoded that should be configurable)
+        - A keybinding or layout change
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Your stack
+      description: >-
+        Relevant if this depends on a subsystem — which CNI, storage, GitOps
+        controller, or bare-metal provider you run.
+    validations:
+      required: false

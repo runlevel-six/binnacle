@@ -3,12 +3,12 @@ package fleet
 import (
 	"testing"
 
-	"github.com/runlevel-six/sextant/pkg/store"
-	"github.com/runlevel-six/sextant/pkg/subsystem"
-	"github.com/runlevel-six/sextant/pkg/subsystem/cilium"
-	"github.com/runlevel-six/sextant/pkg/subsystem/metallb"
-	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
-	"github.com/runlevel-six/sextant/pkg/subsystem/ovn"
+	"github.com/runlevel-six/binnacle/pkg/store"
+	"github.com/runlevel-six/binnacle/pkg/subsystem"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/cilium"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/metallb"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/ovn"
 )
 
 // A cluster that does not run a subsystem gets nothing, not an empty section.

@@ -1,0 +1,22 @@
+cc1b
+Name: OVN_Southbound
+Cluster ID: 4a2f (4a2f9d31-11cc-4c6e-9b02-6f1a2c3d4e5f)
+Server ID: cc1b (cc1b7f01-2a3b-4c5d-8e9f-0a1b2c3d4e5f)
+Address: tcp:ovn-ovsdb-sb-1.ovn-ovsdb-sb.openstack.svc.cluster.local:6644
+Status: cluster member
+Role: leader
+Term: 42
+Leader: self
+Vote: self
+
+Last Election started 500123 ms ago, reason: timeout
+Election timer: 1000
+Log: [1, 88231]
+Entries not yet committed: 0
+Entries not yet applied: 0
+Connections: ->8469 ->7ed9 <-8469 <-7ed9
+Disconnections: 0
+Servers:
+    cc1b (cc1b at tcp:ovn-ovsdb-sb-1.ovn-ovsdb-sb.openstack.svc.cluster.local:6644) (self)
+    8469 (8469 at tcp:ovn-ovsdb-sb-0.ovn-ovsdb-sb.openstack.svc.cluster.local:6644) last msg 12 ms ago
+    7ed9 (7ed9 at tcp:ovn-ovsdb-sb-2.ovn-ovsdb-sb.openstack.svc.cluster.local:6644) last msg 41 ms ago

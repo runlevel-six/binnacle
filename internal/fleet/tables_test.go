@@ -3,7 +3,7 @@ package fleet
 import (
 	"testing"
 
-	"github.com/runlevel-six/sextant/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/model"
 )
 
 func node(name, role, status string, cordoned, pressure bool) NodeRow {

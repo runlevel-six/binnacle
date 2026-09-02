@@ -1,0 +1,7 @@
+{
+  "cilium": {"state": "Warning", "version": "1.14.5"},
+  "kube-proxy-replacement": {"mode": "Partial"},
+  "ipam": {"ipv4-allocations": ["10.0.1.5", "10.0.1.6", "10.0.1.7"]},
+  "hubble": {"state": "Disabled"},
+  "controllers": []
+}

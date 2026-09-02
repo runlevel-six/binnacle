@@ -1,0 +1,71 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+#
+# Rolling "edge" prerelease: every merge to main republishes the `edge` release
+# with binaries built from that commit.
+#
+# This is deliberately not a version bump. Tags stay the only thing that mints a
+# version number and writes release notes (see release.yaml); `edge` exists so
+# that someone who wants what is on main does not have to install Go and build
+# it, and so the download URL in the README never has to change.
+#
+# The release is deleted and recreated rather than updated in place, so a build
+# that drops an artifact cannot leave a stale one behind next to the new ones.
+# The `edge` tag is moved with it, and does not match release.yaml's `v*` filter,
+# so this cannot trigger a real release.
+name: Edge
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# One edge build at a time, newest wins: two merges in quick succession would
+# otherwise race to publish, and the loser could overwrite the newer binaries.
+concurrency:
+  group: edge
+  cancel-in-progress: true
+
+jobs:
+  edge:
+    name: Edge build
+    # Forks get main pushes too, and have no release to publish to.
+    if: github.repository == 'runlevel-six/sextant'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test before publishing
+        run: go test ./...
+
+      # --snapshot builds the archives and checksums without publishing, and
+      # without needing a tag. SEXTANT_SNAPSHOT_VERSION fixes the version string
+      # at "edge" so artifact names are stable; see .goreleaser.yaml.
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.17.1
+          args: release --snapshot --clean
+        env:
+          SEXTANT_SNAPSHOT_VERSION: edge
+
+      - name: Publish the edge release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete edge --yes --cleanup-tag || true
+          gh release create edge \
+            --target "${GITHUB_SHA}" \
+            --title "Edge build (main)" \
+            --prerelease \
+            --notes "Built from [\`${GITHUB_SHA:0:7}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}) on main. Unversioned and replaced on every merge — pin a tagged release for anything you depend on. Reports its version as \`edge\`." \
+            dist/*.tar.gz dist/checksums.txt

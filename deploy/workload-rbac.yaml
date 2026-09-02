@@ -1,0 +1,154 @@
+---
+# Workload-cluster RBAC for binnacle's collector.
+#
+# Unlike rbac.yaml (which lives on the management cluster), this manifest is
+# applied to each workload cluster binnacle reads. It defines a ServiceAccount
+# with two things:
+#
+#   1. Read on the resources every plugin needs (pods, daemonsets, statefulsets,
+#      nodes, events).
+#   2. pods/exec scoped to the namespaces where Ceph, Cilium, and OVN pods run —
+#      nothing wider.
+#
+# The kubeconfig for this ServiceAccount is stored in a Secret named
+# <cluster>-exec-kubeconfig on the management cluster, in the same namespace as
+# the Cluster object. Binnacle resolves it automatically; when the Secret is
+# absent, exec falls back to the CAPI-minted kubeconfig (cluster-admin), which
+# is the historical behavior.
+#
+# Human operators get a read-only role with no pods/exec. Under that role,
+# sextant sits at TierInformer for Ceph, Cilium, and OVN by design. The tier
+# reason says so and names --server as the fix: an operator who needs full-tier
+# detail connects to the binnacle server, whose collector holds the scoped exec
+# privilege this manifest grants.
+#
+# **Apply this to each workload cluster**, not the management cluster. The
+# namespace placeholders below must match where your Ceph, Cilium, and OVN pods
+# actually run.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: binnacle-collector
+  namespace: binnacle
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: binnacle
+---
+# Read permissions: what every plugin needs to list and watch.
+#
+# This is a ClusterRole because the plugins read across namespaces — Cilium
+# agents run in kube-system, Ceph tools in rook-ceph, OVN databases in their
+# own namespace. A namespaced Role would need one per namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: binnacle-collector-read
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets", "statefulsets", "deployments"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: binnacle-collector-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: binnacle-collector-read
+subjects:
+  - kind: ServiceAccount
+    name: binnacle-collector
+    namespace: binnacle
+---
+# Exec permissions: pods/exec scoped to the namespaces where status commands
+# run. Each Role is namespaced — the grant is only valid inside that namespace.
+#
+# The commands are fixed argument lists built by the plugins (ceph -s, cilium
+# status, ovn-nbctl show), never assembled from user input. That is what keeps
+# this grant from becoming an arbitrary-execution path.
+#
+# Set each namespace below to where the corresponding subsystem runs on this
+# cluster. A subsystem not present is simply not listed — its Role is not
+# created, and the plugin falls back to TierInformer for it.
+
+# --- Ceph ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: binnacle-collector-exec
+  namespace: rook-ceph
+rules:
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: binnacle-collector-exec
+  namespace: rook-ceph
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: binnacle-collector-exec
+subjects:
+  - kind: ServiceAccount
+    name: binnacle-collector
+    namespace: binnacle
+---
+# --- Cilium ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: binnacle-collector-exec
+  namespace: kube-system
+rules:
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: binnacle-collector-exec
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: binnacle-collector-exec
+subjects:
+  - kind: ServiceAccount
+    name: binnacle-collector
+    namespace: binnacle
+---
+# --- OVN ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: binnacle-collector-exec
+  namespace: ovn-kubernetes
+rules:
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: binnacle-collector-exec
+  namespace: ovn-kubernetes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: binnacle-collector-exec
+subjects:
+  - kind: ServiceAccount
+    name: binnacle-collector
+    namespace: binnacle

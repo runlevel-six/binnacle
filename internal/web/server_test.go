@@ -10,38 +10,47 @@ import (
 	"testing"
 	"time"
 
-	"github.com/runlevel-six/sextant/pkg/health"
-	"github.com/runlevel-six/sextant/pkg/model"
-	"github.com/runlevel-six/sextant/pkg/subsystem"
-	"github.com/runlevel-six/sextant/pkg/subsystem/ceph"
-	"github.com/runlevel-six/sextant/pkg/subsystem/cilium"
-	"github.com/runlevel-six/sextant/pkg/subsystem/metallb"
-	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
-	"github.com/runlevel-six/sextant/pkg/subsystem/ovn"
+	"github.com/runlevel-six/binnacle/pkg/health"
+	"github.com/runlevel-six/binnacle/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/subsystem"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/ceph"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/cilium"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/metallb"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/ovn"
 
 	"github.com/runlevel-six/binnacle/internal/auth"
 	"github.com/runlevel-six/binnacle/internal/fleet"
+	"github.com/runlevel-six/binnacle/internal/wire"
 )
 
 type fakeFleet struct {
 	clusters []fleet.ClusterView
 	detail   map[string]fleet.ClusterDetail
 	storage  fleet.Storage
+	mgmt     fleet.ManagementView
 	changed  chan struct{}
 }
 
 func (f *fakeFleet) View() []fleet.ClusterView { return f.clusters }
 func (f *fakeFleet) Storage() fleet.Storage    { return f.storage }
 func (f *fakeFleet) Changed() <-chan struct{}  { return f.changed }
+func (f *fakeFleet) Management() fleet.ManagementView {
+	return f.mgmt
+}
 
 func (f *fakeFleet) Cluster(namespace, name string) (fleet.ClusterDetail, bool) {
 	d, ok := f.detail[namespace+"/"+name]
 	return d, ok
 }
 
+func (f *fakeFleet) StoreSnapshot(_, _ string) ([]wire.Entry, bool) {
+	return nil, false
+}
+
 func serve(t *testing.T, clusters ...fleet.ClusterView) http.Handler {
 	t.Helper()
-	s, err := New(&fakeFleet{clusters: clusters, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
+	s, err := New(&fakeFleet{clusters: clusters, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +139,7 @@ func TestFleetPage_EmptyFleetSaysSo(t *testing.T) {
 // A probe has no session, so gating it would make the deployment
 // unschedulable.
 func TestHealthz_IsNotGated(t *testing.T) {
-	s, err := New(&fakeFleet{changed: make(chan struct{})}, auth.Open{}, "test", "site-a")
+	s, err := New(&fakeFleet{changed: make(chan struct{})}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +220,7 @@ func TestFleetPage_SiteNamesTheDeployment(t *testing.T) {
 // A single local instance has nothing to be confused with, so an unset site is
 // absence rather than an empty badge.
 func TestFleetPage_UnnamedSiteRendersNothingExtra(t *testing.T) {
-	s, err := New(&fakeFleet{changed: make(chan struct{}, 1)}, auth.Open{}, "test", "")
+	s, err := New(&fakeFleet{changed: make(chan struct{}, 1)}, auth.Open{}, "test", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +264,7 @@ func serveDetail(t *testing.T, d fleet.ClusterDetail) http.Handler {
 	s, err := New(&fakeFleet{
 		detail:  map[string]fleet.ClusterDetail{d.Namespace + "/" + d.Name: d},
 		changed: make(chan struct{}, 1),
-	}, auth.Open{}, "test", "site-a")
+	}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -636,7 +645,7 @@ func TestFleetPage_EveryCardBranchRenders(t *testing.T) {
 	s, err := New(&fakeFleet{
 		clusters: []fleet.ClusterView{rich, broken}, storage: st,
 		changed: make(chan struct{}, 1),
-	}, auth.Open{}, "test", "site-a")
+	}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -778,7 +787,7 @@ func fleetPageWithFoldedStorage(t *testing.T) string {
 	}
 	s, err := New(&fakeFleet{
 		storage: fleet.StorageFor(hosts, nil), changed: make(chan struct{}, 1),
-	}, auth.Open{}, "test", "site-a")
+	}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -812,6 +821,108 @@ func TestPackedTablesDeclareTheirRealColumnCount(t *testing.T) {
 	}
 	if seen < 6 {
 		t.Errorf("only checked %d packed tables; the pages should render more", seen)
+	}
+}
+
+// The management section renders when the management cluster is reachable,
+// showing its version, node count, controller health, and cells. It is the
+// first thing on the page because its failure is fleet-wide.
+func TestFleetPage_ManagementSection(t *testing.T) {
+	mgmt := fleet.ManagementView{
+		Reachable: true,
+		Version:   "v1.31.4",
+		Nodes:     fleet.NodeCount{Ready: 3, Total: 3},
+		NodesKnown: true,
+		ControllerHealth: &fleet.ControllerHealth{
+			Unhealthy: 1,
+			Critical: []fleet.CriticalWorkloadStatus{
+				{Kind: "Deployment", Namespace: "capi-system", Name: "capi-controller-manager", Ready: 1, Desired: 1},
+				{Kind: "Deployment", Namespace: "capm3-system", Name: "capm3-controller-manager", Ready: 0, Desired: 1},
+			},
+		},
+		Cells: []health.Cell{
+			{Name: "Nodes", Status: health.StatusOK, Detail: "3/3"},
+			{Name: "Pods", Status: health.StatusWarn, Detail: "1 unhealthy"},
+		},
+		Status:    health.StatusWarn,
+		UpdatedAt: time.Now(),
+	}
+	s, err := New(&fakeFleet{
+		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01", Status: health.StatusOK}},
+		changed:  make(chan struct{}, 1),
+		mgmt:     mgmt,
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+
+	for _, want := range []string{
+		"Management cluster",
+		"v1.31.4",
+		"capi-controller-manager",
+		"capm3-controller-manager",
+		"1/1",
+		"0/1",
+		"1 unhealthy",
+		`data-status="warn"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("management section missing %q", want)
+		}
+	}
+
+	// The management section sits above the cluster grid.
+	mgmtIdx := strings.Index(body, "Management cluster")
+	gridIdx := strings.Index(body, `<div class="grid">`)
+	if mgmtIdx < 0 || gridIdx < 0 || mgmtIdx > gridIdx {
+		t.Error("management section does not appear before the cluster grid")
+	}
+}
+
+// An unreachable management cluster shows the error and a warning that
+// workload cards may be stale.
+func TestFleetPage_ManagementUnreachable(t *testing.T) {
+	mgmt := fleet.ManagementView{
+		Reachable: false,
+		ErrText:  "connection refused",
+	}
+	s, err := New(&fakeFleet{
+		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01"}},
+		changed:  make(chan struct{}, 1),
+		mgmt:     mgmt,
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+
+	if !strings.Contains(body, "Unreachable: connection refused") {
+		t.Error("the unreachable reason is not on the page")
+	}
+	if !strings.Contains(body, "may be stale") {
+		t.Error("the stale-data warning is missing")
+	}
+	if !strings.Contains(body, `data-status="err"`) {
+		t.Error("an unreachable management cluster should carry err status")
+	}
+}
+
+// When no management data is available (empty ManagementView, as from the
+// remote source), the section does not render at all rather than showing
+// an empty box.
+func TestFleetPage_ManagementAbsent(t *testing.T) {
+	s, err := New(&fakeFleet{
+		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01"}},
+		changed:  make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+
+	if strings.Contains(body, "Management cluster") {
+		t.Error("an absent management view should not render the section")
 	}
 }
 
@@ -946,7 +1057,7 @@ func fleetPageWithStorage(t *testing.T) string {
 		{Namespace: "machines", Name: "r0102-01-cephmon", State: "provisioned", OperationalStatus: "OK",
 			Labels: map[string]string{fleet.LabelRole: "cephmon", fleet.LabelClusterID: "fsid"}},
 	}, nil)
-	s, err := New(&fakeFleet{storage: st, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
+	s, err := New(&fakeFleet{storage: st, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1006,7 +1117,7 @@ func TestFleetPage_StoragePanel(t *testing.T) {
 		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01"}},
 		storage:  labeled,
 		changed:  make(chan struct{}, 1),
-	}, auth.Open{}, "test", "site-a")
+	}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1038,7 +1149,7 @@ func TestFleetPage_StoragePanelSaysWhenNobodyReports(t *testing.T) {
 			Labels: map[string]string{fleet.LabelRole: "cephosd", fleet.LabelClusterID: "fsid-orphan"}},
 	}, nil)
 
-	s, err := New(&fakeFleet{storage: silent, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
+	s, err := New(&fakeFleet{storage: silent, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1060,7 +1171,7 @@ func TestFleetPage_StoragePanelWithoutLabeledHardware(t *testing.T) {
 		Status:  ceph.Status{FSID: "fsid-only-reported", Health: "HEALTH_OK"},
 	}})
 
-	s, err := New(&fakeFleet{storage: unlabeled, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a")
+	s, err := New(&fakeFleet{storage: unlabeled, changed: make(chan struct{}, 1)}, auth.Open{}, "test", "site-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

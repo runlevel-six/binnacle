@@ -1,4 +1,47 @@
 {{define "fleet-body.html"}}
+{{if .Management.Reachable}}
+<div class="management" data-status="{{.Management.Status}}">
+  <div class="management-header">
+    <span class="management-title">Management cluster</span>
+    {{if .Management.Version}}<span class="management-version">{{.Management.Version}}</span>{{end}}
+    {{if not .Management.UpdatedAt.IsZero}}<span class="management-updated">seen {{ago .Management.UpdatedAt}}</span>{{end}}
+  </div>
+
+  <div class="cells">
+    {{range .Management.Cells}}<span class="cell {{.Status}}">{{.Name}}{{if .Detail}} <span class="d">{{.Detail}}</span>{{end}}</span>{{end}}
+  </div>
+
+  {{if .Management.ControllerHealth}}
+  {{if .Management.ControllerHealth.Critical}}
+  <div class="controller-health">
+    <table class="packed">
+      <thead><tr><th>CONTROLLER</th><th>NAMESPACE</th><th>READY</th></tr></thead>
+      <tbody>
+      {{range .Management.ControllerHealth.Critical}}
+        <tr class="{{if .Absent}}err{{else if lt .Ready .Desired}}warn{{else}}ok{{end}}">
+          <td>{{.Name}}</td>
+          <td class="dim">{{.Namespace}}</td>
+          <td>{{if .Absent}}absent{{else}}{{.Ready}}/{{.Desired}}{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+  {{if .Management.ControllerHealth.Unhealthy}}
+  <p class="unhealthy-count">{{.Management.ControllerHealth.Unhealthy}} unhealthy pod{{if ne .Management.ControllerHealth.Unhealthy 1}}s{{end}} on management cluster</p>
+  {{end}}
+  {{end}}
+</div>
+{{else if .Management.ErrText}}
+<div class="management management-unreachable" data-status="err">
+  <div class="management-header">
+    <span class="management-title">Management cluster</span>
+  </div>
+  <div class="management-error">Unreachable: {{.Management.ErrText}}</div>
+  <p class="management-warning">Workload cluster cards below may be stale. Stale timestamps on individual cards indicate when each cluster was last read.</p>
+</div>
+{{end}}
 <div class="grid">
 {{/* $c names the cluster because the pod list below is a nested range, where
      "." is a pod and "$" is the whole page rather than this card. */}}

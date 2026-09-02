@@ -39,6 +39,14 @@ type Discovered struct {
 	Config    *rest.Config
 	Err       error
 
+	// ExecConfig is a separate identity for pods/exec on this workload
+	// cluster, resolved from a Secret named <cluster>-exec-kubeconfig. Nil
+	// means no such Secret exists, and exec falls back to Config — the
+	// historical behavior. When set, the collector reads with Config and
+	// execs with ExecConfig, which is how a read-only CAPI kubeconfig plus
+	// a scoped exec ServiceAccount is expressed.
+	ExecConfig *rest.Config
+
 	// Clouds is this cluster's OpenStack credentials, when it has any. Nil
 	// means it does not run OpenStack, or nobody has supplied them — either
 	// way the plugin fails detection and contributes nothing, which is what it
@@ -142,6 +150,7 @@ func (d *Discoverer) List(ctx context.Context) ([]Discovered, error) {
 	for _, item := range list.Items {
 		found := Discovered{Namespace: item.GetNamespace(), Name: item.GetName()}
 		found.Config, found.Err = d.workloadConfig(ctx, found.Namespace, found.Name)
+		found.ExecConfig = d.execConfig(ctx, found.Namespace, found.Name)
 		found.Clouds, found.CloudsErr = d.clouds(ctx, found.Namespace, found.Name)
 		out = append(out, found)
 	}
@@ -156,6 +165,13 @@ func (d *Discoverer) List(ctx context.Context) ([]Discovered, error) {
 // Cluster objects gets <name>-cluster-kubeconfig for free. There is no naming
 // convention encoded here beyond upstream's.
 const kubeconfigSuffix = "-kubeconfig"
+
+// execKubeconfigSuffix names the Secret that holds a separate exec identity
+// for a workload cluster. This is an operator-created Secret, not CAPI-minted:
+// the operator creates a ServiceAccount with pods/exec scoped to the Ceph,
+// Cilium, and OVN namespaces, and stores its kubeconfig here. When the Secret
+// is absent, exec falls back to the main workload config.
+const execKubeconfigSuffix = "-exec-kubeconfig"
 
 // clusterNameLabel ties a Cluster API secret back to its Cluster. Used only as a
 // fallback, and only ever to *narrow* candidates — never to widen them.
@@ -232,4 +248,30 @@ func configFromSecret(secret *corev1.Secret) (*rest.Config, error) {
 		return nil, fmt.Errorf("parse secret %s: %w", secret.Name, err)
 	}
 	return cfg, nil
+}
+
+// execConfig resolves a separate exec identity for one workload cluster.
+//
+// Unlike workloadConfig, this is optional: a missing Secret returns nil
+// without error, and exec falls back to the main workload config. The Secret
+// is operator-created — it holds a kubeconfig for a ServiceAccount with
+// pods/exec scoped to the namespaces where Ceph, Cilium, and OVN pods run.
+//
+// A Secret that exists but is malformed is an error worth carrying: the
+// operator intended a scoped exec identity and it is broken, which is
+// different from never having configured one.
+func (d *Discoverer) execConfig(ctx context.Context, namespace, name string) *rest.Config {
+	secret, err := d.core.CoreV1().Secrets(namespace).Get(ctx, name+execKubeconfigSuffix, metav1.GetOptions{})
+	if err != nil {
+		// Not found is the normal case: no scoped exec identity configured.
+		// Any other error (Forbidden, timeout) is also non-fatal here — the
+		// main workload config still works for exec, just without the
+		// narrowing.
+		return nil
+	}
+	cfg, err := configFromSecret(secret)
+	if err != nil {
+		return nil
+	}
+	return cfg
 }

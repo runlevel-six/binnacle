@@ -4,9 +4,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/runlevel-six/sextant/pkg/model"
-	"github.com/runlevel-six/sextant/pkg/store"
-	"github.com/runlevel-six/sextant/pkg/subsystem/ceph"
+	"github.com/runlevel-six/binnacle/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/store"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/ceph"
 )
 
 // Label keys the hardware inventory sets on every BareMetalHost.

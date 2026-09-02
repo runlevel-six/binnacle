@@ -8,15 +8,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/runlevel-six/sextant/pkg/health"
-	"github.com/runlevel-six/sextant/pkg/model"
-	"github.com/runlevel-six/sextant/pkg/rollout"
-	"github.com/runlevel-six/sextant/pkg/subsystem"
-	"github.com/runlevel-six/sextant/pkg/subsystem/ceph"
-	"github.com/runlevel-six/sextant/pkg/subsystem/cilium"
-	"github.com/runlevel-six/sextant/pkg/subsystem/metallb"
-	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
-	"github.com/runlevel-six/sextant/pkg/subsystem/ovn"
+	"github.com/runlevel-six/binnacle/internal/wire"
+	"github.com/runlevel-six/binnacle/pkg/health"
+	"github.com/runlevel-six/binnacle/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/rollout"
+	"github.com/runlevel-six/binnacle/pkg/subsystem"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/ceph"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/cilium"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/metallb"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/ovn"
 )
 
 // Demo is a fleet with no cluster behind it.
@@ -46,6 +47,13 @@ func NewDemo() *Demo {
 
 // Changed satisfies the same contract as [Fleet.Changed].
 func (d *Demo) Changed() <-chan struct{} { return d.changed }
+
+// StoreSnapshot returns nil for the demo. The fleet demo drills into
+// the single-cluster demo fixture through the router, not through the
+// store-stream API endpoint.
+func (d *Demo) StoreSnapshot(_, _ string) ([]wire.Entry, bool) {
+	return nil, false
+}
 
 // Run advances the fixture until ctx is canceled.
 func (d *Demo) Run(ctx context.Context) {
@@ -323,6 +331,37 @@ func (d *Demo) Storage() Storage {
 			}},
 		},
 	}})
+}
+
+// Management returns a plausible management cluster view for the demo, so
+// the management section can be developed and screenshotted without a real
+// management cluster.
+func (d *Demo) Management() ManagementView {
+	return ManagementView{
+		Reachable: true,
+		Version:   "v1.31.4",
+		Nodes: NodeCount{
+			Total: 3,
+			Ready: 3,
+		},
+		NodesKnown: true,
+		ControllerHealth: &ControllerHealth{
+			Unhealthy: 1,
+			Critical: []CriticalWorkloadStatus{
+				{Kind: "Deployment", Namespace: "capi-system", Name: "capi-controller-manager", Ready: 1, Desired: 1},
+				{Kind: "Deployment", Namespace: "capi-kubeadm-bootstrap-system", Name: "capi-kubeadm-bootstrap-controller-manager", Ready: 1, Desired: 1},
+				{Kind: "Deployment", Namespace: "capi-kubeadm-control-plane-system", Name: "capi-kubeadm-control-plane-controller-manager", Ready: 1, Desired: 1},
+				{Kind: "Deployment", Namespace: "capm3-system", Name: "capm3-controller-manager", Ready: 0, Desired: 1},
+				{Kind: "DaemonSet", Namespace: "baremetal-system", Name: "baremetal-operator", Ready: 3, Desired: 3},
+			},
+		},
+		Cells: []health.Cell{
+			{Name: "Nodes", Status: health.StatusOK, Detail: "3/3"},
+			{Name: "Pods", Status: health.StatusWarn, Detail: "1 unhealthy"},
+		},
+		Status:    health.StatusWarn,
+		UpdatedAt: time.Now(),
+	}
 }
 
 // Cluster satisfies the same contract as [Fleet.Cluster], with invented detail

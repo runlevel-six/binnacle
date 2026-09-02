@@ -1,0 +1,18 @@
+{
+  "cilium": {"state": "Ok", "version": "1.15.8"},
+  "kube-proxy-replacement": {"mode": "Strict"},
+  "encryption": {"mode": "WireGuard"},
+  "ipam": {"ipv4": {"allocated": [
+    {"pool": "default", "used": 10, "available": 100},
+    {"pool": "extra", "used": 5, "available": 20}
+  ]}},
+  "hubble": {"state": "Ok", "observer": {"seen-flows": 1000}},
+  "controllers": [
+    {"status": {"success-count": 10, "consecutive-failure-count": 0}},
+    {"status": {"success-count": 0, "consecutive-failure-count": 3}}
+  ],
+  "cluster-mesh": {
+    "num-global-services": 7,
+    "clusters": [{"name": "peer-a", "ready": true}, {"name": "peer-b", "ready": false}]
+  }
+}

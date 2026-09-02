@@ -18,9 +18,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/runlevel-six/sextant/pkg/subsystem/openstack"
+	"github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
 
 	"github.com/runlevel-six/binnacle/internal/fleet"
+	"github.com/runlevel-six/binnacle/internal/wire"
 )
 
 //go:embed templates/*.html
@@ -65,9 +66,19 @@ type Source interface {
 	// cluster has no nodes" and "there is no such cluster" are different
 	// claims and must not render the same.
 	Cluster(namespace, name string) (fleet.ClusterDetail, bool)
+	// StoreSnapshot returns the raw store contents for one cluster as wire
+	// entries, for streaming to a terminal client's dashboard. False means
+	// no such cluster is tracked.
+	StoreSnapshot(namespace, name string) ([]wire.Entry, bool)
 	// Storage returns the datacenter's storage layer, which belongs to no
 	// cluster and so cannot be reached through View.
 	Storage() fleet.Storage
+	// Management returns the management cluster's own health. The management
+	// cluster is not a CAPI Cluster object — it hosts them — so it does not
+	// appear in View. Its node and controller health is fleet-wide
+	// infrastructure: a user who can see any workload cluster should see
+	// whether the thing managing them is itself healthy.
+	Management() fleet.ManagementView
 	// Changed ticks when something may have moved.
 	Changed() <-chan struct{}
 }
@@ -88,15 +99,23 @@ type Server struct {
 	// telling two open tabs apart is the address bar. It is optional because a
 	// single local instance has nothing to be confused with.
 	site string
+	// groupScopes maps OIDC group names to namespace lists, for per-user
+	// scoping. Nil means scoping is off: every authenticated user sees the
+	// entire fleet.
+	groupScopes map[string][]string
 }
 
 // New builds the server. It does not listen; use [Server.Handler].
-func New(f Source, auth Authenticator, version, site string) (*Server, error) {
+//
+// groupScopes is the OIDC group-to-namespace mapping for per-user scoping.
+// Pass nil to disable scoping (everyone sees everything). See
+// [LoadGroupScopes] for the file format.
+func New(f Source, a Authenticator, version, site string, groupScopes map[string][]string) (*Server, error) {
 	tmpl, err := template.New("").Funcs(funcs()).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
-	return &Server{fleet: f, auth: auth, tmpl: tmpl, version: version, site: site}, nil
+	return &Server{fleet: f, auth: a, tmpl: tmpl, version: version, site: site, groupScopes: groupScopes}, nil
 }
 
 // Handler returns the routed handler.
@@ -120,12 +139,22 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /events", s.handleEvents)
 	protected.HandleFunc("GET /cluster/{namespace}/{name}", s.handleCluster)
 	protected.HandleFunc("GET /cluster/{namespace}/{name}/events", s.handleClusterEvents)
+	protected.HandleFunc("GET /api/v1/fleet", s.handleAPIFleet)
+	protected.HandleFunc("GET /api/v1/clusters/{namespace}/{name}", s.handleAPICluster)
+	protected.HandleFunc("GET /api/v1/clusters/{namespace}/{name}/snapshot", s.handleAPIClusterSnapshot)
+	protected.HandleFunc("GET /api/v1/clusters/{namespace}/{name}/stream", s.handleAPIClusterStream)
+	protected.HandleFunc("GET /api/v1/storage", s.handleAPIStorage)
+	protected.HandleFunc("GET /api/v1/events", s.handleAPIEvents)
 	mux.Handle("/", s.auth.Middleware(protected))
 	return mux
 }
 
 type pageData struct {
-	Clusters []fleet.ClusterView
+	// Management is the management cluster's own health. First on the page
+	// because its failure is the fleet-wide alarm: every card below may be
+	// stale, and the reader should see the cause before the symptoms.
+	Management fleet.ManagementView
+	Clusters   []fleet.ClusterView
 	// Storage is the datacenter's Ceph hardware. Its own field rather than a
 	// cluster's, because it is not one.
 	Storage fleet.Storage
@@ -151,20 +180,27 @@ type clusterData struct {
 	Site    string
 }
 
-func (s *Server) page() pageData {
+func (s *Server) page(r *http.Request) pageData {
+	scope := s.scopeFor(r)
 	return pageData{
-		Clusters: s.fleet.View(),
-		Storage:  s.fleet.Storage(),
-		Auth:     s.auth.Describe(),
-		Warning:  s.auth.Warning(),
-		Version:  s.version,
-		Site:     s.site,
-		Now:      time.Now(),
+		Management: s.fleet.Management(),
+		Clusters:   filterViews(s.fleet.View(), scope),
+		Storage:    filterStorage(s.fleet.Storage(), scope),
+		Auth:       s.auth.Describe(),
+		Warning:    s.auth.Warning(),
+		Version:    s.version,
+		Site:       s.site,
+		Now:        time.Now(),
 	}
 }
 
 func (s *Server) cluster(r *http.Request) (clusterData, bool) {
-	d, ok := s.fleet.Cluster(r.PathValue("namespace"), r.PathValue("name"))
+	scope := s.scopeFor(r)
+	ns := r.PathValue("namespace")
+	if !scope.Allows(ns) {
+		return clusterData{}, false
+	}
+	d, ok := s.fleet.Cluster(ns, r.PathValue("name"))
 	if !ok {
 		return clusterData{}, false
 	}
@@ -218,14 +254,14 @@ func (s *Server) handleClusterEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFleet(w http.ResponseWriter, r *http.Request) {
-	d := s.page()
+	d := s.page(r)
 	d.Wall = r.URL.Query().Get("display") == "wall"
 	s.render(w, "fleet.html", d)
 }
 
 // handleEvents streams a re-rendered cluster grid whenever the fleet changes.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	s.stream(w, r, "fleet", func() (any, bool) { return s.page(), true })
+	s.stream(w, r, "fleet", func() (any, bool) { return s.page(r), true })
 }
 
 // stream pushes a re-rendered fragment over Server-Sent Events.

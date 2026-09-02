@@ -1,0 +1,10 @@
+{
+  "cilium": {"state": "Ok", "version": "1.16.5"},
+  "kube-proxy-replacement": {"mode": "True"},
+  "ipam": {"ipv4": {"used": 12, "available": 100}},
+  "hubble": {
+    "state": "Ok",
+    "observer": {"seen-flows": 155951, "uptime": "48h32m1.234s"}
+  },
+  "controllers": [{"status": {"success-count": 5, "consecutive-failure-count": 0}}]
+}

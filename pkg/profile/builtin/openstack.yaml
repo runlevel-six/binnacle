@@ -1,0 +1,89 @@
+---
+# OpenStack running on Kubernetes, provisioned by Cluster API and Metal3.
+#
+# Vendor-neutral: this describes the conventions the common OpenStack-on-Kubernetes
+# deployments share, not any one distribution's. A specific platform should extend
+# this and add its own node-role label key and workload names.
+#
+# Nothing here forces a plugin on. Detection decides what appears, so this profile
+# is safe on a cluster that turns out not to run one of these subsystems.
+name: openstack
+extends: metal3
+description: OpenStack on Kubernetes, provisioned by Cluster API and Metal3
+
+node_roles:
+  # No platform-specific key is assumed, so the upstream fallback from metal3
+  # still applies. Display names are supplied for the roles these deployments
+  # conventionally use; a role with no entry renders as-is, so extra roles are
+  # harmless.
+  display:
+    control-plane: Control-Plane
+    compute: Compute
+  machinedeployment_match:
+    compute:
+      - compute
+  # Worth knowing if your hypervisors are cordoned on purpose — reserving their
+  # capacity for virtual machines rather than pods is a common way to run this.
+  # A cordon is normally a drain in progress and is reported as a warning, which
+  # for a permanently cordoned node would mean a warning that never clears. Name
+  # those roles to say the cordon is the steady state:
+  #
+  # cordon_expected:
+  #   - compute
+  #
+  # Not set by default, because plenty of deployments schedule pods on their
+  # hypervisors and there a cordon really does mean a drain. A cordoned node that
+  # is also NotReady is reported either way.
+
+events:
+  # The OpenStack control plane is where the interesting failures surface, and
+  # kube-system carries the platform daemons underneath it.
+  namespaces:
+    - openstack
+    - kube-system
+
+critical_workloads:
+  # OVN's databases and the control plane's database: the components whose
+  # absence you want to notice immediately rather than infer from a pod list.
+  # These names are the upstream chart defaults; override them if yours differ.
+  - kind: StatefulSet
+    namespace: openstack
+    name: ovn-ovsdb-nb
+  - kind: StatefulSet
+    namespace: openstack
+    name: ovn-ovsdb-sb
+
+plugins:
+  # Settings a plugin reads once it has detected its subsystem. Listing a plugin
+  # here does not enable it — an absent subsystem stays absent — and every setting
+  # below is an *override* for discovery, not a requirement.
+  #
+  # Namespaces and workload names are deliberately absent. Each plugin finds its
+  # own: MetalLB from where its IPAddressPools live, OVN from its database
+  # StatefulSets, Ceph from the Rook tools Deployment. Pinning them here would be
+  # actively harmful, since these subsystems are not always where convention says
+  # — MetalLB in kube-system rather than metallb-system is perfectly ordinary, and
+  # a pin would send the plugin looking in the wrong place. Set one only when
+  # discovery reports ambiguity, and the error will tell you what to set.
+
+  # The OpenStack plugin is the exception: it must be told *which* cloud to watch,
+  # the name of an entry under `clouds:` in your clouds.yaml. There is no default,
+  # because that name is chosen by whoever wrote the file.
+  #
+  # Three ways to supply it, highest precedence first:
+  #
+  #   1. sextant --os-cloud my-cloud
+  #   2. export OS_CLOUD=my-cloud     (the standard OpenStack variable, so if the
+  #                                      openstack CLI works, this already does)
+  #   3. the cloud: setting here
+  #
+  # Prefer the flag or the variable if you operate more than one cloud: those
+  # change per session, whereas everything else in this profile describes how a
+  # cloud is laid out, which is the same for all of yours. Set cloud: here only if
+  # this profile will always watch one specific cloud.
+  #
+  # clouds.yaml must use the standard nested `auth:` layout. The flat layout that
+  # older python-openstackclient tolerates is rejected, and the error says so.
+  #
+  # openstack:
+  #   cloud: my-cloud

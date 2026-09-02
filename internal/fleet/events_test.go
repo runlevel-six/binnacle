@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/runlevel-six/sextant/pkg/model"
-	"github.com/runlevel-six/sextant/pkg/store"
+	"github.com/runlevel-six/binnacle/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/store"
 )
 
 // The shape grouping exists for: one admission policy rejecting many objects.

@@ -29,6 +29,9 @@ kubectl apply -f deploy/binnacle.yaml   # namespace, deployment, service, ingres
 kubectl apply -f deploy/rbac.yaml       # service account, role, binding
 ```
 
+A third file — `deploy/workload-rbac.yaml` — is applied to each workload
+cluster, not the management cluster. See [Scoped exec on workload clusters](#scoped-exec-on-workload-clusters) below.
+
 What to change first:
 
 | Placeholder | Where | What it should be |
@@ -111,10 +114,112 @@ then says so on its card instead of disappearing.
 them.** Binnacle reads each one with the credential Cluster API minted for it,
 which is conventionally a cluster-admin certificate. Binnacle only ever reads,
 but the credential it holds is not a read-only one, and anyone who can sign in
-sees everything it can see. If that is more than you want, the shape of the
-alternative is a read-only ServiceAccount on each workload cluster with its own
-kubeconfig in a Secret binnacle resolves instead — same discovery, different
-Secret.
+sees everything it can see.
+
+### Scoped exec on workload clusters
+
+Three plugins — Ceph, Cilium, and OVN — run read-only status commands inside
+pods (`ceph -s`, `cilium status`, `ovn-nbctl show`). Without `pods/exec`
+permission these drop to informer-only tier, which is a thinner pane but not
+an error. The tier reason says so and names `--server` as the fix.
+
+The supported way to give the collector `pods/exec` without giving it
+cluster-admin is a dedicated ServiceAccount on each workload cluster, with
+exec scoped to the namespaces where those pods run. `deploy/workload-rbac.yaml`
+defines this:
+
+```
+# On each workload cluster:
+kubectl apply -f deploy/workload-rbac.yaml
+```
+
+Set the namespace placeholders (`rook-ceph`, `kube-system`, `ovn-kubernetes`)
+to where each subsystem actually runs on that cluster. A subsystem not present
+is simply not listed — its Role is not created, and the plugin falls back to
+informer-only for it.
+
+After applying the RBAC, create a long-lived token and store it as a kubeconfig
+Secret on the management cluster:
+
+```
+# On the workload cluster — create a token that does not expire with the pod:
+kubectl -n binnacle apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: binnacle-collector-token
+  annotations:
+    kubernetes.io/service-account.name: binnacle-collector
+type: kubernetes.io/service-account-token
+EOF
+
+# Wait for the token to populate:
+kubectl -n binnacle get secret binnacle-collector-token -o jsonpath='{.data.token}' | base64 -d
+
+# On the management cluster — store the kubeconfig where binnacle resolves it.
+# The Secret must be named <cluster>-exec-kubeconfig and carry the kubeconfig
+# under "value", matching the convention for CAPI's own kubeconfig Secrets:
+kubectl -n managed-clusters create secret generic tenant-01-exec-kubeconfig \
+  --from-file=value=<(kubectl --kubeconfig=/path/to/workload.kubeconfig config view --raw)
+```
+
+Binnacle resolves `<cluster>-exec-kubeconfig` automatically. When the Secret is
+absent, exec falls back to the CAPI-minted kubeconfig — the historical behavior.
+When present, the collector reads with the CAPI kubeconfig and execs with the
+scoped ServiceAccount, so the cluster-admin credential is never used for exec.
+
+Human operators get a read-only role with no `pods/exec`. Under that role,
+sextant sits at informer-only for Ceph, Cilium, and OVN **by design**. The
+pane says so: *"no pods/exec permission — use --server for full detail."*
+The server is the supported path to full-tier data.
+
+### Per-user scoping
+
+Once the collector holds exec privilege and human roles are read-only,
+`--server` is the only path to full-tier Ceph, Cilium, and OVN detail. Without
+scoping, every authenticated user sees exec-derived data for the entire fleet
+— which means the RBAC posture hasn't actually improved, it just moved.
+
+Scoping limits which clusters each user can see, based on their OIDC group
+membership. It is opt-in: without a `--scope-file`, every authenticated user
+sees the entire fleet (the historical behavior, and what a single-team
+deployment wants).
+
+Create a scope file mapping OIDC groups to namespaces:
+
+```yaml
+groups:
+  platform-admins:
+    - "*"               # sees everything
+  site-a-ops:
+    - site-a            # sees only clusters in the site-a namespace
+    - site-a-infra
+  site-b-ops:
+    - site-b
+```
+
+Then point binnacle at it:
+
+```
+binnacle --oidc-issuer ... --scope-file /etc/binnacle/scopes.yaml
+```
+
+The namespace is the CAPI Cluster object's namespace on the management cluster.
+A user in no mapped group sees nothing — which is a configuration error worth
+making visible, rather than silently widening to everything.
+
+Scoping applies to all routes: the HTML fleet page, cluster detail pages, the
+JSON API, and the SSE stream. A cluster outside the user's scope returns 404,
+not 403: *"there is no such cluster"* and *"you may not see this cluster"* must
+not render differently, because revealing the existence of a hidden cluster
+would defeat the scoping.
+
+The storage panel is scoped by the reporting cluster's namespace. A Ceph
+cluster visible from both site-a and site-b is visible to users scoped to
+either; one reported only by site-b is hidden from users scoped to site-a.
+The hardware inventory (BareMetalHosts) is datacenter-wide and cannot be
+narrowed per-namespace — it is either shown or hidden with the storage cluster
+it belongs to.
 
 ## Ingress and Server-Sent Events
 
