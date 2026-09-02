@@ -138,6 +138,13 @@ type OIDCConfig struct {
 	// ClientID and ClientSecret identify binnacle to the provider.
 	ClientID     string
 	ClientSecret string
+	// CLIClientID is a second client id whose tokens are also accepted on
+	// Authorization: Bearer, for a terminal client registered separately.
+	//
+	// A CLI cannot hold a client secret, so it needs a public client of its
+	// own, and a public client issues tokens with its own audience. Empty
+	// accepts only ClientID, which is what a deployment with one client wants.
+	CLIClientID string
 	// RedirectURL is binnacle's own callback, as the browser reaches it. It
 	// must match what is registered with the provider exactly.
 	RedirectURL string
@@ -164,6 +171,10 @@ type OIDC struct {
 	cfg      OIDCConfig
 	verifier *oidc.IDTokenVerifier
 	oauth    oauth2.Config
+	// bearerVerifiers is one verifier per audience accepted on an
+	// Authorization header — the browser's client and, when configured, the
+	// terminal client's. See bearer.go.
+	bearerVerifiers []*oidc.IDTokenVerifier
 }
 
 // NewOIDC contacts the provider's discovery endpoint and builds the flow.
@@ -191,9 +202,22 @@ func NewOIDC(ctx context.Context, cfg OIDCConfig) (*OIDC, error) {
 	if len(scopes) == 0 {
 		scopes = []string{oidc.ScopeOpenID, "profile", "email"}
 	}
+	// The browser's audience first, so a single-client deployment verifies on
+	// the first try and the error a misconfigured CLI sees names the client it
+	// was actually meant to use.
+	audiences := []string{cfg.ClientID}
+	if cfg.CLIClientID != "" && cfg.CLIClientID != cfg.ClientID {
+		audiences = append(audiences, cfg.CLIClientID)
+	}
+	bearerVerifiers := make([]*oidc.IDTokenVerifier, 0, len(audiences))
+	for _, aud := range audiences {
+		bearerVerifiers = append(bearerVerifiers, provider.Verifier(&oidc.Config{ClientID: aud}))
+	}
+
 	return &OIDC{
-		cfg:      cfg,
-		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
+		cfg:             cfg,
+		verifier:        provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
+		bearerVerifiers: bearerVerifiers,
 		oauth: oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -224,11 +248,25 @@ func (a *OIDC) Routes(mux *http.ServeMux) {
 // chunk of HTML it will try to parse as events — the page then looks live and
 // updates never arrive, which is precisely the silent staleness this whole
 // design is trying to avoid.
+//
+// A bearer token is answered the same way and for the same reason. It is a
+// deliberate, non-browser credential, so a request carrying one is never
+// redirected: a terminal client that followed a 302 would receive a login page
+// with a 200 on it and have to guess that HTML was not the fleet.
 func (a *OIDC) Middleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if raw, present := bearerToken(r); present {
+			id, err := a.verifyBearer(r.Context(), raw)
+			if err != nil {
+				http.Error(w, "invalid bearer token: "+err.Error(), http.StatusUnauthorized)
+				return
+			}
+			h.ServeHTTP(w, r.WithContext(withIdentity(r.Context(), id)))
+			return
+		}
 		id, ok := a.session(r)
 		if ok {
-			h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), identityKey{}, id)))
+			h.ServeHTTP(w, r.WithContext(withIdentity(r.Context(), id)))
 			return
 		}
 		if r.Header.Get("Accept") == "text/event-stream" {
@@ -283,21 +321,9 @@ func (a *OIDC) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not verify identity", http.StatusForbidden)
 		return
 	}
-	var claims struct {
-		Email             string   `json:"email"`
-		PreferredUsername string   `json:"preferred_username"`
-		Groups            []string `json:"groups"`
-	}
-	_ = idToken.Claims(&claims)
-	who := claims.Email
-	if who == "" {
-		who = claims.PreferredUsername
-	}
-	if who == "" {
-		who = idToken.Subject
-	}
+	id := identityFrom(idToken)
 
-	a.setSession(w, who, claims.Groups)
+	a.setSession(w, id.Who, id.Groups)
 	next := "/"
 	if _, after, found := strings.Cut(cookie.Value, ":"); found && after != "" {
 		next = after

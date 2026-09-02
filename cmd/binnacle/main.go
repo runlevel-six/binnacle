@@ -41,6 +41,7 @@ type options struct {
 	cloudsDir      string
 	oidcIssuer     string
 	oidcClientID   string
+	oidcCLIClient  string
 	oidcRedirect   string
 	insecureCookie bool
 	allowUnauth    bool
@@ -68,6 +69,8 @@ func run(args []string) error {
 	fs.StringVar(&o.cloudsDir, "clouds-dir", "", "where per-cluster clouds.yaml files are written; empty uses a directory under the system temp dir")
 	fs.StringVar(&o.oidcIssuer, "oidc-issuer", "", "OpenID Connect issuer URL, e.g. a Keycloak realm")
 	fs.StringVar(&o.oidcClientID, "oidc-client-id", "", "OpenID Connect client id")
+	fs.StringVar(&o.oidcCLIClient, "oidc-cli-client-id", "",
+		"OpenID Connect client id for terminal clients, whose tokens are also accepted; empty uses --oidc-client-id")
 	fs.StringVar(&o.oidcRedirect, "oidc-redirect-url", "", "binnacle's callback URL as the browser reaches it")
 	fs.BoolVar(&o.demo, "demo", false, "serve an invented fleet instead of a real one; needs no cluster and no credentials")
 	fs.BoolVar(&o.allowUnauth, "allow-unauthenticated", false,
@@ -190,6 +193,7 @@ func buildAuth(ctx context.Context, o options) (web.Authenticator, error) {
 	return auth.NewOIDC(ctx, auth.OIDCConfig{
 		Issuer:       o.oidcIssuer,
 		ClientID:     o.oidcClientID,
+		CLIClientID:  o.oidcCLIClient,
 		ClientSecret: os.Getenv("BINNACLE_OIDC_CLIENT_SECRET"),
 		RedirectURL:  o.oidcRedirect,
 		SessionKey:   key,

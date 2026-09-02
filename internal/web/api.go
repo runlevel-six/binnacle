@@ -16,6 +16,14 @@ type fleetResponse struct {
 	Storage  fleet.Storage       `json:"storage"`
 }
 
+// handleAuthInfo tells a client how to authenticate, before it has.
+//
+// See the route registration in Handler for why this one is not behind the
+// authenticator.
+func (s *Server) handleAuthInfo(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.auth.ClientAuth())
+}
+
 // handleAPIFleet returns the full fleet view as JSON.
 func (s *Server) handleAPIFleet(w http.ResponseWriter, r *http.Request) {
 	scope := s.scopeFor(r)

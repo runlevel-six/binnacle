@@ -20,6 +20,7 @@ import (
 
 	"github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
 
+	"github.com/runlevel-six/binnacle/internal/auth"
 	"github.com/runlevel-six/binnacle/internal/fleet"
 	"github.com/runlevel-six/binnacle/internal/wire"
 )
@@ -49,6 +50,11 @@ type Authenticator interface {
 	// needs no warning. A page anyone can read should say so on itself, not
 	// only in the flags that started it.
 	Warning() string
+	// ClientAuth describes what a non-browser client must do to authenticate,
+	// including whether it must do anything at all. Served unauthenticated at
+	// /api/v1/authinfo, because a client cannot present a credential whose
+	// shape it does not yet know.
+	ClientAuth() auth.ClientAuthInfo
 }
 
 // Source is what the server renders: the current state of the fleet, and a
@@ -132,6 +138,15 @@ func (s *Server) Handler() http.Handler {
 	// The marks sit outside authentication. They are a logo, they reveal
 	// nothing, and the sign-in page wants them too.
 	mux.Handle("GET /static/", http.StripPrefix("/", cacheFor(24*time.Hour, http.FileServer(http.FS(staticFS)))))
+
+	// So does the description of how to authenticate — necessarily, since a
+	// client asks it precisely because it does not yet hold a credential. It
+	// publishes nothing the provider's own discovery document does not, plus
+	// the one fact only this deployment knows: whether a credential is wanted
+	// at all. That is what lets a terminal client work against a binnacle
+	// running with no identity provider in front of it.
+	mux.HandleFunc("GET /api/v1/authinfo", s.handleAuthInfo)
+
 	s.auth.Routes(mux)
 
 	protected := http.NewServeMux()
