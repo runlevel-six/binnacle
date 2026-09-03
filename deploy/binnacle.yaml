@@ -56,10 +56,15 @@ spec:
           # cluster the version in this file.
           #
           # Better still, pin the digest alongside the tag —
-          # `binnacle:1.8.0@sha256:...` — which is immutable even if a tag is
+          # `binnacle:1.9.0@sha256:...` — which is immutable even if a tag is
           # moved or rebuilt. `docker buildx imagetools inspect` or a registry
           # HEAD on the manifest will give you one.
-          image: ghcr.io/runlevel-six/binnacle:1.8.0
+          #
+          # Keep this in step with the flags below. An image older than a flag
+          # it is passed does not degrade gracefully: an unrecognized flag is a
+          # parse error and the container exits, so the mismatch is a
+          # CrashLoopBackOff rather than a missing feature.
+          image: ghcr.io/runlevel-six/binnacle:1.9.0
           args:
             - --addr=:8080
             # Names this instance in the header and browser title. Sites reuse
