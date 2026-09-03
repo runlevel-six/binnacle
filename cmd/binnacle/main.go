@@ -36,6 +36,7 @@ type options struct {
 	kubeconfig     string
 	context        string
 	namespace      string
+	mgmtName       string
 	profileName    string
 	site           string
 	demo           bool
@@ -70,8 +71,10 @@ func run(args []string, out io.Writer) error {
 	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to a kubeconfig; empty uses in-cluster credentials, then $KUBECONFIG")
 	fs.StringVar(&o.context, "management-context", "", "kubeconfig context for the management cluster")
 	fs.StringVar(&o.namespace, "namespace", "", "namespace to discover clusters in; empty means all")
+	fs.StringVar(&o.mgmtName, "management-name", "",
+		"what this management cluster is called locally, e.g. admin-k8s00; empty renders it as \"Management cluster\"")
 	fs.StringVar(&o.profileName, "profile", "", "sextant site profile describing how these clusters are laid out")
-	fs.StringVar(&o.site, "site", "", "name of the management cluster this instance watches, shown in the header and browser title; a label, not the --profile")
+	fs.StringVar(&o.site, "site", "", "the site or datacenter this instance watches, shown in the header and browser title; a label, not the --profile and not --management-name")
 	fs.StringVar(&o.osCloud, "os-cloud", "", "clouds.yaml entry to use for clusters whose own credentials do not name one")
 	fs.StringVar(&o.cloudsDir, "clouds-dir", "", "where per-cluster clouds.yaml files are written; empty uses a directory under the system temp dir")
 	fs.StringVar(&o.oidcIssuer, "oidc-issuer", "", "OpenID Connect issuer URL, e.g. a Keycloak realm")
@@ -176,11 +179,12 @@ func buildSource(ctx context.Context, o options) (web.Source, string, error) {
 	}
 
 	f, err := fleet.New(fleet.Options{
-		Management: mgmt,
-		Namespace:  o.namespace,
-		Profile:    prof,
-		OSCloud:    o.osCloud,
-		CloudsDir:  o.cloudsDir,
+		Management:     mgmt,
+		ManagementName: o.mgmtName,
+		Namespace:      o.namespace,
+		Profile:        prof,
+		OSCloud:        o.osCloud,
+		CloudsDir:      o.cloudsDir,
 	})
 	if err != nil {
 		return nil, "", err

@@ -545,6 +545,15 @@
   .management-title {
     font-weight: 600; font-size: .95rem;
   }
+  /* The hover underline has to be spelled out here. `.card-link:hover h2`
+     targets a heading *inside* the link, which is how a cluster card is built
+     — `<a class="card-link"><h2>name</h2></a>` — but this title is text
+     directly inside the anchor, so that rule matches nothing and the link
+     looked unclickable. Same brass underline, so the two read as the same
+     affordance. */
+  a.management-title:hover {
+    text-decoration: underline; text-decoration-color: var(--brass);
+  }
   .management-version {
     font-family: var(--mono, ui-monospace, monospace);
     font-size: .78rem; color: var(--dim);

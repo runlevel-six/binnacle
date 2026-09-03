@@ -172,11 +172,26 @@ func (s *Source) Storage() fleet.Storage {
 	return st
 }
 
-// Management returns an empty ManagementView. The management cluster is a
-// web-only feature: its node and controller health is rendered server-side
-// and is not exposed through the API. A terminal client does not need it —
-// the fleet screen shows one line per workload cluster, and a management
-// view is a separate screen shape that does not exist yet.
+// Management returns an empty ManagementView, because the API does not carry
+// the management cluster yet.
+//
+// **Not a boundary — an unfinished feature.** Nothing about the design keeps it
+// out. The data is already collected, shaped and rendered; the web page serves
+// it at /management. It is simply not prioritized, and until it is the two front
+// ends are not at parity.
+//
+// What closing it takes, so the next person does not have to work it out: a
+// Management field on the server's fleetResponse (or its own route, as Storage
+// has), a real implementation here that reads it, the method added to the
+// fleetSource interface in internal/ui — which deliberately lists only what the
+// fleet screen needs — and somewhere in the terminal UI to put it. That last
+// part is the actual work: the fleet screen is one line per workload cluster,
+// and the management cluster is a different shape rather than another row.
+//
+// Returning a zero value is safe in the meantime. Reachable is false and
+// ErrText is empty, which every renderer treats as "no management data at all"
+// and omits the section — rather than drawing an empty one that would read as a
+// healthy management cluster.
 func (s *Source) Management() fleet.ManagementView {
 	return fleet.ManagementView{}
 }

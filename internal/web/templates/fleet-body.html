@@ -5,7 +5,11 @@
        panel is a fixed-height summary by design — it is on the fleet page —
        so everything it cannot fit lives on /management. */}}
   <div class="management-header">
-    <a class="management-title card-link" href="/management">Management cluster</a>
+    {{/* Named if the deployment said so. A reader recognizes `admin-k8s00`
+         instantly and has to think about "Management cluster", and the
+         qualifier beside it keeps the meaning — the same shape a cluster card
+         uses for its namespace. */}}
+    <a class="management-title card-link" href="/management">{{with .Management.Name}}{{.}} <span class="ns">management cluster</span>{{else}}Management cluster{{end}}</a>
     {{if .Management.Version}}<span class="management-version">{{.Management.Version}}</span>{{end}}
     {{if not .Management.UpdatedAt.IsZero}}<span class="management-updated">seen {{ago .Management.UpdatedAt}}</span>{{end}}
   </div>
@@ -65,7 +69,10 @@
 {{else if .Management.ErrText}}
 <div class="management management-unreachable" data-status="err">
   <div class="management-header">
-    <span class="management-title">Management cluster</span>
+    {{/* Named here too. The name comes from the deployment, not from the
+         cluster, so it is known even when nothing answered — and "admin-k8s00
+         is unreachable" is the sentence a reader needs. */}}
+    <span class="management-title">{{with .Management.Name}}{{.}} <span class="ns">management cluster</span>{{else}}Management cluster{{end}}</span>
   </div>
   <div class="management-error">Unreachable: {{.Management.ErrText}}</div>
   <p class="management-warning">Workload cluster cards below may be stale. Stale timestamps on individual cards indicate when each cluster was last read.</p>

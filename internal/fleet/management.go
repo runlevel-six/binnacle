@@ -25,6 +25,15 @@ import (
 // already on the page in their correct per-cluster form, and showing them
 // here would be a second copy of the same data.
 type ManagementView struct {
+	// Name is what this management cluster is called locally, from
+	// Options.ManagementName. Empty when the deployment did not say, which
+	// renders as "Management cluster".
+	//
+	// Worth setting. A reader recognizes `admin-k8s00` instantly and has to
+	// think about "Management cluster" — and on a fleet page whose whole job
+	// is to be read at a glance, that pause is the cost.
+	Name string
+
 	// Reachable reports whether the management API server answered. When
 	// false, ErrText carries the reason and every field below is empty:
 	// nothing was read, so there is nothing to show but the failure.
@@ -329,13 +338,18 @@ func (f *Fleet) startManagement(ctx context.Context) {
 // It is not a ClusterView: see ManagementView for why.
 func (f *Fleet) Management() ManagementView {
 	if f.mgmt == nil {
-		return ManagementView{Reachable: false, ErrText: "not started"}
+		return ManagementView{
+			Name: f.opts.ManagementName, Reachable: false, ErrText: "not started",
+		}
 	}
 	mc := f.mgmt
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
 	view := ManagementView{
+		// Named before anything is read, so an unreachable management cluster
+		// is still reported by the name people know it by.
+		Name:      f.opts.ManagementName,
 		Version:   mc.kubeVersion,
 		UpdatedAt: time.Now(),
 	}

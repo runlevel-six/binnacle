@@ -69,6 +69,10 @@ spec:
             # Where the Cluster objects live. Must match the namespace the
             # Role in rbac.yaml is created in.
             - --namespace=managed-clusters
+            # What operators call this management cluster. Optional: without it
+            # the management panel reads "Management cluster", which is
+            # accurate and is not what anybody calls it.
+            - --management-name=mgmt-01
             - --profile=my-site
             # Per-cluster OpenStack credentials are written here for
             # gophercloud, which reads a file and nothing else.

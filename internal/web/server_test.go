@@ -1665,3 +1665,118 @@ func managementHandler(t *testing.T, d fleet.ManagementDetail) http.Handler {
 	}
 	return s.Handler()
 }
+
+// The management panel's title is a link, and it has to look like one. It is
+// text directly inside the anchor rather than a heading inside it, so the
+// `.card-link:hover h2` rule the cluster cards rely on matches nothing here —
+// the link rendered with no hover affordance at all until a rule was added for
+// it. Asserted because the two are styled by different selectors and only one
+// of them is exercised by looking at a card.
+func TestFleetPage_ManagementTitleLooksClickable(t *testing.T) {
+	s, err := New(&fakeFleet{
+		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01", Status: health.StatusOK}},
+		mgmt: fleet.ManagementView{
+			Reachable: true, NodesKnown: true,
+			Cells:     []health.Cell{{Name: "Nodes", Status: health.StatusOK}},
+			UpdatedAt: time.Now(),
+		},
+		changed: make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+
+	if !strings.Contains(body, `a.management-title:hover`) {
+		t.Error("no hover rule for the management title: the link has no affordance")
+	}
+	// And the cluster cards' rule is still what styles them.
+	if !strings.Contains(body, `.card-link:hover h2`) {
+		t.Error("the cluster cards lost their hover rule")
+	}
+}
+
+// A deployment can name its management cluster, and should. Readers recognize
+// `admin-k8s00`; "Management cluster" makes them think, and a fleet page is
+// read at a glance.
+func TestFleetPage_ManagementNameIsShownWhenSet(t *testing.T) {
+	named := fleet.ManagementView{
+		Name: "admin-k8s00", Reachable: true, NodesKnown: true,
+		Cells:     []health.Cell{{Name: "Nodes", Status: health.StatusOK}},
+		UpdatedAt: time.Now(),
+	}
+	s, err := New(&fakeFleet{
+		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01"}},
+		mgmt:     named, changed: make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := get(t, s.Handler(), "/").Body.String()
+	if !strings.Contains(body, "admin-k8s00") {
+		t.Error("the fleet panel does not show the management cluster's name")
+	}
+	// The qualifier stays, or a reader cannot tell what admin-k8s00 is.
+	if !strings.Contains(body, `<span class="ns">management cluster</span>`) {
+		t.Error("the name lost its qualifier")
+	}
+
+	// And on its own page, including the browser title — which is what tells
+	// two open tabs apart.
+	page := get(t, s.Handler(), "/management").Body.String()
+	if !strings.Contains(page, "admin-k8s00") {
+		t.Error("the management page does not show the name")
+	}
+	if !strings.Contains(page, "<title>admin-k8s00 &middot; Binnacle</title>") {
+		t.Error("the browser title is not named")
+	}
+}
+
+// Unnamed is the default and must keep working: the flag is optional, and the
+// generic label is accurate even if it is not what anybody calls it.
+func TestFleetPage_ManagementFallsBackToTheGenericLabel(t *testing.T) {
+	s, err := New(&fakeFleet{
+		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01"}},
+		mgmt: fleet.ManagementView{
+			Reachable: true, NodesKnown: true,
+			Cells:     []health.Cell{{Name: "Nodes", Status: health.StatusOK}},
+			UpdatedAt: time.Now(),
+		},
+		changed: make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+	if !strings.Contains(body, ">Management cluster<") {
+		t.Error("an unnamed management cluster lost its label entirely")
+	}
+	if strings.Contains(body, `<span class="ns">management cluster</span>`) {
+		t.Error("rendered a qualifier with no name to qualify")
+	}
+}
+
+// The name comes from the deployment rather than from the cluster, so it is
+// known even when nothing answered — and "admin-k8s00 is unreachable" is the
+// sentence a reader needs.
+func TestFleetPage_UnreachableManagementIsStillNamed(t *testing.T) {
+	s, err := New(&fakeFleet{
+		mgmt: fleet.ManagementView{
+			Name: "admin-k8s00", Reachable: false,
+			ErrText: "dial tcp 10.0.0.1:6443: i/o timeout",
+			Status:  health.StatusErr,
+		},
+		changed: make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+	if !strings.Contains(body, "admin-k8s00") {
+		t.Error("an unreachable management cluster is not named")
+	}
+	if !strings.Contains(body, "i/o timeout") {
+		t.Error("lost the reason it was unreachable")
+	}
+}

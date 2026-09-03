@@ -2,7 +2,7 @@
 {{with .Management}}
 <section class="detail-head">
   <div class="dh-left">
-    <h2>Management cluster</h2>
+    <h2>{{with .Name}}{{.}} <span class="ns">management cluster</span>{{else}}Management cluster{{end}}</h2>
     <div class="meta">
       {{if .Version}}{{.Version}}{{else}}version unknown{{end}}
       {{if not .UpdatedAt.IsZero}} &middot; seen {{ago .UpdatedAt}}{{end}}

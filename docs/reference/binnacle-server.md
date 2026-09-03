@@ -15,8 +15,9 @@ without a binary.
 | `--kubeconfig` | *(empty)* | Path to a kubeconfig. Empty uses in-cluster credentials, then `$KUBECONFIG`. |
 | `--management-context` | *(empty)* | Kubeconfig context for the management cluster. |
 | `--namespace` | *(empty)* | Namespace to discover `Cluster` objects in. Empty means all. |
+| `--management-name` | *(empty)* | What this management cluster is called locally, e.g. `admin-k8s00`. Empty renders it as "Management cluster". |
 | `--profile` | *(empty)* | Site profile describing how these clusters are laid out. See [Site profiles](profiles.md). |
-| `--site` | *(empty)* | Name of the management cluster this instance watches, shown in the header and browser title. A label, not the profile. |
+| `--site` | *(empty)* | The site or datacenter this instance watches, shown in the header and browser title. A label — not the profile, and not the management cluster's own name. |
 | `--os-cloud` | *(empty)* | `clouds.yaml` entry to use for clusters whose own credentials do not name one. |
 | `--clouds-dir` | *(empty)* | Where per-cluster `clouds.yaml` files are written. Empty uses a directory under the system temp dir. |
 | `--oidc-issuer` | *(empty)* | OpenID Connect issuer URL, e.g. a Keycloak realm. |
@@ -28,6 +29,15 @@ without a binary.
 | `--insecure-cookies` | `false` | Send session cookies without the `Secure` flag. For testing over plain HTTP only. |
 | `--demo` | `false` | Serve an invented fleet. Needs no cluster and no credentials. |
 | `--version` | `false` | Print the version and exit, before any credential is resolved. |
+
+`--management-name` is worth setting even though nothing requires it. Readers
+recognize `admin-k8s00` and have to stop and think about "Management cluster",
+and it is the label on the one panel whose failure explains every stale card
+below it. It is a flag rather than something discovered because Kubernetes has
+no reliable notion of its own name: the kubeconfig context comes close and is
+not dependably equal, and in a deployment there is no context at all — binnacle
+takes in-cluster credentials. A name that is subtly wrong is worse than a
+generic one that is honest.
 
 Without `--oidc-issuer`, binnacle **refuses to start** on any address but
 loopback unless `--allow-unauthenticated` is also given. It reads every cluster
@@ -57,7 +67,7 @@ none of them needs reloading while you watch.
 |---|---|
 | `/` | Every cluster as a card, worst first, plus the datacenter's storage layer and the management cluster's summary. |
 | `/cluster/{namespace}/{name}` | One cluster in full: nodes, subsystems, network, cloud, unhealthy pods, node pools, machines, hardware, events. |
-| `/management` | The management cluster itself — its unhealthy pods, the controllers every workload cluster depends on, its nodes, and the Cluster API events belonging to no workload cluster. It has no `Cluster` object, so it gets a page rather than a card. |
+| `/management` | The management cluster itself — its unhealthy pods, the controllers every workload cluster depends on, its nodes, and the Cluster API events belonging to no workload cluster. It has no `Cluster` object, so it gets a page rather than a card. Titled with `--management-name` where set. |
 
 `?display=wall` scales the whole page from one root font size, for a screen
 somebody walks past. It is opt-in rather than detected: a 1920px viewport is as
@@ -89,10 +99,14 @@ Only browser navigations are redirected: a client that followed a 302 would
 receive a login page with a 200 on it and have to guess that HTML was not the
 fleet.
 
-The management cluster is deliberately **not** in this API. `/api/v1/fleet`
-returns workload clusters and storage, so a terminal client cannot render the
-management section — see [Architecture](../explanation/architecture.md) for
-where that boundary sits.
+**The management cluster is not in this API yet.** `/api/v1/fleet` returns
+workload clusters and storage, so a terminal client cannot render the management
+section that the web page shows at [`/management`](#pages).
+
+That is a gap rather than a boundary. Nothing about the design excludes it —
+the data is collected, shaped and rendered already, and exposing it would be
+another field on the fleet response plus a route. It simply has not been
+prioritized, and the two front ends are not at parity until it is.
 
 ## Ungated routes
 

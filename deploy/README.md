@@ -37,7 +37,8 @@ What to change first:
 | Placeholder | Where | What it should be |
 |---|---|---|
 | `managed-clusters` | `rbac.yaml` (Role, RoleBinding), `binnacle.yaml` (`--namespace`) | The namespace your `Cluster` objects live in. Both must match. |
-| `site-a` | `binnacle.yaml` (`--site`) | This management cluster's name, shown in the header and browser title. |
+| `site-a` | `binnacle.yaml` (`--site`) | The site or datacenter this instance watches, shown in the header and browser title. |
+| `mgmt-01` | `binnacle.yaml` (`--management-name`) | What operators call the management cluster itself, e.g. `admin-k8s00`. Optional; without it the management panel reads "Management cluster". |
 | `my-site` | `binnacle.yaml` (`--profile`) | Your sextant site profile. |
 | `binnacle.site-a.example` | `binnacle.yaml` (Ingress host, `--oidc-redirect-url`) | The hostname this instance is served on. |
 | `https://sso.example/realms/platform` | `binnacle.yaml` | Your OpenID Connect issuer. |

@@ -342,6 +342,10 @@ func (d *Demo) Storage() Storage {
 // management cluster.
 func (d *Demo) Management() ManagementView {
 	return ManagementView{
+		// Named, because the unnamed path is the fallback and the demo should
+		// show the shape a deployment actually renders. A placeholder name,
+		// like every other name in this fixture.
+		Name:      "mgmt-01",
 		Reachable: true,
 		Version:   "v1.31.4",
 		Nodes: NodeCount{

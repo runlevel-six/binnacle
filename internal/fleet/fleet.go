@@ -27,6 +27,16 @@ type Options struct {
 	Management *rest.Config
 	// Namespace scopes cluster discovery. Empty means all namespaces.
 	Namespace string
+	// ManagementName is what the management cluster is called locally —
+	// `admin-k8s00`, say. Optional: empty renders it as "Management cluster",
+	// which is accurate but is not what anybody calls it.
+	//
+	// Deliberately not derived from the kubeconfig context. A context name is
+	// close to the cluster's name and not reliably equal to it, and a name
+	// that is subtly wrong is worse than a generic one that is honest. In a
+	// deployment there is no context to read anyway: binnacle takes
+	// in-cluster credentials.
+	ManagementName string
 	// Profile describes how these sites are laid out. Every cluster in the
 	// fleet gets the same one, which holds while a fleet is homogeneous; a
 	// per-cluster profile is the obvious extension when it stops being.
