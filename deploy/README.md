@@ -39,15 +39,40 @@ What to change first:
 | `managed-clusters` | `rbac.yaml` (Role, RoleBinding), `binnacle.yaml` (`--namespace`) | The namespace your `Cluster` objects live in. Both must match. |
 | `site-a` | `binnacle.yaml` (`--site`) | The site or datacenter this instance watches, shown in the header and browser title. |
 | `mgmt-01` | `binnacle.yaml` (`--management-name`) | What operators call the management cluster itself, e.g. `admin-k8s00`. Optional; without it the management panel reads "Management cluster". |
-| `my-site` | `binnacle.yaml` (`--profile`) | Your sextant site profile. |
+| `my-site` | `binnacle.yaml` (`--profile`, ConfigMap volume) | Your sextant site profile, mounted from a ConfigMap — see below. |
 | `binnacle.site-a.example` | `binnacle.yaml` (Ingress host, `--oidc-redirect-url`) | The hostname this instance is served on. |
 | `https://sso.example/realms/platform` | `binnacle.yaml` | Your OpenID Connect issuer. |
 | `binnacle:1.9.0` | `binnacle.yaml` | The release to run. Pin a version — and ideally its digest too, `binnacle:1.9.0@sha256:…`. Keep it at or above the release that has every flag you pass: an unrecognized flag is a parse error, so an old image plus a new flag is a CrashLoopBackOff, not a missing feature. `latest` and `edge` move, and this manifest sets no `imagePullPolicy`, so a node that has cached a moving tag keeps serving the build it has while the deployment reports Available. |
 
-The profile has to reach the pod. Mount it and point `--profile` at the path,
-or bake it into the image; without it binnacle uses the built-in default, which
-will report expected cordons as a standing drain on a fleet whose compute nodes
-are cordoned by design.
+## The site profile
+
+The profile has to reach the pod, and `--profile` has to name it by *path*: a
+bare name is searched for in `~/.config/sextant/profiles` and `./profiles`, and
+a container has neither. `binnacle.yaml` expects it in a ConfigMap, so create
+that before applying — like the secret below, the pod will not start without it:
+
+```
+kubectl -n binnacle create configmap binnacle-profile \
+  --from-file=my-site.yaml=/path/to/my-site.yaml
+```
+
+The key becomes the filename under `/etc/binnacle/profiles`, which is what
+`--profile` points at. Only your own profile needs to be in the ConfigMap:
+whatever it `extends` resolves from the profiles embedded in the binary.
+
+The profile is read once, at startup. A ConfigMap edit reaches the container's
+filesystem on its own but changes nothing until you
+`kubectl rollout restart deployment/binnacle`.
+
+Without a profile binnacle uses the built-in default, which will report expected
+cordons as a standing drain on a fleet whose compute nodes are cordoned by
+design, and pins no critical workloads on the management page. To run that way
+deliberately, drop the `--profile` flag along with the volume and its mount.
+
+Give `sextant --server` the same profile. The fleet's numbers come from the
+server, but critical workloads, node-role label keys and expected cordons are
+applied when a pane is drawn, on the operator's own machine — the server does
+not publish its profile over the API.
 
 ## The secret
 

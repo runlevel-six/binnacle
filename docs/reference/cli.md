@@ -62,6 +62,16 @@ sextant renders the fleet list and per-cluster detail in the terminal.
 These can also be set in the config file's `server:` section or via environment
 variables; see [Configuration](configuration.md).
 
+`--profile` and `--theme` apply here as well. The clusters, their health and
+every number on the screen come from the server, which collected them under its
+own profile — but critical workloads, node-role label keys and expected cordons
+are applied when a pane is drawn, so they are read from your profile on the
+machine you are sitting at. Give the same profile the server runs with and the
+terminal and the browser agree; give none and you get the built-in default,
+which knows no critical workloads and reports a deliberately cordoned node as a
+drain. The other local-mode flags — `--management-context`, `--workload-context`,
+`--kubeconfig`, `--target-version` — do not apply.
+
 ### Signing in
 
 Sextant asks the server what it wants before presenting anything, so most

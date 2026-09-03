@@ -60,6 +60,22 @@ type ServerClusterConfig struct {
 	Token     string
 	Theme     tui.Theme
 	BuildInfo build.Info
+	// Profile supplies the site conventions the panes are rendered with:
+	// critical workloads, node-role label keys and their display names, and
+	// which roles are cordoned on purpose.
+	//
+	// It is the *client's* profile, not the server's. The data arriving over
+	// the wire was collected with the server's, but these particular judgements
+	// are applied at render time and have nowhere to travel: nothing publishes
+	// a profile over the API. Reading the operator's own is what keeps
+	// `--profile` from being silently discarded in fleet mode, which showed up
+	// as a pods pane with no critical workloads and every reserved compute node
+	// reported as a standing drain.
+	//
+	// The zero value falls back to [profile.Default], so a caller that does not
+	// set it gets the same assumption-free profile as an unconfigured local run
+	// rather than a profile with no node-role label keys at all.
+	Profile profile.Profile
 }
 
 // BuildServerClusterModel creates a store and registry for one cluster,
@@ -106,8 +122,12 @@ func BuildServerClusterModel(cfg ServerClusterConfig, namespace, name string) (*
 	// Start streaming into the store.
 	go func() { _ = src.Run(ctx, st) }()
 
+	prof := cfg.Profile
+	if prof.Name == "" {
+		prof = profile.Default()
+	}
 	resolved := config.Resolved{
-		Profile:       profile.Default(),
+		Profile:       prof,
 		Theme:         cfg.Theme,
 		TargetVersion: "",
 	}

@@ -120,6 +120,25 @@ func TestUnknownProfileIsAnError(t *testing.T) {
 	}
 }
 
+// Fleet mode resolves the profile too, and does it before the credential:
+// signing in can open a browser and wait for a human, and a misspelled profile
+// should not cost them that first. An unreachable server would also fail, so
+// the assertion is on which failure comes back.
+func TestServerModeRejectsAnUnknownProfileBeforeConnecting(t *testing.T) {
+	_, err := runCLI(t,
+		"--config", filepath.Join(t.TempDir(), "absent.yaml"),
+		// Port 1 is not listening; reaching it would be the other error.
+		"--server", "http://127.0.0.1:1",
+		"--profile", "does-not-exist",
+	)
+	if err == nil {
+		t.Fatal("expected an error for an unknown profile")
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("expected the profile named in the error, got: %v", err)
+	}
+}
+
 func TestInitWritesExampleConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.yaml")
 	out, err := runCLI(t, "--init", "--config", path)

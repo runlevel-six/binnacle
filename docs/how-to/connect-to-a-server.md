@@ -107,6 +107,19 @@ sextant --server https://binnacle.example --server-cluster managed-clusters/tena
 
 Skips the fleet list. Esc still returns to it.
 
+## Bring your site profile
+
+Pass `--profile` here as you would locally, naming the same profile the server
+runs with. The fleet's numbers are the server's, but a few things are decided
+as a pane is drawn rather than as data is collected — which workloads are
+critical, which label carries a node's role and what to call it, and which roles
+are cordoned on purpose. Those come from the profile on your own machine, since
+the server does not publish its one.
+
+Without it you get the built-in default: the pods pane lists unhealthy pods but
+pins no critical workloads, and a node cordoned by design is reported as a
+drain in progress.
+
 ## When something is wrong
 
 The fleet screen tells you rather than showing an empty list. An unreachable

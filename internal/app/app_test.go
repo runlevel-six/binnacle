@@ -44,14 +44,14 @@ func writeKubeconfig(t *testing.T) string {
 // --- profile selection ----------------------------------------------------
 
 func TestSelectProfile(t *testing.T) {
-	def, err := selectProfile("")
+	def, err := SelectProfile("")
 	if err != nil {
 		t.Fatalf("empty name: %v", err)
 	}
 	if def.Name != "metal3" {
 		t.Errorf("got %q want metal3", def.Name)
 	}
-	if _, err := selectProfile("metal3"); err != nil {
+	if _, err := SelectProfile("metal3"); err != nil {
 		t.Errorf("naming the default explicitly should work: %v", err)
 	}
 }
@@ -60,7 +60,7 @@ func TestSelectProfile(t *testing.T) {
 // requested profile would produce a dashboard that looks right and reports the
 // wrong things.
 func TestSelectProfile_UnknownIsAnError(t *testing.T) {
-	_, err := selectProfile("no-such-site")
+	_, err := SelectProfile("no-such-site")
 	if err == nil {
 		t.Fatal("expected an error for an unknown profile")
 	}

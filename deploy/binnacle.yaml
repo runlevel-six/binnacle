@@ -42,6 +42,15 @@ spec:
         # it has.
         - name: clouds
           emptyDir: {medium: Memory, sizeLimit: 1Mi}
+        # Your site profile, as a ConfigMap holding one key named for the file:
+        #
+        #   kubectl -n binnacle create configmap binnacle-profile \
+        #     --from-file=my-site.yaml=/path/to/my-site.yaml
+        #
+        # Only your own profile needs to be here. Whatever it `extends`
+        # resolves from the profiles embedded in the binary.
+        - name: profile
+          configMap: {name: binnacle-profile}
       containers:
         - name: binnacle
           # Published to GHCR by .github/workflows/image.yaml. A registry that
@@ -78,7 +87,12 @@ spec:
             # the management panel reads "Management cluster", which is
             # accurate and is not what anybody calls it.
             - --management-name=mgmt-01
-            - --profile=my-site
+            # A path, not a name: a bare name is searched for in
+            # ~/.config/sextant/profiles and ./profiles, and a container has
+            # neither. This is the file mounted from the ConfigMap below.
+            # The profile is read once at startup, so editing the ConfigMap
+            # needs a `kubectl rollout restart` to take effect.
+            - --profile=/etc/binnacle/profiles/my-site.yaml
             # Per-cluster OpenStack credentials are written here for
             # gophercloud, which reads a file and nothing else.
             - --clouds-dir=/run/binnacle/clouds
@@ -109,6 +123,7 @@ spec:
                 secretKeyRef: {name: binnacle-oidc, key: session-key}
           volumeMounts:
             - {name: clouds, mountPath: /run/binnacle/clouds}
+            - {name: profile, mountPath: /etc/binnacle/profiles, readOnly: true}
           ports:
             - {name: http, containerPort: 8080}
           # Liveness only. There is deliberately no readiness gate on the

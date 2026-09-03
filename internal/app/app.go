@@ -56,7 +56,7 @@ func Prepare(cfg config.Config, info build.Info, picker kube.Picker) (*Setup, er
 		return nil, err
 	}
 
-	prof, err := selectProfile(cfg.Profile)
+	prof, err := SelectProfile(cfg.Profile)
 	if err != nil {
 		return nil, err
 	}
@@ -74,12 +74,15 @@ func Prepare(cfg config.Config, info build.Info, picker kube.Picker) (*Setup, er
 	}, nil
 }
 
-// selectProfile loads the named profile.
+// SelectProfile loads the named profile. An empty name yields the default.
 //
 // An unknown name is an error rather than a silent fallback: quietly ignoring a
 // requested profile would produce a dashboard that starts, looks right, and
-// reports the wrong things.
-func selectProfile(name string) (profile.Profile, error) {
+// reports the wrong things. That is also why this is exported — fleet mode
+// resolves its profile before signing in to a server, and a mode that quietly
+// dropped the flag would fail in exactly the way this comment exists to
+// prevent.
+func SelectProfile(name string) (profile.Profile, error) {
 	return profile.NewLoader().Load(name)
 }
 
@@ -177,7 +180,7 @@ func ListContexts(w io.Writer, cfg config.Config) error {
 	// Resolution may legitimately fail here; the listing is still useful, so
 	// report the failure inline rather than aborting.
 	var selectedMgmt, selectedWorkload string
-	if prof, perr := selectProfile(cfg.Profile); perr == nil {
+	if prof, perr := SelectProfile(cfg.Profile); perr == nil {
 		if resolved, rerr := cfg.Resolve(entries, prof, nil); rerr == nil {
 			selectedMgmt = resolved.ManagementContext
 			selectedWorkload = resolved.WorkloadContext

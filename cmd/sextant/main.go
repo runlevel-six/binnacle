@@ -120,7 +120,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 
 	// --server takes precedence over every other mode: it reads from a
 	// binnacle deployment rather than a kubeconfig, so none of the cluster
-	// resolution, profiling, or debug flags apply.
+	// resolution or debug flags apply. --profile does: the data comes from the
+	// server, but the site conventions the panes are *rendered* with are
+	// applied here, and nothing publishes a profile over the API.
 	//
 	// The flag, --token, and --server-cluster fall back to the config file's
 	// server: section and the SEXTANT_SERVER* env vars, which MergeEnv and
@@ -129,6 +131,13 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if serverURL != "" {
 		cluster := firstNonEmpty(opts.serverCluster, opts.cfg.Server.Cluster)
 		theme, err := tui.LookupTheme(opts.cfg.Theme)
+		if err != nil {
+			return err
+		}
+		// Before the credential, deliberately: signing in may open a browser
+		// and wait for a human, and a misspelled profile should not cost them
+		// that first.
+		prof, err := app.SelectProfile(opts.cfg.Profile)
 		if err != nil {
 			return err
 		}
@@ -143,7 +152,14 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			return err
 		}
 
-		return app.RunServer(ctx, serverURL, token, cluster, buildInfo(), theme)
+		return app.RunServer(ctx, app.ServerOptions{
+			URL:     serverURL,
+			Token:   token,
+			Cluster: cluster,
+			Profile: prof,
+			Theme:   theme,
+			Build:   buildInfo(),
+		})
 	}
 
 	// --demo-fleet is the fleet-screen counterpart of --demo: no server,
