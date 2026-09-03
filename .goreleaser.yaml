@@ -11,18 +11,25 @@ before:
   hooks:
     - go mod tidy
 
-# The rolling `edge` tag is a pointer at main, not a version, and GoReleaser must
-# not resolve it as the current tag. It otherwise wins over v1.0.1 as soon as one
-# is fetched — which is every CI checkout with fetch-depth: 0, and every clone
-# that has run `git fetch --tags` — and then `.Version` is "edge", which the
-# snapshot template below cannot increment:
+# Tags that are not versions. GoReleaser must not resolve any of them as the
+# current tag, because `.Version` then holds something the snapshot template
+# below cannot increment:
 #
 #   ⨯ failed to parse snapshot name: ... invalid semantic version
 #
-# Written bare rather than anchored so it matches whether this field is read as a
-# glob or as a regex.
+# `edge` is the rolling pointer at the default branch. It otherwise wins over
+# v1.8.1 as soon as one is fetched — which is every CI checkout with
+# fetch-depth: 0, and every clone that has run `git fetch --tags`. Written bare
+# rather than anchored so it matches whether this field is read as a glob or as
+# a regex.
+#
+# `agent-vetted/*` is tooling. This was found the day sextant's fifteen v1.x
+# tags were removed from this repo: with no version tag left to describe, the
+# next thing `git describe` reached for was one of these, and `make snapshot`
+# broke outright. A pattern rather than deleting the two that exist, because
+# whatever creates them will create more.
 git:
-  ignore_tags: [edge]
+  ignore_tags: [edge, 'agent-vetted/*']
 
 builds:
   - id: sextant
@@ -143,4 +150,12 @@ release:
 
     Verify with `sextant --version` or `binnacle --version`. The server also
     ships as a container image, which is how it is meant to be deployed:
-    `ghcr.io/runlevel-six/binnacle:{{ .Tag }}`.
+
+    ```
+    ghcr.io/runlevel-six/binnacle:{{ .Version }}
+    ```
+
+    `.Version`, not `.Tag`: the image workflow tags with
+    `type=semver,pattern={{ "{{version}}" }}`, which drops the leading `v`. A
+    `{{ .Tag }}` here would advertise `:v{{ .Version }}`, and no such tag is
+    ever pushed.
