@@ -69,7 +69,7 @@ needs configuring on each laptop.
 
 ## When the device grant is not an option
 
-Some providers do not offer it, and some organisations issue tokens through
+Some providers do not offer it, and some organizations issue tokens through
 their own tooling. Two ways in:
 
 **A token you already have**, which wins over everything else:
