@@ -76,7 +76,7 @@ func (s *Source) View() []fleet.ClusterView {
 	if err != nil {
 		return nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var fr struct {
 		Clusters []fleet.ClusterView `json:"clusters"`
 	}
@@ -95,7 +95,7 @@ func (s *Source) Cluster(namespace, name string) (fleet.ClusterDetail, bool) {
 	if err != nil {
 		return fleet.ClusterDetail{}, false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return fleet.ClusterDetail{}, false
 	}
@@ -115,7 +115,7 @@ func (s *Source) Storage() fleet.Storage {
 	if err != nil {
 		return fleet.Storage{}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var st fleet.Storage
 	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
 		return fleet.Storage{}
@@ -142,7 +142,7 @@ func (s *Source) StoreSnapshot(namespace, name string) ([]wire.Entry, bool) {
 	if err != nil {
 		return nil, false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, false
 	}
@@ -177,7 +177,7 @@ func (s *Source) subscribe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// An initial tick so the caller reads the current state immediately,
 	// matching the server's own SSE behavior.

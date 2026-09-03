@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -25,7 +26,12 @@ func testBuilder(_, _ string) (*Model, func(), error) {
 	store := demo.Store()
 	reg := plugin.NewRegistry()
 	for _, p := range demo.Plugins() {
-		reg.Register(p)
+		// Not ignored: Register fails on a duplicate pane ID, and swallowing
+		// that would silently drop a plugin and leave the test asserting
+		// against a dashboard missing a pane.
+		if err := reg.Register(p); err != nil {
+			return nil, nil, fmt.Errorf("registering %s: %w", p.Name(), err)
+		}
 	}
 	reg.Detect(context.Background())
 	panes := CorePanes(store, resolved, nil)

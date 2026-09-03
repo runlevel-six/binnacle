@@ -65,7 +65,7 @@ func (s *ClusterSource) Detect(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return false, nil
 	}
@@ -113,7 +113,7 @@ func (s *ClusterSource) stream(ctx context.Context, st *store.Store) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var entries []wire.Entry
 	sc := bufio.NewScanner(resp.Body)

@@ -50,7 +50,6 @@ type FleetModel struct {
 
 	width, height int
 	keys          fleetKeymap
-	err           string
 
 	// builder, when non-nil, causes Enter to emit a DrillDownMsg instead
 	// of fetching the text detail view. The router sets this; standalone
@@ -334,17 +333,20 @@ func (m *FleetModel) fleetBody(th tui.Theme) string {
 		}
 		problem = truncateStr(problem, 40)
 
+		// One style carries both decisions. Selection used to build its own
+		// from scratch, which discarded the grounded background a line above
+		// and left those themes rendering the selected row on the terminal's
+		// own color.
 		style := lipgloss.NewStyle()
 		if th.Grounded() {
 			style = style.Background(th.PaneBG)
 		}
-
-		row := fmt.Sprintf("%s %-2s  %-30s  %-10s  %-8s  %s",
-			marker, statusGlyph, name, version, nodes, problem)
-
 		if i == m.selected {
-			row = lipgloss.NewStyle().Bold(true).Render(row)
+			style = style.Bold(true)
 		}
+
+		row := style.Render(fmt.Sprintf("%s %-2s  %-30s  %-10s  %-8s  %s",
+			marker, statusGlyph, name, version, nodes, problem))
 
 		body += row + "\n"
 	}
@@ -383,12 +385,12 @@ func (m *FleetModel) renderDetail() string {
 	sb.WriteString(title + "\n\n")
 
 	// Status and version
-	sb.WriteString(fmt.Sprintf("Status:   %s\n", statusText(d.Status)))
+	fmt.Fprintf(&sb, "Status:   %s\n", statusText(d.Status))
 	if d.Version != "" {
-		sb.WriteString(fmt.Sprintf("Version:  %s\n", d.Version))
+		fmt.Fprintf(&sb, "Version:  %s\n", d.Version)
 	}
 	if d.Phase != "" {
-		sb.WriteString(fmt.Sprintf("Phase:    %s\n", d.Phase))
+		fmt.Fprintf(&sb, "Phase:    %s\n", d.Phase)
 	}
 	sb.WriteString("\n")
 
@@ -410,8 +412,8 @@ func (m *FleetModel) renderDetail() string {
 	if len(d.Pools) > 0 {
 		sb.WriteString("Node Pools:\n")
 		for _, p := range d.Pools {
-			sb.WriteString(fmt.Sprintf("  %-30s  %s  %d/%d  %s\n",
-				p.Name, p.Role, p.Ready, p.Desired, p.Version))
+			fmt.Fprintf(&sb, "  %-30s  %s  %d/%d  %s\n",
+				p.Name, p.Role, p.Ready, p.Desired, p.Version)
 		}
 		sb.WriteString("\n")
 	}
@@ -429,30 +431,30 @@ func (m *FleetModel) renderDetail() string {
 
 	// Machines summary
 	if d.Machines.Total() > 0 {
-		sb.WriteString(fmt.Sprintf("\nMachines: %d shown, %d total\n",
-			len(d.Machines.Shown), d.Machines.Total()))
+		fmt.Fprintf(&sb, "\nMachines: %d shown, %d total\n",
+			len(d.Machines.Shown), d.Machines.Total())
 	}
 
 	// Hosts summary
 	if d.Hosts.Total() > 0 {
-		sb.WriteString(fmt.Sprintf("Hosts:    %d shown, %d total", len(d.Hosts.Shown), d.Hosts.Total()))
+		fmt.Fprintf(&sb, "Hosts:    %d shown, %d total", len(d.Hosts.Shown), d.Hosts.Total())
 		if d.HostsElsewhere > 0 {
-			sb.WriteString(fmt.Sprintf(" (%d elsewhere)", d.HostsElsewhere))
+			fmt.Fprintf(&sb, " (%d elsewhere)", d.HostsElsewhere)
 		}
 		sb.WriteString("\n")
 	}
 
 	// Nodes summary
 	if d.NodeRows.Total() > 0 {
-		sb.WriteString(fmt.Sprintf("Nodes:    %d shown, %d total\n",
-			len(d.NodeRows.Shown), d.NodeRows.Total()))
+		fmt.Fprintf(&sb, "Nodes:    %d shown, %d total\n",
+			len(d.NodeRows.Shown), d.NodeRows.Total())
 	}
 
 	// Events summary
 	if d.EventsTotal > 0 {
-		sb.WriteString(fmt.Sprintf("Events:   %d groups, %d total", len(d.Events.Shown), d.EventsTotal))
+		fmt.Fprintf(&sb, "Events:   %d groups, %d total", len(d.Events.Shown), d.EventsTotal)
 		if d.EventsTruncated > 0 {
-			sb.WriteString(fmt.Sprintf(" (%d truncated)", d.EventsTruncated))
+			fmt.Fprintf(&sb, " (%d truncated)", d.EventsTruncated)
 		}
 		sb.WriteString("\n")
 	}
@@ -460,7 +462,7 @@ func (m *FleetModel) renderDetail() string {
 	// Updated
 	if !d.UpdatedAt.IsZero() {
 		age := time.Since(d.UpdatedAt).Round(time.Second)
-		sb.WriteString(fmt.Sprintf("\nUpdated %s ago\n", age))
+		fmt.Fprintf(&sb, "\nUpdated %s ago\n", age)
 	}
 
 	// Footer
