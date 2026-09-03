@@ -6,13 +6,14 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+
 	"github.com/runlevel-six/binnacle/internal/core/workload"
 	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/model"
 	"github.com/runlevel-six/binnacle/pkg/profile"
 	"github.com/runlevel-six/binnacle/pkg/store"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 // ManagementView is the management cluster's own health, for the fleet page.

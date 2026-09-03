@@ -20,9 +20,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/runlevel-six/binnacle/internal/plugin/kube"
+	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/store"
 	cephstate "github.com/runlevel-six/binnacle/pkg/subsystem/ceph"
-	"github.com/runlevel-six/binnacle/pkg/health"
 )
 
 // Name is the plugin's registration name.
@@ -308,5 +308,3 @@ func firstCheckName(checks []Check) string {
 	}
 	return checks[0].Name
 }
-
-

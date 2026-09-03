@@ -1,3 +1,8 @@
+// Package pane renders OVN's terminal view.
+//
+// Separate from the plugin beside it so the collector carries no dependency on
+// a renderer — the same split every subsystem makes, and the reason a web
+// server can link the data layer without linking a terminal library.
 package pane
 
 import (

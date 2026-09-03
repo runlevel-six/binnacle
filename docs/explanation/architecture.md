@@ -117,7 +117,7 @@ moved the pane by 37 cells on a twenty-second timer. And the layout is sized fro
 each pane's *highest recent* appetite rather than its current one, held for a couple
 of minutes after the last time anything claimed it. Two states of a cluster can
 honestly want different widths — a crash-looping pod with a 60-character name needs
-room its neighbours are using, and stops needing it the moment the pod recovers — so
+room its neighbors are using, and stops needing it the moment the pod recovers — so
 sizing from the instant reading makes each state starve whichever pane the other one
 fed, and the screen swings for as long as the pod flaps. Holding the peak makes that
 one move instead of one per poll, and every rule about *when* to redraw is downstream

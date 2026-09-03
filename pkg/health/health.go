@@ -109,8 +109,8 @@ func (s *Status) UnmarshalJSON(data []byte) error {
 		*s = StatusWarn
 	case "err":
 		*s = StatusErr
-		default:
-			return fmt.Errorf("health: unknown status %q", str)
-		}
+	default:
+		return fmt.Errorf("health: unknown status %q", str)
+	}
 	return nil
 }

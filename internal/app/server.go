@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -81,7 +82,7 @@ func RunServer(ctx context.Context, serverURL, token, serverCluster string, info
 	if err == nil {
 		select {
 		case subErr := <-errCh:
-			if subErr != nil && subErr != context.Canceled {
+			if subErr != nil && !errors.Is(subErr, context.Canceled) {
 				return fmt.Errorf("server connection: %w", subErr)
 			}
 		default:

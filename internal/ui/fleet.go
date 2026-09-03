@@ -37,16 +37,16 @@ type FleetModel struct {
 	storage  fleet.Storage
 	reversed bool
 
-	selected int
-	detail   *fleet.ClusterDetail
-	viewing  string // "fleet" or "detail"
+	selected   int
+	detail     *fleet.ClusterDetail
+	viewing    string // "fleet" or "detail"
 	autoSelect string // "namespace/name" to drill into on first load
 
 	// filter: when non-empty, only clusters whose namespace/name contain
 	// the substring are shown. filtering is a mode entered with / and
 	// exited with enter or esc.
-	filter     string
-	filtering  bool
+	filter    string
+	filtering bool
 
 	width, height int
 	keys          fleetKeymap
@@ -383,7 +383,7 @@ func (m *FleetModel) renderDetail() string {
 	sb.WriteString(title + "\n\n")
 
 	// Status and version
-	sb.WriteString(fmt.Sprintf("Status:   %s\n", statusText(d.Status, th)))
+	sb.WriteString(fmt.Sprintf("Status:   %s\n", statusText(d.Status)))
 	if d.Version != "" {
 		sb.WriteString(fmt.Sprintf("Version:  %s\n", d.Version))
 	}
@@ -482,7 +482,9 @@ func statusGlyph(s health.Status, th tui.Theme) string {
 	return tui.StyleMuted.Render(th.GlyphLoading)
 }
 
-func statusText(s health.Status, th tui.Theme) string {
+// statusText renders a status with the active theme's colors. It takes no
+// theme: the styles are package-level and reassigned when a theme is applied.
+func statusText(s health.Status) string {
 	style := tui.StyleMuted
 	switch s {
 	case health.StatusOK:

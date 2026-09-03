@@ -53,7 +53,7 @@ func (s *ClusterSource) Name() string { return "remote" }
 // a single snapshot. A 404 means the cluster is gone; any other error
 // means the server is unreachable. Both return (false, err).
 func (s *ClusterSource) Detect(ctx context.Context) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET",
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		fmt.Sprintf("%s/api/v1/clusters/%s/%s/snapshot", s.base, s.ns, s.name), nil)
 	if err != nil {
 		return false, err
@@ -99,7 +99,7 @@ func (s *ClusterSource) Run(ctx context.Context, st *store.Store) error {
 }
 
 func (s *ClusterSource) stream(ctx context.Context, st *store.Store) error {
-	req, err := http.NewRequestWithContext(ctx, "GET",
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		fmt.Sprintf("%s/api/v1/clusters/%s/%s/stream", s.base, s.ns, s.name), nil)
 	if err != nil {
 		return err

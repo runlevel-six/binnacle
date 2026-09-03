@@ -25,9 +25,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/runlevel-six/binnacle/internal/plugin/kube"
+	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/store"
 	ovnstate "github.com/runlevel-six/binnacle/pkg/subsystem/ovn"
-	"github.com/runlevel-six/binnacle/pkg/health"
 )
 
 // Name is the plugin's registration name.
@@ -439,5 +439,3 @@ func databaseLabel(name string) string {
 	}
 	return name
 }
-
-

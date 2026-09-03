@@ -829,9 +829,9 @@ func TestPackedTablesDeclareTheirRealColumnCount(t *testing.T) {
 // first thing on the page because its failure is fleet-wide.
 func TestFleetPage_ManagementSection(t *testing.T) {
 	mgmt := fleet.ManagementView{
-		Reachable: true,
-		Version:   "v1.31.4",
-		Nodes:     fleet.NodeCount{Ready: 3, Total: 3},
+		Reachable:  true,
+		Version:    "v1.31.4",
+		Nodes:      fleet.NodeCount{Ready: 3, Total: 3},
 		NodesKnown: true,
 		ControllerHealth: &fleet.ControllerHealth{
 			Unhealthy: 1,
@@ -885,7 +885,7 @@ func TestFleetPage_ManagementSection(t *testing.T) {
 func TestFleetPage_ManagementUnreachable(t *testing.T) {
 	mgmt := fleet.ManagementView{
 		Reachable: false,
-		ErrText:  "connection refused",
+		ErrText:   "connection refused",
 	}
 	s, err := New(&fakeFleet{
 		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01"}},

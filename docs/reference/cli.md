@@ -19,7 +19,7 @@ matches more than one context sextant asks which you meant, and errors naming th
 candidates when nothing is attached to answer. See
 [Point it at a cluster](../how-to/point-at-a-cluster.md).
 
-## Behaviour
+## Behavior
 
 | Flag | Default | Purpose |
 |---|---|---|

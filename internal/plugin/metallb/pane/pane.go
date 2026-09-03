@@ -1,3 +1,8 @@
+// Package pane renders MetalLB's terminal view.
+//
+// Separate from the plugin beside it so the collector carries no dependency on
+// a renderer — the same split every subsystem makes, and the reason a web
+// server can link the data layer without linking a terminal library.
 package pane
 
 import (
@@ -13,17 +18,17 @@ import (
 )
 
 const (
-	KeyState          = metallbstate.KeyState
-	UsageUnknown      = metallbstate.UsageUnknown
-	UsageAnnotations  = metallbstate.UsageAnnotations
-	UsageStatus       = metallbstate.UsageStatus
+	KeyState         = metallbstate.KeyState
+	UsageUnknown     = metallbstate.UsageUnknown
+	UsageAnnotations = metallbstate.UsageAnnotations
+	UsageStatus      = metallbstate.UsageStatus
 )
 
 type (
-	Pool       = metallbstate.Pool
+	Pool        = metallbstate.Pool
 	UsageSource = metallbstate.UsageSource
-	Service    = metallbstate.Service
-	State      = metallbstate.State
+	Service     = metallbstate.Service
+	State       = metallbstate.State
 )
 
 type Provider struct{}

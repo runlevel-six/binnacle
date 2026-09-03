@@ -31,7 +31,7 @@ type stubSource struct {
 	detectErr error
 }
 
-func (s *stubSource) Detect(context.Context) (bool, error) { return s.detected, s.detectErr }
+func (s *stubSource) Detect(context.Context) (bool, error)    { return s.detected, s.detectErr }
 func (s *stubSource) Run(context.Context, *store.Store) error { return nil }
 
 type stubPaneProvider struct {

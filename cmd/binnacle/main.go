@@ -17,9 +17,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/runlevel-six/binnacle/pkg/profile"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/runlevel-six/binnacle/pkg/profile"
 
 	"github.com/runlevel-six/binnacle/internal/auth"
 	"github.com/runlevel-six/binnacle/internal/fleet"

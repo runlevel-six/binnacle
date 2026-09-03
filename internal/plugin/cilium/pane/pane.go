@@ -1,3 +1,8 @@
+// Package pane renders Cilium's terminal view.
+//
+// Separate from the plugin beside it so the collector carries no dependency on
+// a renderer — the same split every subsystem makes, and the reason a web
+// server can link the data layer without linking a terminal library.
 package pane
 
 import (
@@ -16,13 +21,13 @@ import (
 const KeyState = ciliumstate.KeyState
 
 type (
-	IPAM       = ciliumstate.IPAM
-	Hubble     = ciliumstate.Hubble
+	IPAM        = ciliumstate.IPAM
+	Hubble      = ciliumstate.Hubble
 	Controllers = ciliumstate.Controllers
-	MeshPeer   = ciliumstate.MeshPeer
+	MeshPeer    = ciliumstate.MeshPeer
 	ClusterMesh = ciliumstate.ClusterMesh
-	Status     = ciliumstate.Status
-	State      = ciliumstate.State
+	Status      = ciliumstate.Status
+	State       = ciliumstate.State
 )
 
 type Provider struct{}

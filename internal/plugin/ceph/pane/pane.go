@@ -1,3 +1,10 @@
+// Package pane renders Ceph's terminal view.
+//
+// It is separate from the plugin beside it so that the collector can be built
+// without a renderer: the plugin gathers and publishes state, this package is
+// the only half that reaches for lipgloss. The types re-exported below are
+// aliases for the public ones in pkg/subsystem/ceph, so a reader of this file
+// need not switch packages to follow what is being rendered.
 package pane
 
 import (
@@ -17,15 +24,15 @@ import (
 const KeyState = cephstate.KeyState
 
 type (
-	State  = cephstate.State
-	Status = cephstate.Status
-	Mons   = cephstate.Mons
-	Mgr    = cephstate.Mgr
-	OSDs   = cephstate.OSDs
+	State   = cephstate.State
+	Status  = cephstate.Status
+	Mons    = cephstate.Mons
+	Mgr     = cephstate.Mgr
+	OSDs    = cephstate.OSDs
 	PGState = cephstate.PGState
-	PGs    = cephstate.PGs
-	IO     = cephstate.IO
-	Check  = cephstate.Check
+	PGs     = cephstate.PGs
+	IO      = cephstate.IO
+	Check   = cephstate.Check
 )
 
 // Provider contributes Ceph's overview block. It implements [tui.PaneProvider]

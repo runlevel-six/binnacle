@@ -33,9 +33,9 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/config/clouds"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/extensions/agents"
 
+	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/store"
 	osstate "github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
-	"github.com/runlevel-six/binnacle/pkg/health"
 )
 
 // Name is the plugin's registration name.
@@ -555,5 +555,3 @@ func (p *Plugin) Cells(s *store.Store) []health.Cell {
 	}
 	return []health.Cell{cell}
 }
-
-

@@ -164,7 +164,7 @@ func (s *Source) notify() {
 }
 
 func (s *Source) subscribe(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", s.base+"/api/v1/events", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.base+"/api/v1/events", nil)
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func (s *Source) subscribe(ctx context.Context) error {
 }
 
 func (s *Source) get(ctx context.Context, path string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", s.base+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.base+path, nil)
 	if err != nil {
 		return nil, err
 	}

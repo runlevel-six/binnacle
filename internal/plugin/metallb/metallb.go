@@ -24,9 +24,9 @@ import (
 	"k8s.io/client-go/dynamic"
 
 	"github.com/runlevel-six/binnacle/internal/plugin/kube"
+	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/store"
 	metallbstate "github.com/runlevel-six/binnacle/pkg/subsystem/metallb"
-	"github.com/runlevel-six/binnacle/pkg/health"
 )
 
 // Name is the plugin's registration name.
@@ -572,8 +572,6 @@ func (p *Plugin) Cells(s *store.Store) []health.Cell {
 	}
 	return []health.Cell{cell}
 }
-
-
 
 func containsString(haystack []string, needle string) bool {
 	for _, h := range haystack {

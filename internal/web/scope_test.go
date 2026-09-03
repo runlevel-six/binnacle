@@ -32,9 +32,9 @@ func TestResolveScope_Wildcard(t *testing.T) {
 
 func TestResolveScope_SpecificNamespaces(t *testing.T) {
 	s := ResolveScope([]string{"site-a-ops"}, map[string][]string{
-		"site-a-ops":   {"site-a", "site-a-infra"},
-		"platform":     {"*"},
-		"site-b-ops":   {"site-b"},
+		"site-a-ops": {"site-a", "site-a-infra"},
+		"platform":   {"*"},
+		"site-b-ops": {"site-b"},
 	})
 	if s.IsAll() {
 		t.Fatal("should not be all scope")

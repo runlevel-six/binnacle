@@ -28,8 +28,8 @@ type ClusterBuilder func(namespace, name string) (*Model, func(), error)
 // ui.Model directly. The router exists only when there is a fleet list
 // to navigate from.
 type SextantModel struct {
-	fleet    *FleetModel
-	builder  ClusterBuilder
+	fleet     *FleetModel
+	builder   ClusterBuilder
 	buildInfo build.Info
 
 	screen  string // "fleet" or "cluster"

@@ -1,3 +1,8 @@
+// Package pane renders the OpenStack panes.
+//
+// Separate from the plugin beside it so the collector carries no dependency on
+// a renderer — the same split every subsystem makes, and the reason a web
+// server can link the data layer without linking a terminal library.
 package pane
 
 import (
@@ -23,19 +28,19 @@ const (
 )
 
 type (
-	State         = osstate.State
+	State          = osstate.State
 	ServiceSummary = osstate.ServiceSummary
-	Agent         = osstate.Agent
-	Migration     = osstate.Migration
-	Migrations    = osstate.Migrations
-	BrokenServer  = osstate.BrokenServer
-	Drain         = osstate.Drain
-	Inventory     = osstate.Inventory
-	Count         = osstate.Count
-	Shown         = osstate.Shown
-	Service       = openstack.Service
-	Services      = openstack.Services
-	Component     = openstack.Component
+	Agent          = osstate.Agent
+	Migration      = osstate.Migration
+	Migrations     = osstate.Migrations
+	BrokenServer   = osstate.BrokenServer
+	Drain          = osstate.Drain
+	Inventory      = osstate.Inventory
+	Count          = osstate.Count
+	Shown          = osstate.Shown
+	Service        = openstack.Service
+	Services       = openstack.Services
+	Component      = openstack.Component
 )
 
 var (

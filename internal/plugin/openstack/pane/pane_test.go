@@ -460,7 +460,7 @@ func TestCloudPaneMigrationsFitOneGridColumn(t *testing.T) {
 	now := time.Now()
 	s := store.New()
 	s.Put(KeyMigrations, Migrations{Items: []Migration{{
-		ID: 1,
+		ID:     1,
 		Status: "post-migrating", Type: "live-migration",
 		InstanceUUID:  "6f1c2b8e-4a3d-4f19-9c7e-2b8a5d1e0f34",
 		SourceCompute: "compute-node-5.site-a.example.com",

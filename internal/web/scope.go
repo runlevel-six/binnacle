@@ -4,9 +4,10 @@ import (
 	"net/http"
 	"os"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/runlevel-six/binnacle/internal/auth"
 	"github.com/runlevel-six/binnacle/internal/fleet"
-	"gopkg.in/yaml.v3"
 )
 
 // Scope is the set of namespaces a user may see. A zero-value Scope (IsAll

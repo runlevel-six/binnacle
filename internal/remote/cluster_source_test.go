@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -72,14 +73,14 @@ func TestClusterSource_Run_StoresEntries(t *testing.T) {
 		{
 			Key: model.KeyWorkloadNodes,
 			Data: mustJSON(model.Snapshot[model.Node]{
-				Items: []model.Node{{Name: "node-1", Status: "Ready"}},
+				Items:     []model.Node{{Name: "node-1", Status: "Ready"}},
 				UpdatedAt: now,
 			}),
 		},
 		{
 			Key: ceph.KeyState,
 			Data: mustJSON(ceph.State{
-				Status: ceph.Status{Health: "HEALTH_WARN"},
+				Status:    ceph.Status{Health: "HEALTH_WARN"},
 				UpdatedAt: now,
 			}),
 		},
@@ -126,7 +127,7 @@ func TestClusterSource_Run_ReconnectsOnError(t *testing.T) {
 		{
 			Key: model.KeyWorkloadNodes,
 			Data: mustJSON(model.Snapshot[model.Node]{
-				Items: []model.Node{{Name: "node-1"}},
+				Items:     []model.Node{{Name: "node-1"}},
 				UpdatedAt: now,
 			}),
 		},
@@ -178,7 +179,7 @@ func TestClusterSource_Run_ContextCanceled(t *testing.T) {
 	cancel() // cancel immediately
 
 	err := s.Run(ctx, st)
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
 }

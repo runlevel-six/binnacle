@@ -41,6 +41,17 @@ linters:
       - path: _test\.go
         linters: [unparam, gocritic]
 
+      # The `exported` rule is for pkg/, which is the plugin-author API
+      # surface. internal/ is not: nothing outside this module can import it,
+      # and the identifiers the rule catches there are re-export aliases and
+      # one-line interface accessors on pane types — the same noise the
+      # checkPrivateReceivers note above declines to require. Splitting each
+      # plugin's pane into its own package made those accessors exported
+      # without making them API. package-comments still applies everywhere.
+      - path: ^internal/
+        linters: [revive]
+        text: "^exported:"
+
 formatters:
   enable:
     - gofmt

@@ -9,6 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+
 	"github.com/runlevel-six/binnacle/pkg/collect"
 	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/model"
@@ -16,8 +19,6 @@ import (
 	"github.com/runlevel-six/binnacle/pkg/profile"
 	"github.com/runlevel-six/binnacle/pkg/rollout"
 	"github.com/runlevel-six/binnacle/pkg/store"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 // Options configures a Fleet.

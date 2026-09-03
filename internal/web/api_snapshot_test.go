@@ -48,11 +48,11 @@ func TestAPIClusterSnapshot_ReturnsEntries(t *testing.T) {
 	s := store.New()
 	now := time.Now()
 	s.Put(model.KeyWorkloadNodes, model.Snapshot[model.Node]{
-		Items: []model.Node{{Name: "node-1", Status: "Ready"}},
+		Items:     []model.Node{{Name: "node-1", Status: "Ready"}},
 		UpdatedAt: now,
 	})
 	s.Put(ceph.KeyState, ceph.State{
-		Status: ceph.Status{Health: "HEALTH_OK"},
+		Status:    ceph.Status{Health: "HEALTH_OK"},
 		UpdatedAt: now,
 	})
 	entries := wire.Dump(s)
@@ -84,7 +84,7 @@ func TestAPIClusterStream_FirstFrameImmediate(t *testing.T) {
 	s := store.New()
 	now := time.Now()
 	s.Put(model.KeyWorkloadNodes, model.Snapshot[model.Node]{
-		Items: []model.Node{{Name: "node-1"}},
+		Items:     []model.Node{{Name: "node-1"}},
 		UpdatedAt: now,
 	})
 	entries := wire.Dump(s)
@@ -94,7 +94,7 @@ func TestAPIClusterStream_FirstFrameImmediate(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	req, _ := http.NewRequest("GET", srv.URL+"/api/v1/clusters/capi/tenant-01/stream", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/clusters/capi/tenant-01/stream", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
