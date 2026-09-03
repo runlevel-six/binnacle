@@ -726,3 +726,61 @@ func TestRun_ClusterWideWatchExplainsItself(t *testing.T) {
 		}
 	}
 }
+
+// SkipWorkloads exists because of a live defect: the management-cluster
+// collector runs this watcher against a ServiceAccount granted nodes and pods
+// only, and the three workload kinds are cluster-scoped lists. A denied
+// informer does not give up — it retried every few seconds for as long as the
+// process ran, filling the log with permission errors for a snapshot the
+// management section never reads.
+//
+// So the assertion that matters is not that the key is absent. It is that the
+// request is never made.
+func TestRun_SkipWorkloadsNeverListsThem(t *testing.T) {
+	s := store.New()
+	w := newTestWatcher(s, Options{
+		NodeRoles:     profile.Default().NodeRoles,
+		Events:        profile.Default().Events,
+		SkipWorkloads: true,
+	})
+
+	// Everything else still publishes: skipping one snapshot must not stop the
+	// watcher from doing the rest of its job.
+	runUntilPublished(t, w, s,
+		model.KeyWorkloadNodes, model.KeyWorkloadPods, model.KeyWorkloadEvents)
+
+	for _, action := range w.typed.(*fake.Clientset).Actions() {
+		switch action.GetResource().Resource {
+		case "deployments", "statefulsets", "daemonsets":
+			t.Errorf("%s %s: the watch was started despite SkipWorkloads",
+				action.GetVerb(), action.GetResource().Resource)
+		}
+	}
+
+	// Absent, not empty. An empty snapshot means "this cluster runs nothing,"
+	// which is a claim; withholding the key says nothing at all, which is the
+	// truth when it was never watched.
+	if _, ok := s.Raw(model.KeyWorkloadWorkloads); ok {
+		t.Error("published a workloads snapshot for a watch that never ran")
+	}
+
+	// The control, without which the check above would pass for the wrong
+	// reason — a fake that recorded no resource names at all would look like a
+	// watcher that asked for nothing.
+	control := store.New()
+	cw := newTestWatcher(control, Options{
+		NodeRoles: profile.Default().NodeRoles,
+		Events:    profile.Default().Events,
+	})
+	runUntilPublished(t, cw, control, model.KeyWorkloadWorkloads)
+
+	listed := false
+	for _, action := range cw.typed.(*fake.Clientset).Actions() {
+		if action.GetResource().Resource == "deployments" {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Error("default options did not watch deployments, so the check above proves nothing")
+	}
+}

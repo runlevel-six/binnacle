@@ -85,6 +85,15 @@ subjects:
 # Without this the management section renders two "…" cells indefinitely: the
 # snapshots arrive carrying a permission error, the section correctly declines
 # to report numbers it does not have, and nothing on the page explains why.
+#
+# Nodes and pods and nothing else, deliberately. The collector shares its
+# watcher with the workload clusters, where the same code also lists
+# Deployments, StatefulSets and DaemonSets — and the management section reads
+# none of them, matching the profile's critical workloads against pod names
+# instead. That watch is switched off for this cluster
+# (workload.Options.SkipWorkloads), so if a permission error for one of those
+# three ever appears in the log, the fix is at the call site in
+# internal/fleet/management.go. Do not widen this rule to silence it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

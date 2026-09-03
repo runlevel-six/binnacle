@@ -261,6 +261,14 @@ func (f *Fleet) startManagement(ctx context.Context) {
 		wl, err := workload.New(f.opts.Management, mc.store, workload.Options{
 			NodeRoles: f.opts.Profile.NodeRoles,
 			Events:    f.opts.Profile.Events,
+			// This section reads nodes and pods and nothing else — the
+			// controller table matches the profile's workloads against pod
+			// names, not against Deployments — so the three workload kinds
+			// would be listed cluster-wide for a snapshot no reader consults.
+			// The ServiceAccount is granted nodes and pods on the management
+			// cluster deliberately narrowly, so asking for more is not merely
+			// wasteful: it is a denial the informer retries forever.
+			SkipWorkloads: true,
 		})
 		if err != nil {
 			mc.mu.Lock()

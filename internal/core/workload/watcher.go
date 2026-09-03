@@ -40,6 +40,19 @@ type Options struct {
 	NodeRoles profile.NodeRoles
 	// Events supplies the namespace filter for the events stream.
 	Events profile.Events
+	// SkipWorkloads leaves the three workload kinds unwatched, publishing no
+	// [model.KeyWorkloadWorkloads] snapshot at all.
+	//
+	// Phrased as a negative so the zero value is the complete watch: a caller
+	// that forgets this field gets every snapshot, rather than silently missing
+	// the panes that read this one.
+	//
+	// Set it when the reader does not use that key. Deployments, StatefulSets
+	// and DaemonSets are cluster-scoped lists, so watching them needs a grant
+	// beyond nodes and pods — and an informer denied that grant does not stop.
+	// It retries for the life of the process, which is a permission error every
+	// few seconds in the log for a snapshot nobody reads.
+	SkipWorkloads bool
 }
 
 // Watcher observes one workload cluster.
@@ -135,9 +148,6 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 	nodes := factory.Core().V1().Nodes()
 	pods := factory.Core().V1().Pods()
-	deploys := factory.Apps().V1().Deployments()
-	stses := factory.Apps().V1().StatefulSets()
-	dses := factory.Apps().V1().DaemonSets()
 
 	// Events get their own factories so they can be scoped independently of the
 	// cluster-scoped resources above — one per watched namespace, or a single
@@ -185,38 +195,51 @@ func (w *Watcher) Run(ctx context.Context) error {
 		}
 	}
 
-	publishWorkloads := func() {
-		var out []model.Workload
-		var firstErr error
+	// The three workload kinds are built inside the guard rather than skipped
+	// later: a shared factory registers an informer when its lister or informer
+	// is first asked for, so not asking is what keeps the watch from starting.
+	var workloadInformers []cache.SharedIndexInformer
+	publishWorkloads := func() {}
+	if !w.opts.SkipWorkloads {
+		deploys := factory.Apps().V1().Deployments()
+		stses := factory.Apps().V1().StatefulSets()
+		dses := factory.Apps().V1().DaemonSets()
+		workloadInformers = []cache.SharedIndexInformer{
+			deploys.Informer(), stses.Informer(), dses.Informer(),
+		}
+		publishWorkloads = func() {
+			var out []model.Workload
+			var firstErr error
 
-		if list, err := deploys.Lister().List(labels.Everything()); err != nil {
-			firstErr = err
-		} else {
-			out = append(out, ProjectDeployments(list)...)
-		}
-		if list, err := stses.Lister().List(labels.Everything()); err != nil {
-			if firstErr == nil {
+			if list, err := deploys.Lister().List(labels.Everything()); err != nil {
 				firstErr = err
+			} else {
+				out = append(out, ProjectDeployments(list)...)
 			}
-		} else {
-			out = append(out, ProjectStatefulSets(list)...)
-		}
-		if list, err := dses.Lister().List(labels.Everything()); err != nil {
-			if firstErr == nil {
-				firstErr = err
+			if list, err := stses.Lister().List(labels.Everything()); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+			} else {
+				out = append(out, ProjectStatefulSets(list)...)
 			}
-		} else {
-			out = append(out, ProjectDaemonSets(list)...)
-		}
+			if list, err := dses.Lister().List(labels.Everything()); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+			} else {
+				out = append(out, ProjectDaemonSets(list)...)
+			}
 
-		if firstErr != nil && len(out) == 0 {
-			w.store.Put(model.KeyWorkloadWorkloads, model.ErrorSnapshot(firstErr))
-			return
+			if firstErr != nil && len(out) == 0 {
+				w.store.Put(model.KeyWorkloadWorkloads, model.ErrorSnapshot(firstErr))
+				return
+			}
+			SortWorkloads(out)
+			w.store.Put(model.KeyWorkloadWorkloads, model.Snapshot[model.Workload]{
+				Items: out, UpdatedAt: time.Now(), Err: firstErr,
+			})
 		}
-		SortWorkloads(out)
-		w.store.Put(model.KeyWorkloadWorkloads, model.Snapshot[model.Workload]{
-			Items: out, UpdatedAt: time.Now(), Err: firstErr,
-		})
 	}
 
 	// eventsPublished gates the watch-error reporting below: an error is only news
@@ -256,9 +279,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 	for _, i := range eventInformers {
 		onChange(i, triggerEvents)
 	}
-	onChange(deploys.Informer(), triggerWorkloads)
-	onChange(stses.Informer(), triggerWorkloads)
-	onChange(dses.Informer(), triggerWorkloads)
+	for _, i := range workloadInformers {
+		onChange(i, triggerWorkloads)
+	}
 
 	// A failing event watch reports itself rather than looking like an empty
 	// cluster. Registered before Start, since that is the only time it is allowed.
@@ -284,7 +307,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 	// timeout. Waiting on the shared factory made every other key wait behind it,
 	// which defeated the purpose of publishing at all.
 	waitThenPublish(ctx, publishNodesAndPods, nodes.Informer(), pods.Informer())
-	waitThenPublish(ctx, publishWorkloads, deploys.Informer(), stses.Informer(), dses.Informer())
+	// Guarded rather than left to publish from an empty informer list, which
+	// waits on nothing and would write the "nothing to report" snapshot the
+	// skip exists to withhold: unwatched has to stay distinguishable from empty.
+	if len(workloadInformers) > 0 {
+		waitThenPublish(ctx, publishWorkloads, workloadInformers...)
+	}
 	// Say what the events pane is waiting for before it starts waiting. A
 	// cluster-wide list can run for minutes on a busy cluster, and "loading" for
 	// minutes with no reason given is indistinguishable from broken.

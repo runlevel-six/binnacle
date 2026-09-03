@@ -297,3 +297,75 @@ func writeTestJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+// The gap the bearer carve-out left: it only covered requests that carried a
+// credential. A client with none — a script, a monitor, or a sextant pointed at
+// a server it has not signed in to — asked for JSON and was sent to the login
+// page, followed the redirect, and got HTML with a 200 on it. That is the exact
+// failure the carve-out above was written to prevent.
+func TestMiddleware_APIWithNoCredentialGets401NotRedirect(t *testing.T) {
+	p := newIDP(t)
+	a := p.oidc(t, "binnacle", "binnacle-cli")
+	h := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for _, path := range []string{
+		"/api/v1/fleet",
+		"/api/v1/storage",
+		"/api/v1/clusters/machines/k8s00",
+		"/api/v1/clusters/machines/k8s00/snapshot",
+		"/api/v1/clusters/machines/k8s00/stream",
+		"/api/v1/events",
+	} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("got %d want 401 (a redirect would be a login page with a 200)", rec.Code)
+			}
+			if loc := rec.Header().Get("Location"); loc != "" {
+				t.Errorf("redirected to %q", loc)
+			}
+		})
+	}
+}
+
+// An EventSource is recognized by the media type it accepts, not by the exact
+// header value. The browser sends the bare type, but a q-value or a list means
+// the same request and must not be redirected either.
+func TestMiddleware_EventStreamRecognizedInAnAcceptList(t *testing.T) {
+	p := newIDP(t)
+	a := p.oidc(t, "binnacle", "binnacle-cli")
+	h := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for _, accept := range []string{
+		"text/event-stream",
+		"text/event-stream; charset=utf-8",
+		"text/event-stream, */*;q=0.8",
+		"*/*, text/event-stream;q=0.9",
+	} {
+		t.Run(accept, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/events", nil)
+			req.Header.Set("Accept", accept)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("got %d want 401", rec.Code)
+			}
+		})
+	}
+
+	// And the navigation it must not be confused with: a browser asking for a
+	// page is still sent to the provider.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Errorf("navigation: got %d want 302 to the provider", rec.Code)
+	}
+}

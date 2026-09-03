@@ -243,16 +243,10 @@ func (a *OIDC) Routes(mux *http.ServeMux) {
 
 // Middleware sends an unauthenticated browser to the provider.
 //
-// Only navigations are redirected. An expired session on the event stream gets
-// 401, because redirecting an EventSource to a login page hands the browser a
-// chunk of HTML it will try to parse as events — the page then looks live and
-// updates never arrive, which is precisely the silent staleness this whole
-// design is trying to avoid.
-//
-// A bearer token is answered the same way and for the same reason. It is a
-// deliberate, non-browser credential, so a request carrying one is never
-// redirected: a terminal client that followed a 302 would receive a login page
-// with a 200 on it and have to guess that HTML was not the fleet.
+// Only navigations are redirected — see [isNavigation] for what that excludes
+// and why. Everything else gets a 401, because a client that followed a 302
+// would receive a login page with a 200 on it and have to guess that HTML was
+// not the fleet.
 func (a *OIDC) Middleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if raw, present := bearerToken(r); present {
@@ -269,12 +263,44 @@ func (a *OIDC) Middleware(h http.Handler) http.Handler {
 			h.ServeHTTP(w, r.WithContext(withIdentity(r.Context(), id)))
 			return
 		}
-		if r.Header.Get("Accept") == "text/event-stream" {
-			http.Error(w, "session expired", http.StatusUnauthorized)
+		if !isNavigation(r) {
+			http.Error(w, "not authenticated", http.StatusUnauthorized)
 			return
 		}
 		http.Redirect(w, r, "/auth/login?next="+safeNext(r.URL.RequestURI()), http.StatusFound)
 	})
+}
+
+// isNavigation reports whether a request is a browser following a link, which
+// is the only kind of request a redirect to the provider can help.
+//
+// Two kinds are not, and they fail the same way if redirected — with a login
+// page carrying a 200, which the caller has to guess is not what it asked for.
+//
+// An EventSource is one: it names its own content type, and HTML it parses as
+// events leaves a page that looks live while no update ever arrives. That is
+// the silent staleness this whole design exists to prevent.
+//
+// Anything under /api/ is the other. It is the same reason a request carrying a
+// bearer token is never redirected, except that it must hold when the caller
+// sends no credential at all — a script, a monitor, or a sextant pointed at a
+// server it has not signed in to yet. Only /api/v1/authinfo is exempt, and it
+// is exempt by living outside the protected mux entirely, so a client holding
+// nothing can still ask how to authenticate.
+func isNavigation(r *http.Request) bool {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		return false
+	}
+	// Matched per media type rather than against the whole header: a browser
+	// sends the bare type, but a list or a q-value means the same thing and
+	// nothing in the contract promises the short form.
+	for _, accepted := range strings.Split(r.Header.Get("Accept"), ",") {
+		mediaType, _, _ := strings.Cut(accepted, ";")
+		if strings.TrimSpace(mediaType) == "text/event-stream" {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *OIDC) handleLogin(w http.ResponseWriter, r *http.Request) {
