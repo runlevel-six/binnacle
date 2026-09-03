@@ -1,9 +1,11 @@
-# Contributing to sextant
+# Contributing to Binnacle
 
-Thanks for your interest. sextant is a terminal dashboard for Cluster API on
-bare metal, and the most valuable contributions right now are **reports from
-clusters that aren't ours** — different Metal3 versions, different node-role
-conventions, different CNI and storage stacks.
+Thanks for your interest. Binnacle is monitoring for Cluster API on bare metal,
+in two front ends over one data layer: `binnacle`, a server that renders the
+whole fleet as a web page, and `sextant`, a terminal client for one cluster at a
+time. The most valuable contributions right now are **reports from clusters that
+aren't ours** — different Metal3 versions, different node-role conventions,
+different CNI and storage stacks.
 
 ## Ways to help that don't involve writing Go
 
@@ -12,17 +14,21 @@ conventions, different CNI and storage stacks.
   namespaces your CAPI objects live in). Profile defaults are only as good as
   the range of clusters we know about.
 - **Report a pane that renders wrong.** A screenshot plus the output of
-  `sextant --debug-snapshot -v` is usually enough to diagnose it.
-- **Contribute a profile.** If you got sextant working against your stack,
-  `profiles/<yours>.yaml` is a genuinely useful contribution.
+  `sextant --debug-snapshot -v` is usually enough to diagnose it — and that
+  output is worth attaching for a web-page problem too, since both front ends
+  read the same snapshots.
+- **Contribute a profile.** If you got either binary working against your stack,
+  a built-in profile in `pkg/profile/builtin/` is a genuinely useful
+  contribution. (`./profiles/` and `~/.config/sextant/profiles/` are where a
+  *deployment* keeps its own; they are not part of the repository.)
 
 ## Development
 
 ```sh
 git clone https://github.com/runlevel-six/binnacle.git
-cd sextant
+cd binnacle
 make check    # fmt + vet + test
-make build    # ./sextant
+make build    # ./sextant and ./binnacle
 ```
 
 Requires Go (see `go.mod` for the minimum). `make help` lists every target.
@@ -33,10 +39,17 @@ Before opening a PR, run `make check` and `golangci-lint run`. CI runs gofmt,
 ## Architecture in one paragraph
 
 Data sources (informers, exec-pollers, API clients) write immutable snapshots
-into a keyed `Store`. Panes are stateless and read snapshots by key on every
-`Render`. A grid layout engine decides which pane goes where for the current
-terminal size. Sources and panes never reference each other directly — they meet
-at a datastore key, which is the seam the plugin system is built on.
+into a keyed `Store`. Verdicts in `pkg/health` turn those snapshots into
+judgements. Then two renderers: sextant's panes are stateless and read snapshots
+by key on every `Render`, with a grid layout engine placing them for the current
+terminal size; binnacle builds views in `internal/fleet` and renders them
+through templates. Sources and renderers never reference each other directly —
+they meet at a datastore key, which is the seam the plugin system is built on.
+
+**A verdict belongs in `pkg/health` or on the state type, never in a
+renderer.** Two front ends that decide health separately will eventually
+disagree about one cluster, and nothing will say which is right. See
+[Architecture](docs/explanation/architecture.md).
 
 **The rule that matters:** core code may not contain a site-specific string
 literal. Namespaces, label keys, workload names and role vocabularies belong in

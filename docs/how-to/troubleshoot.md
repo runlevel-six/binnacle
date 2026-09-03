@@ -10,6 +10,14 @@ It starts the watchers, waits for the caches, then prints one line per data sour
 and one per plugin — whether each detected, and the error if it did not. Most
 questions on this page are answered by that output.
 
+**Most of this page applies to both front ends.** A thin pane, an absent
+subsystem, a permanently amber banner and a truncated table are properties of
+the data and the verdicts, which `binnacle` and `sextant` share — so the same
+explanation and the same fix hold whether you are looking at a terminal or a web
+page, and `--debug-snapshot` is worth running against the same cluster either
+way. Two sections are terminal-only and say so. [The server has its own
+symptoms](#the-server-specifically) at the end.
+
 ## A pane says "detail unavailable"
 
 Ceph, Cilium and OVN read their headline from Kubernetes objects and their *detail*
@@ -99,6 +107,45 @@ Narrow it in the profile with `capi_name` or `capi_name_pattern`.
 
 ## The screen looks wrong on a light terminal
 
-Try `--theme ncurses` or `--theme lcars`. Both paint their own background, so they
-render identically regardless of your terminal's colors. `--theme ansi` does the
-opposite and inherits your scheme entirely.
+*Terminal only.* Try `--theme ncurses` or `--theme lcars`. Both paint their own
+background, so they render identically regardless of your terminal's colors.
+`--theme ansi` does the opposite and inherits your scheme entirely.
+
+## The server specifically
+
+Symptoms only `binnacle` has. The [deployment guide](../../deploy/README.md) is
+the reference for the settings named here.
+
+**The page loads and then stops updating.** Every page is pushed over
+Server-Sent Events, so the connection is long-lived by design and a proxy read
+timeout shorter than the stream will cut it. The failure is quiet: the page keeps
+rendering whatever it last received and simply stops changing. The `live`
+indicator in the header goes to "reconnecting…" when the browser notices, so
+check that first. Binnacle sends a keepalive every 25 seconds; the ingress
+annotations it ships cover nginx and Traefik.
+
+**Signing in loops back to the sign-in page.** With more than one replica,
+sessions signed by one pod are rejected by the others. Set
+`$BINNACLE_SESSION_KEY` explicitly rather than letting each pod generate its
+own — otherwise every request that lands on a different pod is a fresh session.
+
+**The page serves an old build.** If the image reference is a moving tag —
+`latest` or `edge` — and `imagePullPolicy` is left at the default
+`IfNotPresent`, a node that has already cached that tag keeps running the image
+it has. The Deployment reports Available, `rollout restart` does nothing, and
+nothing anywhere says the version is stale. Pin a release, ideally with its
+digest: `binnacle:1.8.0@sha256:…`. `binnacle --version`, or the version in the
+page footer, tells you what is actually running.
+
+**A script or a client gets HTML instead of JSON.** It is not sending a
+credential. Every `/api/v1/` route except `authinfo` needs a session cookie or
+an `Authorization: Bearer` ID token, and answers **401** without one — so an
+HTML body means something followed a redirect it should not have, or the request
+went somewhere other than the API. See
+[binnacle server](../reference/binnacle-server.md).
+
+**The management section shows nothing, or counts it cannot explain.** It reads
+the management cluster's own nodes and pods, which needs a cluster-scoped read
+that a namespaced Role cannot grant — nodes are not namespaced. If the section
+renders two loading cells forever, that grant is missing. For which pods are
+behind a count, follow the panel's title to [`/management`](../reference/binnacle-server.md#pages).

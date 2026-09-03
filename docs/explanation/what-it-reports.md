@@ -1,8 +1,15 @@
-# What sextant reports
+# What it reports
 
-This page is design intent rather than instructions. It sets out what this tool
-claims, what it refuses to claim, and how it says "I do not know" — which is the
-part that matters when you are reading it during a maintenance window at 3am.
+This page is design intent rather than instructions. It sets out what these tools
+claim, what they refuse to claim, and how they say "I do not know" — which is the
+part that matters when you are reading one during a maintenance window at 3am.
+
+**It covers both front ends.** Every rule below is a property of the shared data
+layer and the verdicts above it, not of a renderer — which is exactly why they
+are shared code. A rule that held in the terminal and not on the web page would
+mean the two could describe one cluster differently, and there would be no way
+to tell which was right. Where something genuinely belongs to one front end
+only, it says so.
 
 If you take one thing from it: **a dashboard's job is not to look confident.** Every
 rule below exists because a plausible-looking wrong answer cost somebody real time.
@@ -41,9 +48,11 @@ absence of that permission is reported as itself: the pane shows what the
 Kubernetes objects alone say and names the reason it can show no more. An operator
 with tighter RBAC than the author's should get a thinner pane, not an error.
 
-**A theme colors chrome and never rewrites data.** Labels and titles may be shouted;
-a context name, a cluster name, a pod name never is. `Prod-Tenant-01` is not the
-name of anything, and an interface that renames things is lying about them.
+**Presentation colors chrome and never rewrites data.** Labels and titles may be
+shouted; a context name, a cluster name, a pod name never is. `Prod-Tenant-01`
+is not the name of anything, and an interface that renames things is lying about
+them. In the terminal this is the rule a [theme](../reference/themes.md) obeys;
+on the web page it is the rule the stylesheet obeys.
 
 **Absence of alarm is not proof of health.** A pane with no data says so — "waiting
 for data", or the error that stopped it — rather than rendering an empty table that
@@ -68,10 +77,11 @@ so it climbs back to full on its own.
 
 ## What it deliberately does not do
 
-**It does not write.** Sextant reads. It has no verbs — no drain, no cordon, no
-retry, no approve. A dashboard you can act from is a dashboard that can act by
-accident during an upgrade, and the blast radius of a misread pane should be your
-attention, not your cluster.
+**It does not write.** Both binaries read and nothing more. There are no verbs —
+no drain, no cordon, no retry, no approve — and the read API is `GET`-only. A
+dashboard you can act from is a dashboard that can act by accident during an
+upgrade, and the blast radius of a misread pane should be your attention, not
+your cluster. It is also what makes the web page safe to leave open on a wall.
 
 **It does not alert.** No thresholds you configure, no notifications, no history. It
 shows the present moment to somebody who is already looking. Ranking severity is

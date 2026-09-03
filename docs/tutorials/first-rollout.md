@@ -122,6 +122,6 @@ dashboard reporting a permanently cordoned pool as a permanent problem.
 ## Where to go next
 
 - [Point it at a cluster](../how-to/point-at-a-cluster.md) — contexts and patterns in full.
-- [What sextant reports](../explanation/what-it-reports.md) — read this before you
+- [What it reports](../explanation/what-it-reports.md) — read this before you
   trust it during a maintenance window.
 - [Command line](../reference/cli.md) — every flag and key.

@@ -90,8 +90,8 @@ func run(args []string, out io.Writer) error {
 		fmt.Fprintln(fs.Output())
 		fmt.Fprintln(fs.Output(), "The OIDC client secret is read from $BINNACLE_OIDC_CLIENT_SECRET, and the")
 		fmt.Fprintln(fs.Output(), "session signing key from $BINNACLE_SESSION_KEY (any secret of 32+ characters,")
-		fmt.Fprintln(fs.Output(), "or base64 of 32+ bytes). Neither")
-		fmt.Fprintln(fs.Output(), "is a flag: a command line is visible in the process table.")
+		fmt.Fprintln(fs.Output(), "or base64 of 32+ bytes). Neither is a flag: a command line is visible in")
+		fmt.Fprintln(fs.Output(), "the process table.")
 		fmt.Fprintln(fs.Output())
 		fs.PrintDefaults()
 	}

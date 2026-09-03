@@ -194,9 +194,10 @@ you are trying to do — [a first rollout](docs/tutorials/first-rollout.md) to
 learn it, how-to guides for a specific goal, reference for looking things up,
 and explanation for why it works the way it does.
 
-Before you rely on it during a maintenance window, read
-**[What sextant reports](docs/explanation/what-it-reports.md)** — what this tool
-claims, what it refuses to claim, and how it says "I do not know".
+Before you rely on either during a maintenance window, read
+**[What it reports](docs/explanation/what-it-reports.md)** — what these tools
+claim, what they refuse to claim, and how they say "I do not know". It governs
+both front ends, because the judgements are shared code.
 
 ## Design goals
 

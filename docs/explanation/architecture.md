@@ -6,13 +6,55 @@ wondering why something is in a strange place.
 ## The shape
 
 ```
-watchers ──► store ──► panes ──► layout ──► screen
-                        ▲
-                     plugins
+                                  ┌─► panes ──► layout ──► terminal   (sextant)
+watchers ──► store ──► verdicts ──┤
+                ▲                 └─► views ──► templates ──► HTML    (binnacle)
+             plugins
 ```
 
-Watchers read clusters and publish snapshots into a store. Panes read the store and
-return text. A layout engine decides where each pane goes. Nothing flows backwards.
+Watchers read clusters and publish snapshots into a store. Verdicts turn those
+snapshots into judgements — healthy, degraded, cordoned-and-that-is-fine. Two
+front ends render the result. Nothing flows backwards.
+
+## Two front ends, one data layer
+
+This is the decision the repository is arranged around, and the reason both
+binaries live in it.
+
+The two programs answer the same questions about the same clusters. Both read
+Cluster API, Metal3 and the subsystem plugins through the same collectors, and
+both have to decide the same things about what they read: whether a cordoned
+node is expected or alarming, whether a pod that is merely starting counts as
+unhealthy, what a degraded subsystem means for a cluster overall. Only the last
+step differs — one draws a terminal, the other a web page.
+
+Kept apart, that overlap becomes two implementations of one judgement, and they
+drift. The failure is not theoretical: an early version of the web front end
+rendered `kube-proxy True` for a cluster where kube-proxy had been *replaced*,
+because the interpretation lived in a terminal pane file rather than beside the
+type it interpreted. The same cluster read healthy on one screen and not on the
+other, with nothing to say which was right.
+
+So the rule is: **a verdict lives in `pkg/health` or on the state type, never in
+a renderer.** When a second consumer appears, the judgement moves to shared code
+before anything else happens. `pkg/` is the seam — the data layer, the models
+and the verdicts — and it is deliberately free of any terminal dependency, which
+is checked rather than assumed: `go list -deps ./cmd/binnacle` names no
+terminal library.
+
+## `--server` is the same store, filled differently
+
+A terminal client can read a cluster it has no credentials for by pointing at a
+server: `sextant --server https://binnacle.example`.
+
+What makes this cheap is that it is not a second code path. The server streams
+its raw store contents as JSON, the client decodes them back into a store, and
+the panes render from that store exactly as they render from a locally collected
+one. A remote-mode plugin reports itself present and collects nothing, because
+the collection already happened on the server.
+
+Local mode is untouched and remains the default: sextant must keep working with
+nothing but a kubeconfig, and there is no silent fallback between the two.
 
 ## Panes are pure functions
 
@@ -188,6 +230,16 @@ rendered line tracking whether a background is armed.
 | change the layout engine | `pkg/tui/grid` |
 | add a theme | `pkg/tui/theme.go` |
 | change what a snapshot holds | `pkg/model` |
+| change a health verdict | `pkg/health` — and nowhere else, see above |
 | consume the data layer from outside the TUI | `pkg/collect` |
 | read a subsystem's state from outside | `pkg/subsystem/*` |
-| work on the demo fixture | `internal/demo` |
+| work on the terminal demo fixture | `internal/demo` |
+| change what a web page shows | `internal/fleet` for the view, `internal/web/templates` for the markup |
+| work on the fleet demo fixture | `internal/fleet/demo.go` |
+| change the read API | `internal/web/api.go` |
+| change the JSON the store streams as | `internal/wire` |
+| work on `--server` mode | `internal/remote` for the client, `internal/app` for the wiring |
+| change authentication | `internal/auth` for the server, `internal/clientauth` for the terminal client |
+
+The two entry points are `cmd/sextant` and `cmd/binnacle`. Neither holds
+logic — they parse flags and hand off.

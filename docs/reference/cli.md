@@ -1,7 +1,8 @@
 # Command line
 
-Every flag, environment variable and key binding. `sextant --help` prints the same
-flag list; this page adds what each one is for.
+**sextant's** flags, environment variables and key bindings. `sextant --help`
+prints the same flag list; this page adds what each one is for. The server has
+its own page — see [binnacle server](binnacle-server.md).
 
 Run with no arguments and sextant watches your kubeconfig's current context as both
 the management and the workload cluster, which is the single-cluster case.

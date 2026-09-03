@@ -15,7 +15,7 @@ Set one with `--theme`, `SEXTANT_THEME`, or `theme:` in the config file, or pres
 | `lcars` | LCARS-style console: black ground, block rails, amber and violet. |
 | `ncurses` | DOS-era curses: blue panels, double-line boxes, white ink. |
 
-Screenshots of each are in the [README](../../README.md#themes).
+Screenshots of each are in the [README](../../README.md#themes-sextant).
 
 ## What a theme may change
 
