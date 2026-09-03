@@ -65,3 +65,44 @@ subjects:
   - kind: ServiceAccount
     name: binnacle
     namespace: binnacle
+---
+# The management cluster's own nodes and pods, for the management section on
+# the fleet page. Cluster-wide, and it has to be:
+#
+#   - Nodes are a cluster-scoped resource. A namespaced Role cannot grant them
+#     at all, so the Role above could never have covered this however it was
+#     written.
+#   - The controllers whose health this reports are spread across a namespace
+#     each — capi-system, the two kubeadm provider namespaces, the
+#     infrastructure provider's, the bare-metal operator's — and that list grows
+#     with every provider installed.
+#
+# This is a *second* role rather than widening the first, which keeps the
+# reasoning above intact: Secrets stay namespaced. What this adds is read on
+# pod and node metadata across the management cluster, which is a much smaller
+# thing to grant than read on every Secret in it.
+#
+# Without this the management section renders two "…" cells indefinitely: the
+# snapshots arrive carrying a permission error, the section correctly declines
+# to report numbers it does not have, and nothing on the page explains why.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: binnacle-management
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: binnacle-management
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: binnacle-management
+subjects:
+  - kind: ServiceAccount
+    name: binnacle
+    namespace: binnacle

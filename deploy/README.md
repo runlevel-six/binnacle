@@ -133,10 +133,20 @@ defines this:
 kubectl apply -f deploy/workload-rbac.yaml
 ```
 
-Set the namespace placeholders (`rook-ceph`, `kube-system`, `ovn-kubernetes`)
-to where each subsystem actually runs on that cluster. A subsystem not present
-is simply not listed — its Role is not created, and the plugin falls back to
-informer-only for it.
+Set the namespace placeholders (`rook-ceph`, `kube-system`, `openstack`) to
+where each subsystem actually runs on that cluster — and check rather than
+assume. Each plugin *discovers* its own namespace, precisely because these
+subsystems are not always where convention says, so the values in the manifest
+are examples and nothing more. Run sextant against the cluster and read the
+reason off a degraded subsystem pane; a denied exec names the namespace it
+tried:
+
+```
+no pods/exec permission on <namespace>
+```
+
+That is the one to write. A subsystem not present is simply not listed — its
+Role is not created, and the plugin falls back to informer-only for it.
 
 After applying the RBAC, create a long-lived token and store it as a kubeconfig
 Secret on the management cluster:
@@ -163,10 +173,22 @@ kubectl -n managed-clusters create secret generic tenant-01-exec-kubeconfig \
   --from-file=value=<(kubectl --kubeconfig=/path/to/workload.kubeconfig config view --raw)
 ```
 
-Binnacle resolves `<cluster>-exec-kubeconfig` automatically. When the Secret is
-absent, exec falls back to the CAPI-minted kubeconfig — the historical behavior.
-When present, the collector reads with the CAPI kubeconfig and execs with the
-scoped ServiceAccount, so the cluster-admin credential is never used for exec.
+Binnacle resolves `<cluster>-exec-kubeconfig` automatically. When present, the
+collector reads with the CAPI kubeconfig and execs with the scoped
+ServiceAccount, so the cluster-admin credential is never used for exec.
+
+**When the Secret is absent, exec falls back to the CAPI-minted kubeconfig,
+which is cluster-admin.** That is the historical behavior, and it is a
+fail-open worth being deliberate about: applying the RBAC to a cluster and
+forgetting the Secret — or adding a cluster later and missing it — leaves the
+collector executing with far more privilege than you granted, and no page says
+so. Confirm the narrowing actually took effect:
+
+```
+kubectl -n managed-clusters get secrets | grep exec-kubeconfig
+```
+
+One per cluster, or the ones missing are still running as cluster-admin.
 
 Human operators get a read-only role with no `pods/exec`. Under that role,
 sextant sits at informer-only for Ceph, Cilium, and OVN **by design**. The

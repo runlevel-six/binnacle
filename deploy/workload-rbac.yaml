@@ -12,9 +12,19 @@
 #
 # The kubeconfig for this ServiceAccount is stored in a Secret named
 # <cluster>-exec-kubeconfig on the management cluster, in the same namespace as
-# the Cluster object. Binnacle resolves it automatically; when the Secret is
-# absent, exec falls back to the CAPI-minted kubeconfig (cluster-admin), which
-# is the historical behavior.
+# the Cluster object. Binnacle resolves it automatically.
+#
+# **When that Secret is absent, exec falls back to the CAPI-minted kubeconfig,
+# which is cluster-admin.** That is the historical behavior and it is a
+# fail-open: a manifest applied to the wrong cluster, a typo in the Secret name,
+# or a cluster added later and missed leaves the collector with far more
+# privilege than this file grants, and nothing says so. The narrowing is only
+# real once the Secret exists for every cluster in the fleet — so check, rather
+# than assuming that applying this changed anything:
+#
+#     kubectl get secrets -n <cluster-namespace> | grep exec-kubeconfig
+#
+# There should be one per cluster.
 #
 # Human operators get a read-only role with no pods/exec. Under that role,
 # sextant sits at TierInformer for Ceph, Cilium, and OVN by design. The tier
@@ -70,13 +80,31 @@ subjects:
 # Exec permissions: pods/exec scoped to the namespaces where status commands
 # run. Each Role is namespaced — the grant is only valid inside that namespace.
 #
-# The commands are fixed argument lists built by the plugins (ceph -s, cilium
-# status, ovn-nbctl show), never assembled from user input. That is what keeps
-# this grant from becoming an arbitrary-execution path.
+# The commands the plugins run are fixed argument lists (ceph -s, cilium status,
+# ovn-appctl cluster/status), never assembled from user input. **RBAC does not
+# know that.** A create on pods/exec in a namespace permits any command in any
+# pod there, so what is granted below is a shell in these namespaces, and the
+# fixed command set is a property of this codebase rather than a rule the API
+# server enforces. Grant it where you would grant that, and nowhere else. If you
+# need the guarantee rather than the convention, a ValidatingAdmissionPolicy on
+# the exec subresource can inspect PodExecOptions.command; that is the mechanism
+# that actually constrains it.
 #
-# Set each namespace below to where the corresponding subsystem runs on this
-# cluster. A subsystem not present is simply not listed — its Role is not
-# created, and the plugin falls back to TierInformer for it.
+# **Find the namespaces rather than assuming them.** Each plugin discovers where
+# its subsystem lives — MetalLB from its IPAddressPools, OVN from its database
+# StatefulSets, Ceph from the Rook tools Deployment — precisely because these
+# are not always where convention says. The namespaces below are only examples,
+# and one of them was wrong for a year: OVN is written here as `openstack`
+# because that is where the OpenStack charts put it, but an ovn-kubernetes
+# install puts it somewhere else entirely.
+#
+# Run sextant against the cluster and read the tier reason off each subsystem
+# pane — a denied exec names the namespace it tried:
+#
+#     no pods/exec permission on <namespace>
+#
+# That is the namespace to write here. A subsystem not present is simply not
+# listed: its Role is not created, and the plugin sits at TierInformer for it.
 
 # --- Ceph ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -133,7 +161,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: binnacle-collector-exec
-  namespace: ovn-kubernetes
+  namespace: openstack
 rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
@@ -143,7 +171,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: binnacle-collector-exec
-  namespace: ovn-kubernetes
+  namespace: openstack
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
