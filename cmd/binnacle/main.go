@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -47,17 +48,22 @@ type options struct {
 	insecureCookie bool
 	allowUnauth    bool
 	scopeFile      string
+	showVersion    bool
 }
 
 func main() {
 	log.SetFlags(0)
-	if err := run(os.Args[1:]); err != nil {
+	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "binnacle:", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string) error {
+// run takes its output writer rather than reaching for os.Stdout, so that the
+// version line is testable — the same shape sextant's run has. Flag parsing
+// errors and --help stay on the flag set's own output, which is stderr: a
+// usage error is not output.
+func run(args []string, out io.Writer) error {
 	var o options
 	fs := flag.NewFlagSet("binnacle", flag.ContinueOnError)
 	fs.StringVar(&o.addr, "addr", "127.0.0.1:8080", "address to listen on")
@@ -78,6 +84,7 @@ func run(args []string) error {
 		"serve without authentication on a non-loopback address; every reader sees every cluster binnacle can read")
 	fs.BoolVar(&o.insecureCookie, "insecure-cookies", false, "send session cookies without the Secure flag; for testing over plain HTTP only")
 	fs.StringVar(&o.scopeFile, "scope-file", "", "path to a YAML file mapping OIDC groups to namespaces; empty means no scoping (everyone sees everything)")
+	fs.BoolVar(&o.showVersion, "version", false, "print the version and exit")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "binnacle serves a fleet view of Cluster API clusters.")
 		fmt.Fprintln(fs.Output())
@@ -90,6 +97,16 @@ func run(args []string) error {
 	}
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// Before anything that needs a cluster or a credential. The release ships
+	// this as a downloadable binary, and the first question somebody has about
+	// a binary they just downloaded is which one it is — a version that only
+	// appears in a page footer, after the server has found a kubeconfig and an
+	// identity provider, does not answer it.
+	if o.showVersion {
+		fmt.Fprintln(out, version)
+		return nil
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

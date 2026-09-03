@@ -36,8 +36,14 @@ concurrency:
 jobs:
   edge:
     name: Edge build
-    # Forks get main pushes too, and have no release to publish to.
-    if: github.repository == 'runlevel-six/sextant'
+    # Forks get default-branch pushes too, and have no release to publish to.
+    #
+    # This named runlevel-six/sextant until 2026-09-03, which skipped the job on
+    # every push here. Two independent guards had to be updated for the merge —
+    # the branch filter above and this repository check — and fixing only the
+    # first left the job running and then skipping itself. Both halves of a
+    # "don't run in forks" guard have to move together.
+    if: github.repository == 'runlevel-six/binnacle'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

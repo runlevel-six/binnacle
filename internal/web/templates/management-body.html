@@ -1,0 +1,106 @@
+{{define "management-body.html"}}
+{{with .Management}}
+<section class="detail-head">
+  <div class="dh-left">
+    <h2>Management cluster</h2>
+    <div class="meta">
+      {{if .Version}}{{.Version}}{{else}}version unknown{{end}}
+      {{if not .UpdatedAt.IsZero}} &middot; seen {{ago .UpdatedAt}}{{end}}
+    </div>
+  </div>
+  <div class="cells">
+    {{range .Cells}}<span class="cell {{.Status}}">{{.Name}}{{if .Detail}} <span class="d">{{.Detail}}</span>{{end}}</span>{{end}}
+  </div>
+</section>
+
+{{if not .Reachable}}
+  {{/* The one thing this page cannot 404 on. A cluster page that cannot find
+       its cluster is a wrong URL; the management cluster always exists, so
+       unreachable is a state to report rather than an absence. */}}
+  <section class="pane">
+    <p class="problem">Unreachable{{if .ErrText}}: {{.ErrText}}{{end}}</p>
+    <p class="empty footnote">Every workload cluster below is read through this
+      cluster's Cluster API objects, so the fleet page may be showing stale
+      counts. Each card's own timestamp says when it was last read.</p>
+  </section>
+{{else}}
+
+{{/* One column, not two. The cluster page splits what the workload cluster says
+     about itself from what Cluster API says about it, and there is no such
+     division here — every pane below is the management cluster describing
+     itself. Two columns would be a shape borrowed from a page whose reason for
+     having it does not apply.
+
+     Order is by what a reader came for. Whoever opens this page followed a
+     count of unhealthy pods, so that is first; nodes explain a pod that cannot
+     schedule; events are last because their height is decided by whatever is
+     happening right now. */}}
+<div class="cols">
+  <div class="col">
+    <section class="pane" id="pods">
+      <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
+      {{if .UnhealthyPods}}
+      {{template "pod-table" .UnhealthyPods}}
+      {{if .PodsTruncated}}<p class="empty">{{.PodsTruncated}} more not shown.</p>{{end}}
+      {{else if .NodesKnown}}<p class="empty">Every pod is healthy.</p>
+      {{else}}<p class="empty">Not reported.</p>{{end}}
+    </section>
+
+    {{if .ControllerHealth}}{{if .ControllerHealth.Critical}}
+    {{/* The controllers whose failure stops every workload cluster
+         reconciling. A workload that has never appeared reads "absent" rather
+         than 0/0 ready, because "not running and never seen" is the worst
+         state and 0/0 reads as fine. */}}
+    <section class="pane">
+      <h3>Controllers <span class="count">{{len .ControllerHealth.Critical}}</span></h3>
+      <table class="packed cols-3 spread">
+        <thead><tr><th>CONTROLLER</th><th>NAMESPACE</th><th>READY</th></tr></thead>
+        <tbody>
+        {{range .ControllerHealth.Critical}}
+          <tr><td>{{.Name}}</td>
+            <td class="dim">{{.Namespace}}</td>
+            <td class="{{if .Absent}}errish{{else if lt .Ready .Desired}}warnish{{end}}">
+              {{if .Absent}}absent{{else}}{{.Ready}}/{{.Desired}}{{end}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </section>
+    {{end}}{{end}}
+
+    <section class="pane" id="nodes">
+      <h3>Nodes{{if .NodeRows.Total}} <span class="count">{{.NodeRows.Total}}</span>{{end}}</h3>
+      {{if .NodeRows.Shown}}{{template "node-table" .NodeRows.Shown}}
+      {{else if .NodeRows.Total}}<p class="empty">Every node is Ready and schedulable.</p>
+      {{else}}<p class="empty">No nodes reported.</p>{{end}}
+      {{if .NodeRows.Quiet}}
+      <details class="quiet" id="quiet-mgmt-nodes">
+        <summary>{{len .NodeRows.Quiet}} node{{if ne (len .NodeRows.Quiet) 1}}s{{end}} Ready and schedulable</summary>
+        {{template "node-table" .NodeRows.Quiet}}
+      </details>
+      {{end}}
+    </section>
+
+    <section class="pane" id="events">
+      <h3>Events{{if .Events.Total}} <span class="count">{{.Events.Total}}{{if .EventsTruncated}} of {{add .Events.Total .EventsTruncated}}{{end}} group{{if ne (add .Events.Total .EventsTruncated) 1}}s{{end}} &middot; {{.EventsTotal}} event{{if ne .EventsTotal 1}}s{{end}}</span>{{end}}</h3>
+      {{/* These render nowhere else. Two sources: this cluster's own events, and
+           the Cluster API namespace events that match no cluster's objects —
+           which every cluster page counts as belonging elsewhere and none of
+           them shows. */}}
+      {{if .Events.Shown}}{{template "event-table" .Events.Shown}}
+      {{else if not .Events.Total}}<p class="empty">No events reported.</p>{{end}}
+      {{if .Events.Quiet}}
+      <details class="quiet" id="quiet-mgmt-events">
+        <summary>{{if not .Events.Shown}}No warnings &middot; {{end}}{{len .Events.Quiet}} Normal event group{{if ne (len .Events.Quiet) 1}}s{{end}}</summary>
+        {{template "event-table" .Events.Quiet}}
+      </details>
+      {{end}}
+      {{if .EventsTruncated}}<p class="empty">{{.EventsTruncated}} more group{{if ne .EventsTruncated 1}}s{{end}} not shown.</p>{{end}}
+      <p class="empty footnote">This cluster's own events, plus the Cluster API
+        namespace events that belong to no workload cluster. Events naming a
+        cluster's objects are on that cluster's page.</p>
+    </section>
+  </div>
+</div>
+{{end}}
+{{end}}
+{{end}}

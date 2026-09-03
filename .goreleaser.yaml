@@ -2,7 +2,10 @@
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 version: 2
 
-project_name: sextant
+# The project is Binnacle; the terminal client is one of the two binaries in it.
+# This only supplies defaults — every artifact name below is written out, so that
+# the sextant archive keeps the name the README's download URLs already use.
+project_name: binnacle
 
 before:
   hooks:
@@ -36,11 +39,49 @@ builds:
     goarch: [amd64, arm64]
     mod_timestamp: '{{ .CommitTimestamp }}'
 
+  # The server ships as a binary as well as an image, because the first thing
+  # the README asks a new reader to do is `binnacle --demo` — which needs no
+  # cluster and no credentials, and is the whole point of having a demo mode.
+  # Sending someone to install Go, or to deploy a container into Kubernetes,
+  # before they can see whether they want the thing is the wrong first step.
+  - id: binnacle
+    main: ./cmd/binnacle
+    binary: binnacle
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .CommitDate }}
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+# One archive per binary, rather than one archive holding both.
+#
+# Each is useful on its own: sextant goes on an operator's laptop, binnacle on
+# whatever runs the server, and most people want exactly one of them. A single
+# tarball would also have to be named for one binary or the other, and naming
+# it for the project would produce binnacle_1.0.0_linux_amd64.tar.gz containing
+# a binary called sextant.
+#
+# Both name_templates are written out rather than derived from .ProjectName,
+# which is what keeps sextant_<version>_<os>_<arch> stable across the rename
+# above — the README publishes those URLs.
 archives:
-  - id: default
+  - id: sextant
+    ids: [sextant]
     formats: [tar.gz]
     name_template: >-
-      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+      sextant_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files: [LICENSE, README.md]
+
+  - id: binnacle
+    ids: [binnacle]
+    formats: [tar.gz]
+    name_template: >-
+      binnacle_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     files: [LICENSE, README.md]
 
 checksum:
@@ -78,14 +119,28 @@ release:
   footer: |
     ## Install
 
+    `sextant` is the terminal client; `binnacle` is the server behind the web
+    fleet view. Take either or both — and `binnacle --demo` needs no cluster
+    and no credentials, so it is the quickest way to see what this is.
+
     ```sh
-    # Linux x86_64
+    # sextant — Linux x86_64
     curl -sSfL https://github.com/runlevel-six/binnacle/releases/download/{{ .Tag }}/sextant_{{ .Version }}_linux_amd64.tar.gz \
       | tar -xz -C ~/bin sextant
 
-    # macOS Apple Silicon
+    # sextant — macOS Apple Silicon
     curl -sSfL https://github.com/runlevel-six/binnacle/releases/download/{{ .Tag }}/sextant_{{ .Version }}_darwin_arm64.tar.gz \
       | tar -xz -C ~/bin sextant
+
+    # binnacle — Linux x86_64
+    curl -sSfL https://github.com/runlevel-six/binnacle/releases/download/{{ .Tag }}/binnacle_{{ .Version }}_linux_amd64.tar.gz \
+      | tar -xz -C ~/bin binnacle
+
+    # binnacle — macOS Apple Silicon
+    curl -sSfL https://github.com/runlevel-six/binnacle/releases/download/{{ .Tag }}/binnacle_{{ .Version }}_darwin_arm64.tar.gz \
+      | tar -xz -C ~/bin binnacle
     ```
 
-    Verify with `sextant --version`.
+    Verify with `sextant --version` or `binnacle --version`. The server also
+    ships as a container image, which is how it is meant to be deployed:
+    `ghcr.io/runlevel-six/binnacle:{{ .Tag }}`.

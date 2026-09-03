@@ -1,0 +1,40 @@
+{{define "management.html"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Management cluster &middot; Binnacle</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/mark-256.png">
+{{template "styles"}}
+</head>
+<body>
+<header>
+  <a class="card-link" href="/"><img class="mark" src="/static/mark-64.png" width="34" height="34" alt=""></a>
+  <h1><a class="card-link" href="/">Binnacle</a></h1>
+  {{if .Site}}<span class="site">{{.Site}}</span>{{end}}
+  <a class="backlink" href="/">&larr; all clusters</a>
+  <span class="live" id="live">live</span>
+</header>
+{{if .Warning}}<p class="unauth">{{.Warning}}</p>{{end}}
+<main id="body">{{template "management-body.html" .}}</main>
+<footer>binnacle {{.Version}} &middot; {{.Auth}} &middot; verdicts from sextant</footer>
+{{template "disclosures"}}
+<script>
+  const body = document.getElementById("body");
+  const live = document.getElementById("live");
+  const keepOpen = window.binnacleKeepOpen(body);
+  const es = new EventSource(window.location.pathname + "/events");
+  es.addEventListener("management", (e) => {
+    body.innerHTML = e.data;
+    keepOpen();
+    live.classList.remove("stale");
+    live.textContent = "live";
+  });
+  es.onerror = () => {
+    live.classList.add("stale");
+    live.textContent = "reconnecting…";
+  };
+</script>
+</body>
+</html>{{end}}

@@ -324,17 +324,24 @@ func (d *ClusterDetail) readEvents(s *store.Store) {
 // Shared with the demo profile so that the fixture and the real reader agree
 // about what the header is counting.
 func (d *ClusterDetail) setEvents(groups []EventGroup) {
-	d.EventsTotal = 0
+	d.Events, d.EventsTruncated, d.EventsTotal = capEvents(groups)
+}
+
+// capEvents applies the cap and computes the totals a heading needs.
+//
+// Shared with the management page so the two event tables cannot count
+// differently — the same reason unhealthyPods is shared.
+func capEvents(groups []EventGroup) (shown Split[EventGroup], truncated, total int) {
 	for _, g := range groups {
-		d.EventsTotal += g.Occurrences
+		total += g.Occurrences
 	}
 	if len(groups) > maxEvents {
-		d.EventsTruncated = len(groups) - maxEvents
+		truncated = len(groups) - maxEvents
 		groups = groups[:maxEvents]
 	}
 	// Capped before folding, so the cap keeps sixty groups worth reading rather
 	// than sixty rows of which fifty are folded out of sight anyway.
-	d.Events = splitEvents(groups)
+	return splitEvents(groups), truncated, total
 }
 
 // Compact renders a duration the way the tables do: one unit, no decimals.

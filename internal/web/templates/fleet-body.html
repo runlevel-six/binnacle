@@ -1,8 +1,11 @@
 {{define "fleet-body.html"}}
 {{if .Management.Reachable}}
 <div class="management" data-status="{{.Management.Status}}">
+  {{/* The title is the link, the way a card's title links to its cluster. This
+       panel is a fixed-height summary by design — it is on the fleet page —
+       so everything it cannot fit lives on /management. */}}
   <div class="management-header">
-    <span class="management-title">Management cluster</span>
+    <a class="management-title card-link" href="/management">Management cluster</a>
     {{if .Management.Version}}<span class="management-version">{{.Management.Version}}</span>{{end}}
     {{if not .Management.UpdatedAt.IsZero}}<span class="management-updated">seen {{ago .Management.UpdatedAt}}</span>{{end}}
   </div>
@@ -55,7 +58,7 @@
       {{end}}
       </tbody>
     </table>
-    {{if .Management.PodsTruncated}}<p class="empty">{{.Management.PodsTruncated}} more not shown.</p>{{end}}
+    {{if .Management.PodsTruncated}}<p class="empty"><a class="problem-link" href="/management#pods">{{.Management.PodsTruncated}} more not shown</a></p>{{end}}
   </div>
   {{- end}}
 </div>

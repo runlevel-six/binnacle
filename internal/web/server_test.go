@@ -25,11 +25,12 @@ import (
 )
 
 type fakeFleet struct {
-	clusters []fleet.ClusterView
-	detail   map[string]fleet.ClusterDetail
-	storage  fleet.Storage
-	mgmt     fleet.ManagementView
-	changed  chan struct{}
+	clusters   []fleet.ClusterView
+	detail     map[string]fleet.ClusterDetail
+	storage    fleet.Storage
+	mgmt       fleet.ManagementView
+	mgmtDetail *fleet.ManagementDetail
+	changed    chan struct{}
 }
 
 func (f *fakeFleet) View() []fleet.ClusterView { return f.clusters }
@@ -37,6 +38,16 @@ func (f *fakeFleet) Storage() fleet.Storage    { return f.storage }
 func (f *fakeFleet) Changed() <-chan struct{}  { return f.changed }
 func (f *fakeFleet) Management() fleet.ManagementView {
 	return f.mgmt
+}
+
+// ManagementDetail falls back to whatever Management says, so a test that only
+// cares about the panel still gets a coherent page out of the drill-down: the
+// two must never disagree about reachability or the cells.
+func (f *fakeFleet) ManagementDetail() fleet.ManagementDetail {
+	if f.mgmtDetail != nil {
+		return *f.mgmtDetail
+	}
+	return fleet.ManagementDetail{ManagementView: f.mgmt}
 }
 
 func (f *fakeFleet) Cluster(namespace, name string) (fleet.ClusterDetail, bool) {
@@ -801,6 +812,10 @@ func TestPackedTablesDeclareTheirRealColumnCount(t *testing.T) {
 	pages := []string{
 		get(t, serveDetail(t, richDetail()), "/cluster/capi/tenant-01").Body.String(),
 		fleetPageWithStorage(t),
+		// The management page too, and for the same reason: it renders three
+		// grid tables of its own, two of them shared with the cluster page and
+		// one — the controllers — that exists nowhere else.
+		managementPage(t, richManagement()),
 	}
 
 	seen := 0
@@ -819,7 +834,7 @@ func TestPackedTablesDeclareTheirRealColumnCount(t *testing.T) {
 			}
 		}
 	}
-	if seen < 6 {
+	if seen < 9 {
 		t.Errorf("only checked %d packed tables; the pages should render more", seen)
 	}
 }
@@ -1475,4 +1490,178 @@ func TestFleetPage_ManagementStatesPodTruncation(t *testing.T) {
 	if !strings.Contains(body, "12 of 90") {
 		t.Error("heading does not state the total behind the truncated list")
 	}
+}
+
+// richManagement is the management page's equivalent of richDetail: a fixture
+// that fills every pane, every table and every branch.
+//
+// The same guard, for the same reason. html/template resolves a field only when
+// data reaches it, so a pane no fixture populates is a pane nothing has ever
+// rendered — which is how `can't evaluate field ServerID` took out a whole
+// cluster page long after the field name stopped existing. Keep this
+// exhaustive; that is the entire point of it.
+func richManagement() fleet.ManagementDetail {
+	nodes := []fleet.NodeRow{
+		{Node: model.Node{Name: "mgmt-cp-01", Role: "control-plane", Status: "Ready", Version: "v1.31.4"}},
+		{Node: model.Node{Name: "mgmt-cp-02", Role: "control-plane", Status: "NotReady", Version: "v1.31.4"}},
+		{Node: model.Node{Name: "mgmt-cp-03", Role: "control-plane", Status: "Ready", Version: "v1.31.4", Cordoned: true}},
+	}
+	return fleet.ManagementDetail{
+		ManagementView: fleet.ManagementView{
+			Reachable:  true,
+			Version:    "v1.31.4",
+			Nodes:      fleet.NodeCount{Ready: 2, Total: 3},
+			NodesKnown: true,
+			UnhealthyPods: []model.Pod{{
+				Namespace: "metallb-system", Name: "controller-1",
+				ReadyTotal: 1, Status: "CrashLoopBackOff", Restarts: 47,
+				Age: time.Hour, Node: "mgmt-cp-02",
+			}},
+			PodsTruncated: 3,
+			ControllerHealth: &fleet.ControllerHealth{
+				Unhealthy: 4,
+				Critical: []fleet.CriticalWorkloadStatus{
+					{Kind: "Deployment", Namespace: "capi-system", Name: "capi-controller-manager", Ready: 1, Desired: 1},
+					{Kind: "Deployment", Namespace: "capm3-system", Name: "capm3-controller-manager", Ready: 0, Desired: 1},
+					{Kind: "Deployment", Namespace: "baremetal-operator-system", Name: "baremetal-operator", Absent: true},
+				},
+			},
+			Cells: []health.Cell{
+				{Name: "Nodes", Status: health.StatusErr, Detail: "2/3"},
+				{Name: "Pods", Status: health.StatusWarn, Detail: "4 unhealthy"},
+			},
+			Status:    health.StatusErr,
+			UpdatedAt: time.Now(),
+		},
+		NodeRows: fleet.Split[fleet.NodeRow]{Shown: nodes[:2], Quiet: nodes[2:]},
+		Events: fleet.Split[fleet.EventGroup]{
+			Shown: fleet.GroupEvents([]model.Event{{
+				Namespace: "machines", Type: "Warning", Reason: "PolicyViolation",
+				ObjectKind: "ReplicaSet", ObjectName: "draino-watcher-7c9fd8b64c",
+				Message: "label 'team' is required", Count: 45, LastTimestamp: time.Now(),
+			}}),
+			Quiet: fleet.GroupEvents([]model.Event{{
+				Namespace: "kube-system", Type: "Normal", Reason: "Pulled",
+				ObjectKind: "Pod", ObjectName: "etcd-defrag-1",
+				Message: "image already present", LastTimestamp: time.Now(),
+			}}),
+		},
+		EventsTruncated: 2,
+		EventsTotal:     46,
+	}
+}
+
+func managementPage(t *testing.T, d fleet.ManagementDetail) string {
+	t.Helper()
+	s, err := New(&fakeFleet{
+		clusters:   []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01", Status: health.StatusOK}},
+		mgmt:       d.ManagementView,
+		mgmtDetail: &d,
+		changed:    make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return get(t, s.Handler(), "/management").Body.String()
+}
+
+// The drill-down the panel had no room for. Everything the panel can only
+// count has to be nameable here, because the management cluster is the one
+// thing binnacle watches that has no cluster page to fall back on.
+func TestManagementPage_RendersEveryPane(t *testing.T) {
+	body := managementPage(t, richManagement())
+
+	for _, want := range []string{
+		"Management cluster",
+		"v1.31.4",
+		// pods, named rather than counted
+		"metallb-system/controller-1",
+		"CrashLoopBackOff",
+		"3 more not shown",
+		// controllers, including the one that has never appeared
+		"capi-controller-manager",
+		"baremetal-operator",
+		"absent",
+		// nodes, with the quiet tail folded
+		"mgmt-cp-01",
+		"mgmt-cp-02",
+		"Ready and schedulable",
+		// the events that render on no other page
+		"draino-watcher-7c9fd8b64c",
+		"label &#39;team&#39; is required",
+		"belong to no workload cluster",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("management page missing %q", want)
+		}
+	}
+}
+
+// An unreachable management cluster is a state to report, not a 404: unlike a
+// cluster page, the thing this page describes cannot fail to exist.
+func TestManagementPage_UnreachableIsStillTwoHundred(t *testing.T) {
+	rec := get(t, managementHandler(t, fleet.ManagementDetail{
+		ManagementView: fleet.ManagementView{
+			Reachable: false,
+			ErrText:   "dial tcp 10.0.0.1:6443: i/o timeout",
+			Status:    health.StatusErr,
+		},
+	}), "/management")
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("got %d, want 200 — unreachable is what the reader came to find out", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "i/o timeout") {
+		t.Error("did not say why it was unreachable")
+	}
+	if !strings.Contains(body, "may be showing stale") {
+		t.Error("did not warn that the fleet page's counts may be stale")
+	}
+}
+
+// An empty view must not render as a healthy management cluster with no pods.
+func TestManagementPage_EmptySaysNothingWasRead(t *testing.T) {
+	body := get(t, managementHandler(t, fleet.ManagementDetail{
+		ManagementView: fleet.ManagementView{Reachable: true},
+	}), "/management").Body.String()
+
+	if !strings.Contains(body, "Not reported.") {
+		t.Error("an unread pod list should say so rather than claim every pod is healthy")
+	}
+	if strings.Contains(body, "Every pod is healthy") {
+		t.Error("claimed every pod is healthy without having read any")
+	}
+}
+
+// The panel links into the page. Without this the drill-down exists and
+// nothing reaches it.
+func TestFleetPage_ManagementPanelLinksToItsPage(t *testing.T) {
+	s, err := New(&fakeFleet{
+		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01", Status: health.StatusOK}},
+		mgmt: fleet.ManagementView{
+			Reachable: true, Version: "v1.31.4", NodesKnown: true,
+			Cells:     []health.Cell{{Name: "Nodes", Status: health.StatusOK}},
+			UpdatedAt: time.Now(),
+		},
+		changed: make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+	if !strings.Contains(body, `href="/management"`) {
+		t.Error("the management panel does not link to its page")
+	}
+}
+
+func managementHandler(t *testing.T, d fleet.ManagementDetail) http.Handler {
+	t.Helper()
+	s, err := New(&fakeFleet{
+		mgmt: d.ManagementView, mgmtDetail: &d, changed: make(chan struct{}, 1),
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s.Handler()
 }

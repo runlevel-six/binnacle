@@ -277,18 +277,7 @@
     <section class="pane" id="pods">
       <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
       {{if .UnhealthyPods}}
-      <table class="packed cols-6 spread">
-        <thead><tr><th>POD</th><th class="r">READY</th><th>STATUS</th><th class="r">RESTARTS</th><th>NODE</th><th class="r">AGE</th></tr></thead>
-        <tbody>
-        {{range .UnhealthyPods}}
-          <tr><td>{{.Namespace}}/{{.Name}}</td>
-            <td class="r">{{.ReadyReady}}/{{.ReadyTotal}}</td>
-            <td class="errish">{{.Status}}</td>
-            <td class="r">{{.Restarts}}</td>
-            <td class="dim">{{.Node}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
-        {{end}}
-        </tbody>
-      </table>
+      {{template "pod-table" .UnhealthyPods}}
       {{if .PodsTruncated}}<p class="empty">{{.PodsTruncated}} more not shown.</p>{{end}}
       {{else if .NodesKnown}}<p class="empty">Every pod is healthy.</p>
       {{else}}<p class="empty">Not reported.</p>{{end}}
@@ -435,6 +424,29 @@
 </table>
 {{end}}
 {{if .Unreadable}}<p class="empty">unreadable: {{range $i, $u := .Unreadable}}{{if $i}}, {{end}}{{$u}}{{end}}</p>{{end}}
+{{end}}
+
+{{/* The unhealthy-pods table, shared with the management cluster's page.
+     Both pages ask the same question of the same type and must not answer it
+     with different columns.
+
+     Not shared with the management *panel* on the fleet page, which draws its
+     own: `.pane table.packed` is a grid with display:contents on the rows, and
+     none of it applies outside a pane. That is a real difference in context,
+     not two versions of one table. */}}
+{{define "pod-table"}}
+<table class="packed cols-6 spread">
+  <thead><tr><th>POD</th><th class="r">READY</th><th>STATUS</th><th class="r">RESTARTS</th><th>NODE</th><th class="r">AGE</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr><td>{{.Namespace}}/{{.Name}}</td>
+      <td class="r">{{.ReadyReady}}/{{.ReadyTotal}}</td>
+      <td class="errish">{{.Status}}</td>
+      <td class="r">{{.Restarts}}</td>
+      <td class="dim">{{.Node}}</td><td class="r dim nowrap">{{age .Age}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
 {{end}}
 
 {{define "event-table"}}

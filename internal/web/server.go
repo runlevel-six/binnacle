@@ -85,6 +85,11 @@ type Source interface {
 	// infrastructure: a user who can see any workload cluster should see
 	// whether the thing managing them is itself healthy.
 	Management() fleet.ManagementView
+	// ManagementDetail returns the management cluster's own page: the fuller
+	// pod list the panel only teases, its nodes, and the events that belong to
+	// the management cluster rather than to any workload cluster. There is no
+	// namespace or name to pass, because there is only ever one.
+	ManagementDetail() fleet.ManagementDetail
 	// Changed ticks when something may have moved.
 	Changed() <-chan struct{}
 }
@@ -154,6 +159,12 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /events", s.handleEvents)
 	protected.HandleFunc("GET /cluster/{namespace}/{name}", s.handleCluster)
 	protected.HandleFunc("GET /cluster/{namespace}/{name}/events", s.handleClusterEvents)
+	// No scope check on either: the management cluster is fleet-wide
+	// infrastructure, and the panel it drills into is already shown to
+	// everyone who can see any cluster at all. Scoping is about which
+	// workload clusters a user may see; this is not one of them.
+	protected.HandleFunc("GET /management", s.handleManagement)
+	protected.HandleFunc("GET /management/events", s.handleManagementEvents)
 	protected.HandleFunc("GET /api/v1/fleet", s.handleAPIFleet)
 	protected.HandleFunc("GET /api/v1/clusters/{namespace}/{name}", s.handleAPICluster)
 	protected.HandleFunc("GET /api/v1/clusters/{namespace}/{name}/snapshot", s.handleAPIClusterSnapshot)
@@ -232,6 +243,47 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "cluster.html", data)
+}
+
+// managementData is the management page's own view model.
+//
+// A separate struct from clusterData rather than a reuse of it: the two pages
+// share a chrome and nothing else, and a clusterData holding an empty
+// ClusterDetail would put a cluster-shaped hole in every template that touched
+// it.
+type managementData struct {
+	Management fleet.ManagementDetail
+	Auth       string
+	Warning    string
+	Version    string
+	Site       string
+}
+
+func (s *Server) management() managementData {
+	return managementData{
+		Management: s.fleet.ManagementDetail(),
+		Auth:       s.auth.Describe(),
+		Warning:    s.auth.Warning(),
+		Version:    s.version,
+		Site:       s.site,
+	}
+}
+
+// handleManagement renders the management cluster's page.
+//
+// Always a 200, even when the management cluster is unreachable. There is
+// nothing to 404 on — unlike a cluster page, the thing this describes cannot
+// fail to exist — and "unreachable" is exactly what a reader came to find out.
+func (s *Server) handleManagement(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "management.html", s.management())
+}
+
+// handleManagementEvents streams the management page's body, the same way the
+// cluster page streams its own. Somebody watching the management cluster during
+// an upgrade is watching for a controller to come back, which is precisely when
+// a page that needs reloading is the wrong page.
+func (s *Server) handleManagementEvents(w http.ResponseWriter, r *http.Request) {
+	s.stream(w, r, "management", func() (any, bool) { return s.management(), true })
 }
 
 // render writes a template, or an error, but never half of each.

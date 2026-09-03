@@ -389,6 +389,67 @@ func (d *Demo) Management() ManagementView {
 	}
 }
 
+// ManagementDetail satisfies the same contract as [Fleet.ManagementDetail],
+// with invented nodes and events behind the panel's summary.
+//
+// Populated rather than left empty on purpose: html/template resolves a field
+// only when data reaches it, so a pane the demo never fills is a pane nothing
+// has ever rendered. The 500 that took out a cluster page came from exactly
+// that — a field name that had never been wrong until a cluster finally had
+// data for it.
+func (d *Demo) ManagementDetail() ManagementDetail {
+	md := ManagementDetail{ManagementView: d.Management()}
+
+	nodes := []model.Node{
+		{
+			Name: "mgmt-cp-01", Role: "control-plane", Status: "Ready",
+			Version: "v1.31.4", Age: 400 * 24 * time.Hour,
+		},
+		{
+			Name: "mgmt-cp-02", Role: "control-plane", Status: "Ready",
+			Version: "v1.31.4", Age: 400 * 24 * time.Hour,
+		},
+		{
+			// Cordoned rather than all three healthy: a fold that never has
+			// anything to fold is a fold nobody has looked at.
+			Name: "mgmt-cp-03", Role: "control-plane", Status: "Ready",
+			Version: "v1.31.4", Age: 400 * 24 * time.Hour, Cordoned: true,
+		},
+	}
+	rows := make([]NodeRow, 0, len(nodes))
+	for _, n := range nodes {
+		rows = append(rows, NodeRow{Node: n})
+	}
+	md.NodeRows = splitNodes(rows)
+
+	// One of each source the real page merges: an event from the management
+	// cluster's own namespaces, and a Cluster API namespace event belonging to
+	// no cluster — which is the case that renders nowhere else.
+	md.Events, md.EventsTruncated, md.EventsTotal = capEvents(GroupEvents([]model.Event{
+		{
+			Namespace: "kube-system", Type: "Warning", Reason: "FailedScheduling",
+			ObjectKind: "Pod", ObjectName: "metallb-controller-6d9b7c8f4-x2jkl",
+			Message:       "0/3 nodes are available: 1 node(s) were unschedulable",
+			Count:         4,
+			LastTimestamp: time.Now().Add(-6 * time.Minute),
+		},
+		{
+			Namespace: "machines", Type: "Warning", Reason: "PolicyViolation",
+			ObjectKind: "ReplicaSet", ObjectName: "draino-watcher-7c9fd8b64c",
+			Message:       "validation failure: label 'team' is required",
+			Count:         45,
+			LastTimestamp: time.Now().Add(-90 * time.Second),
+		},
+		{
+			Namespace: "kube-system", Type: "Normal", Reason: "Pulled",
+			ObjectKind: "Pod", ObjectName: "etcd-defrag-29807280-87bmn",
+			Message:       "Container image already present on machine",
+			LastTimestamp: time.Now().Add(-3 * time.Hour),
+		},
+	}))
+	return md
+}
+
 // Cluster satisfies the same contract as [Fleet.Cluster], with invented detail
 // for whichever fixture cluster was asked for.
 //

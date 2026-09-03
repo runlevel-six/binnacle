@@ -83,3 +83,29 @@ func TestSessionKey_UnsetGenerates(t *testing.T) {
 		t.Errorf("got %d bytes, %v", len(got), err)
 	}
 }
+
+// A downloaded binary has to be able to say which one it is.
+//
+// The version reaches the page footer and the startup line, but both of those
+// require the server to have found a kubeconfig and an identity provider
+// first. Somebody checking what they just extracted from a release archive
+// has neither, and that is exactly when the question is asked.
+func TestVersionFlag(t *testing.T) {
+	var sb strings.Builder
+	if err := run([]string{"--version"}, &sb); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := strings.TrimSpace(sb.String()); got != version {
+		t.Errorf("got %q, want %q", got, version)
+	}
+}
+
+// And it must not need a cluster to answer: --version returning before any
+// credential is resolved is the whole point.
+func TestVersionFlag_NeedsNoCluster(t *testing.T) {
+	t.Setenv("KUBECONFIG", "/nonexistent/kubeconfig")
+	var sb strings.Builder
+	if err := run([]string{"--version"}, &sb); err != nil {
+		t.Errorf("--version wanted a cluster: %v", err)
+	}
+}

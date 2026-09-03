@@ -56,10 +56,29 @@ go install github.com/runlevel-six/binnacle/cmd/sextant@latest
 
 ### binnacle (server + web)
 
-Manifests are in [`deploy/`](deploy/), with a `Dockerfile` at the root.
+Deployed as a container image — manifests are in [`deploy/`](deploy/), with a
+`Dockerfile` at the root. Releases also attach it as a binary for every
+platform sextant gets, because `binnacle --demo` needs no cluster and no
+credentials, and installing a Go toolchain or deploying into Kubernetes is a
+lot to ask of somebody deciding whether they want the thing at all.
 
 ```sh
+# A tagged release
+tar -xzf binnacle_*_linux_amd64.tar.gz binnacle
+install -m 0755 binnacle ~/.local/bin/binnacle
+
+# Current tip
+curl -sSfL https://github.com/runlevel-six/binnacle/releases/download/edge/binnacle_edge_linux_amd64.tar.gz \
+  | tar -xz binnacle
+install -m 0755 binnacle ~/.local/bin/binnacle
+
+# With Go
 go install github.com/runlevel-six/binnacle/cmd/binnacle@latest
+```
+
+```sh
+binnacle --demo     # the fleet page, an invented fleet, no cluster needed
+binnacle --version  # which build this is
 ```
 
 ## Try sextant
@@ -94,6 +113,14 @@ That listens on `127.0.0.1:8080` with no authentication, which is fine on a
 machine only you are on. Binnacle **refuses to start** unauthenticated on any
 other address: it reads every cluster in the fleet with credentials of its own,
 so an open listener is an open window into all of them.
+
+Three pages, each pushed over Server-Sent Events rather than polled:
+
+| Page | What it holds |
+|---|---|
+| `/` | Every cluster as a card, worst first, plus the datacenter's storage layer and the management cluster's own summary. |
+| `/cluster/{namespace}/{name}` | One cluster in full: nodes, subsystems, network, cloud, unhealthy pods, node pools, machines, hardware, events. |
+| `/management` | The management cluster itself — its unhealthy pods, the controllers every workload cluster depends on, its nodes, and the Cluster API events that belong to no workload cluster. It has no `Cluster` object of its own, so it gets a page of its own. |
 
 ### Deployment shape
 
