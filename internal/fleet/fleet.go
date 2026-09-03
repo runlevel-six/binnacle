@@ -456,7 +456,11 @@ const maxCardPods = 4
 // runs forty to seventy nodes: a list would make the card grow with the cluster,
 // and the card is the one thing on the page that must not.
 type RoleCount struct {
-	Role  string
+	Role string
+	// Label is the role as the site names it, from the profile's display map.
+	// Falls back to Role, so a role the profile has never heard of still reads
+	// as itself rather than as nothing.
+	Label string
 	Ready int
 	Total int
 }
@@ -817,7 +821,7 @@ func (v *ClusterView) readWorkload(
 		}
 		rc, seen := byRole[role]
 		if !seen {
-			rc = &RoleCount{Role: role}
+			rc = &RoleCount{Role: role, Label: prof.NodeRoles.DisplayName(role)}
 			byRole[role] = rc
 		}
 		rc.Total++

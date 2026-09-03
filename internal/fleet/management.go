@@ -86,13 +86,20 @@ type ManagementView struct {
 // ControllerHealth summarizes the management cluster's controller pods.
 //
 // These are the workloads whose failure stops every workload cluster's
-// reconciliation: the CAPI controllers, Metal3's baremetal-operator, and any
-// infrastructure provider controllers. They are identified by the profile's
-// CriticalWorkloads list, which is the same mechanism sextant uses in local
-// mode.
+// reconciliation: the Cluster API controllers, Metal3's baremetal-operator, and
+// any infrastructure provider controllers. They come from the profile's
+// **management_workloads** list.
+//
+// It used to read `critical_workloads`, which describes a *workload* cluster,
+// and the mistake was invisible for as long as the only profiles in use
+// declared none. Against a real one it reported a datacenter's databases as
+// absent from the management cluster — true, and meaningless — while an
+// ingress controller that happens to run on both clusters reported healthy,
+// which is a green verdict about the wrong object. Two lists, because they
+// describe two different clusters.
 type ControllerHealth struct {
-	// Critical lists each CriticalWorkload from the profile and whether its
-	// pods are ready. A workload that has never appeared is reported as
+	// Critical lists each management workload the profile declares and whether
+	// its pods are ready. A workload that has never appeared is reported as
 	// absent rather than healthy: a controller that is not running and has
 	// never been seen is the worst state, and "0/0 ready" reads as fine.
 	Critical []CriticalWorkloadStatus
@@ -113,19 +120,13 @@ type ControllerHealth struct {
 // counted, so the number is never wrong even when the list is short.
 const maxManagementPods = 12
 
-// CriticalWorkloadStatus is one profile-declared critical workload and its
-// current readiness on the management cluster.
-type CriticalWorkloadStatus struct {
-	Kind      string
-	Namespace string
-	Name      string
-	Ready     int32
-	Desired   int32
-	// Absent is true when no pod matching this workload was found. Distinct
-	// from Ready < Desired, because a missing controller is a different
-	// failure from one whose pods are crashing.
-	Absent bool
-}
+// CriticalWorkloadStatus is one profile-declared workload and its current
+// readiness.
+//
+// An alias rather than a type of its own: the management page, the cluster page
+// and the terminal dashboard all pin workloads, and they must not be able to
+// reach different verdicts about the same one. See [health.Pin].
+type CriticalWorkloadStatus = health.Pin
 
 // mgmtCollector runs a workload watcher against the management cluster's own
 // API server, publishing nodes and pods into a dedicated store. It is the
@@ -224,37 +225,21 @@ func managementCells(
 	return cells
 }
 
-// buildControllerHealth checks each profile-declared critical workload
-// against the management cluster's pods. It is the same mechanism sextant
-// uses in local mode — the management section just runs it against the
-// management cluster's own pod snapshot instead of a workload cluster's.
+// buildControllerHealth checks each workload the profile declares for the
+// *management* cluster against the management cluster's pods.
+//
+// It reads ManagementWorkloads and never CriticalWorkloads: the second names
+// components of the clusters this one provisions, which are not here and are
+// not supposed to be. A profile that declares no management workloads gets an
+// empty list and the section renders nothing, which is the right answer — no
+// table beats a table of wrong rows.
 func buildControllerHealth(pods []model.Pod, prof profile.Profile) *ControllerHealth {
-	ch := &ControllerHealth{}
-
+	ch := &ControllerHealth{Critical: health.Pins(pods, prof.ManagementWorkloads)}
 	for _, p := range pods {
 		if health.NeedsAttention(p) {
 			ch.Unhealthy++
 		}
 	}
-
-	for _, cw := range prof.CriticalWorkloads {
-		status := CriticalWorkloadStatus{
-			Kind:      cw.Kind,
-			Namespace: cw.Namespace,
-			Name:      cw.Name,
-		}
-		for _, p := range pods {
-			if cw.Matches(p.Namespace, p.Name) {
-				status.Desired++
-				if p.IsHealthy {
-					status.Ready++
-				}
-			}
-		}
-		status.Absent = status.Desired == 0
-		ch.Critical = append(ch.Critical, status)
-	}
-
 	return ch
 }
 

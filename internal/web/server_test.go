@@ -312,7 +312,7 @@ func TestClusterPage_RendersTheCorePanes(t *testing.T) {
 			OperationalStatus: "error", ErrorMessage: "timed out waiting for the deploy image"}}},
 		NodeRows: fleet.Split[fleet.NodeRow]{Shown: []fleet.NodeRow{{
 			Node:       model.Node{Name: "node-1.site-a.example", Role: "control-plane", Status: "Ready", Version: "v1.36.2"},
-			CPUPercent: 28, MemPercent: 41,
+			CPUPercent: 28, MemPercent: 41, RoleLabel: "Control-Plane",
 		}}},
 		UnhealthyPods: []model.Pod{{Namespace: "example-system", Name: "api-1",
 			ReadyTotal: 1, Status: "CrashLoopBackOff", Restarts: 441}},
@@ -525,14 +525,14 @@ func TestDetail_FoldsQuietRowsButKeepsProblems(t *testing.T) {
 	// right place.
 	var quiet []fleet.NodeRow
 	for i := 0; i < 60; i++ {
-		quiet = append(quiet, fleet.NodeRow{Node: model.Node{
+		quiet = append(quiet, fleet.NodeRow{RoleLabel: "Compute", Node: model.Node{
 			Name: fmt.Sprintf("compute-%02d.site-a.example", i), Role: "compute", Status: "Ready",
 		}})
 	}
 	d := fleet.ClusterDetail{
 		ClusterView: fleet.ClusterView{Namespace: "capi", Name: "big", NodesKnown: true},
 		NodeRows: fleet.Split[fleet.NodeRow]{
-			Shown: []fleet.NodeRow{{Node: model.Node{
+			Shown: []fleet.NodeRow{{RoleLabel: "Compute", Node: model.Node{
 				Name: "broken.site-a.example", Role: "compute", Status: "NotReady",
 			}}},
 			Quiet: quiet,
@@ -564,8 +564,8 @@ func TestFleetPage_CarriesTheExpandedTier(t *testing.T) {
 		Nodes:         fleet.NodeCount{Ready: 69, Total: 70},
 		UnhealthyPods: 12,
 		NodesByRole: []fleet.RoleCount{
-			{Role: "compute", Ready: 61, Total: 62},
-			{Role: "control-plane", Ready: 3, Total: 3},
+			{Role: "compute", Label: "Compute", Ready: 61, Total: 62},
+			{Role: "control-plane", Label: "Control-Plane", Ready: 3, Total: 3},
 		},
 		TopUnhealthyPods: []fleet.PodRef{
 			{Namespace: "openstack", Name: "octavia-api", Status: "CrashLoopBackOff", Restarts: 441},
@@ -575,7 +575,7 @@ func TestFleetPage_CarriesTheExpandedTier(t *testing.T) {
 
 	body := get(t, serve(t, d), "/").Body.String()
 	for _, want := range []string{
-		"compute", "61/62", "control-plane", "3/3", // nodes by role
+		"Compute", "61/62", "Control-Plane", "3/3", // nodes by role, as the site names them
 		"openstack/octavia-api", "CrashLoopBackOff", // named pods
 		"and 11 more",                         // the count is not capped even though the names are
 		"HEALTH_WARN",                         // the subsystem headline
@@ -634,7 +634,7 @@ func TestClusterPage_FailingCloudStatesAreLegible(t *testing.T) {
 // rendered with data in each.
 func TestFleetPage_EveryCardBranchRenders(t *testing.T) {
 	rich := richDetail().ClusterView
-	rich.NodesByRole = []fleet.RoleCount{{Role: "control-plane", Ready: 2, Total: 3}}
+	rich.NodesByRole = []fleet.RoleCount{{Role: "control-plane", Label: "Control-Plane", Ready: 2, Total: 3}}
 	rich.TopUnhealthyPods = []fleet.PodRef{{Namespace: "ns", Name: "api-1",
 		Status: "CrashLoopBackOff", Restarts: 441}}
 	rich.UnhealthyPods = 8
@@ -772,7 +772,7 @@ func foldedDetail() fleet.ClusterDetail {
 		n := strconv.Itoa(i)
 		machines = append(machines, model.Machine{Name: "m-" + n, Phase: "Running"})
 		hosts = append(hosts, model.BareMetalHost{Name: "h-" + n, State: "provisioned", OperationalStatus: "OK"})
-		nodes = append(nodes, fleet.NodeRow{Node: model.Node{Name: "n-" + n, Status: "Ready"}})
+		nodes = append(nodes, fleet.NodeRow{Node: model.Node{Name: "n-" + n, Status: "Ready"}, RoleLabel: "Compute"})
 		events = append(events, fleet.EventGroup{
 			Event:       model.Event{Type: "Normal", Reason: "Pulled", ObjectKind: "Pod", Message: "pulled " + n},
 			Occurrences: 1, Objects: 1,
@@ -972,7 +972,14 @@ func richDetail() fleet.ClusterDetail {
 				ErrorMessage: "timed out waiting for the deploy image"}}},
 		HostsElsewhere: 9,
 		NodeRows: fleet.Split[fleet.NodeRow]{Shown: []fleet.NodeRow{{
-			Node: model.Node{Name: "node-1.site-a.example", Role: "control-plane", Status: "Ready"}}}},
+			Node: model.Node{Name: "node-1.site-a.example", Role: "control-plane", Status: "Ready"}, RoleLabel: "Control-Plane"}}},
+		// Every state a pin can be in. A section only ever rendered with
+		// healthy rows is a section whose error branches nothing has drawn.
+		CriticalWorkloads: []fleet.CriticalWorkloadStatus{
+			{Kind: "StatefulSet", Namespace: "openstack", Name: "ovn-ovsdb-nb", Ready: 3, Desired: 3},
+			{Kind: "StatefulSet", Namespace: "openstack", Name: "percona-xtradb-pxc", Ready: 2, Desired: 3},
+			{Kind: "Deployment", Namespace: "traefik", Name: "traefik", Absent: true},
+		},
 		UnhealthyPods: []model.Pod{{Namespace: "ns", Name: "api-1", Status: "CrashLoopBackOff"}},
 		PodsTruncated: 4,
 		Events: fleet.Split[fleet.EventGroup]{Shown: fleet.GroupEvents([]model.Event{{
@@ -1062,6 +1069,39 @@ func TestClusterPage_EveryPaneRenders(t *testing.T) {
 	}
 	if !strings.Contains(body, `title="3f2b1c8a-1111-2222-3333-444455556666"`) {
 		t.Error("the whole UUID is not recoverable from the row")
+	}
+}
+
+// Critical workloads belong to the cluster they run on. The web UI rendered
+// them only on the management page — where the list does not apply — and on no
+// cluster page at all, which is where it does.
+func TestClusterPage_ShowsTheProfilesCriticalWorkloads(t *testing.T) {
+	body := get(t, serveDetail(t, richDetail()), "/cluster/capi/tenant-01").Body.String()
+
+	for _, want := range []string{
+		"Critical workloads",
+		"ovn-ovsdb-nb", "3/3", // healthy
+		"percona-xtradb-pxc", "2/3", // degraded
+		"absent", // the state an unhealthy-only list cannot report
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("cluster page is missing %q", want)
+		}
+	}
+	// Above the unhealthy list, which runs to sixty rows during maintenance.
+	if pins, pods := strings.Index(body, `id="critical"`), strings.Index(body, `id="pods"`); pins > pods {
+		t.Error("the pinned workloads render below the unhealthy pod list")
+	}
+}
+
+// A profile that pins nothing must render no section rather than an empty one.
+func TestClusterPage_NoCriticalWorkloadsMeansNoSection(t *testing.T) {
+	d := richDetail()
+	d.CriticalWorkloads = nil
+
+	body := get(t, serveDetail(t, d), "/cluster/capi/tenant-01").Body.String()
+	if strings.Contains(body, "Critical workloads") {
+		t.Error("an empty pin list still rendered a section")
 	}
 }
 
@@ -1352,7 +1392,7 @@ func TestClusterPage_IdentifierTablesArePacked(t *testing.T) {
 		Machines: fleet.Split[model.Machine]{Shown: []model.Machine{{Name: "m-1", Phase: "Running"}}},
 		Hosts:    fleet.Split[model.BareMetalHost]{Shown: []model.BareMetalHost{{Name: "h-1", State: "provisioned"}}},
 		NodeRows: fleet.Split[fleet.NodeRow]{Shown: []fleet.NodeRow{{
-			Node: model.Node{Name: "node-1.site-a.example", Role: "control-plane", Status: "Ready"},
+			Node: model.Node{Name: "node-1.site-a.example", Role: "control-plane", Status: "Ready"}, RoleLabel: "Control-Plane",
 		}}},
 		UnhealthyPods: []model.Pod{{Namespace: "ns", Name: "api-1", Status: "CrashLoopBackOff"}},
 		Events: fleet.Split[fleet.EventGroup]{Shown: fleet.GroupEvents([]model.Event{{
@@ -1502,9 +1542,14 @@ func TestFleetPage_ManagementStatesPodTruncation(t *testing.T) {
 // exhaustive; that is the entire point of it.
 func richManagement() fleet.ManagementDetail {
 	nodes := []fleet.NodeRow{
-		{Node: model.Node{Name: "mgmt-cp-01", Role: "control-plane", Status: "Ready", Version: "v1.31.4"}},
-		{Node: model.Node{Name: "mgmt-cp-02", Role: "control-plane", Status: "NotReady", Version: "v1.31.4"}},
-		{Node: model.Node{Name: "mgmt-cp-03", Role: "control-plane", Status: "Ready", Version: "v1.31.4", Cordoned: true}},
+		{Node: model.Node{Name: "mgmt-cp-01", Role: "control-plane", Status: "Ready", Version: "v1.31.4"},
+			RoleLabel: "Control-Plane"},
+		{Node: model.Node{Name: "mgmt-cp-02", Role: "control-plane", Status: "NotReady", Version: "v1.31.4"},
+			RoleLabel: "Control-Plane"},
+		// Cordoned and news, because a control-plane cordon always is: the
+		// amber path has to be rendered by something.
+		{Node: model.Node{Name: "mgmt-cp-03", Role: "control-plane", Status: "Ready", Version: "v1.31.4", Cordoned: true},
+			RoleLabel: "Control-Plane", CordonNews: true},
 	}
 	return fleet.ManagementDetail{
 		ManagementView: fleet.ManagementView{

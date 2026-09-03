@@ -59,10 +59,15 @@ events:
   namespaces: [capi-system]    # which namespaces the workload event watch reads
   all_namespaces: false        # true widens it, at a cost on a busy cluster
 
-critical_workloads:            # named workloads always shown in Pod Health
+critical_workloads:            # workloads pinned on the cluster being watched
   - namespace: ingress
     kind: Deployment
     name: ingress-nginx
+
+management_workloads:          # workloads pinned on the *management* cluster
+  - namespace: capi-system
+    kind: Deployment
+    name: capi-controller-manager
 
 plugins:                       # per-plugin settings; keys vary by plugin
   ceph:
@@ -78,6 +83,41 @@ layout:                        # optional pane arrangement overrides
       kind: events
       ratio: 0.4
 ```
+
+## Two lists, two clusters
+
+**`critical_workloads`** pins workloads on the cluster being watched — the
+workload cluster, whose components you want to see whether or not they are
+currently failing. They render in the terminal's Pod Health pane and in the web
+UI's Critical Workloads section on that cluster's page.
+
+**`management_workloads`** pins workloads on the *management* cluster: the
+controllers whose failure stops every workload cluster reconciling. They render
+in the management panel and page.
+
+Keep them separate even when it feels like duplication, because reusing one for
+both is wrong in two directions at once. Checked against the wrong cluster, a
+workload cluster's database reports **absent** — true, and meaningless. And
+where a name exists on both clusters, as an ingress controller or a monitoring
+agent easily does, it reports **healthy**: a green verdict about an object
+nobody asked about, which is the harder failure to notice.
+
+Neither list has a default. A profile that declares no management workloads
+renders no controller table, which is the right answer — no table beats a table
+of wrong rows. On a cluster built by `clusterctl` the conventional names are:
+
+```yaml
+management_workloads:
+  - {namespace: capi-system, kind: Deployment, name: capi-controller-manager}
+  - {namespace: capi-kubeadm-bootstrap-system, kind: Deployment, name: capi-kubeadm-bootstrap-controller-manager}
+  - {namespace: capi-kubeadm-control-plane-system, kind: Deployment, name: capi-kubeadm-control-plane-controller-manager}
+  - {namespace: baremetal-operator-system, kind: Deployment, name: baremetal-operator-controller-manager}
+```
+
+Confirm each one exists before pinning it: an entry that matches nothing renders
+a red **absent** row, so a stale name is a false alarm rather than a harmless
+no-op. Matching is on namespace plus a `name-` pod prefix, which covers both a
+StatefulSet's `name-0` and a Deployment's `name-<replicaset>-<pod>`.
 
 ## Two keys worth dwelling on
 

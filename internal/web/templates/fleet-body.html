@@ -140,7 +140,9 @@
            does not grow with the cluster the way a node list would. */}}
       {{if .NodesByRole}}
       <div class="roles">
-        {{range .NodesByRole}}<span class="role{{if .Degraded}} degraded{{end}}"><span class="role-k">{{.Role}}</span> {{.Ready}}/{{.Total}}</span>{{end}}
+        {{/* Label, not Role: the site's name for it. The storage panel below
+             uses .Role because its roles are Ceph's own, not node labels. */}}
+        {{range .NodesByRole}}<span class="role{{if .Degraded}} degraded{{end}}"><span class="role-k">{{.Label}}</span> {{.Ready}}/{{.Total}}</span>{{end}}
       </div>
       {{end}}
 

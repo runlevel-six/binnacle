@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/runlevel-six/binnacle/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/profile"
 	"github.com/runlevel-six/binnacle/pkg/store"
 )
 
@@ -377,7 +378,7 @@ func TestReadPods_StartingPodsAreNotCounted(t *testing.T) {
 		}})
 
 	var d ClusterDetail
-	d.readPods(s)
+	d.readPods(s, profile.Default())
 
 	if len(d.UnhealthyPods) != 1 {
 		t.Fatalf("listed %d pods, want only the crash loop: %+v", len(d.UnhealthyPods), d.UnhealthyPods)

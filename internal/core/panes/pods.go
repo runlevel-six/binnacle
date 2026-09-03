@@ -133,44 +133,32 @@ func renderInner(cols []table.Column, rows [][]string, styles [][]lipgloss.Style
 	return t.Render(w, h)
 }
 
+// criticalRows renders the pinned workloads.
+//
+// The verdict is [health.Pins], the same call the web front end's tables make,
+// so the terminal and the browser cannot disagree about whether a pinned
+// workload is missing. This function decides only how to say it.
 func (p *PodHealthPane) criticalRows(pods []model.Pod) ([][]string, [][]lipgloss.Style) {
-	if len(p.critical) == 0 {
+	pins := health.Pins(pods, p.critical)
+	if len(pins) == 0 {
 		return nil, nil
 	}
-	cells := make([][]string, 0, len(p.critical))
-	styles := make([][]lipgloss.Style, 0, len(p.critical))
+	cells := make([][]string, 0, len(pins))
+	styles := make([][]lipgloss.Style, 0, len(pins))
 
-	for _, c := range p.critical {
-		var matched []model.Pod
-		for _, pod := range pods {
-			if c.Matches(pod.Namespace, pod.Name) {
-				matched = append(matched, pod)
-			}
+	for _, pin := range pins {
+		style := tui.StyleErr
+		switch pin.Status() {
+		case health.StatusOK:
+			style = tui.StyleOK
+		case health.StatusWarn:
+			style = tui.StyleWarn
 		}
-
-		ready := 0
-		for _, pod := range matched {
-			if pod.IsHealthy {
-				ready++
-			}
-		}
-
-		state, style := "missing", tui.StyleErr
-		switch {
-		case len(matched) == 0:
-			// A pinned workload with no pods at all is the case this block
-			// exists for, and the one an unhealthy-only list cannot report.
-		case ready == len(matched):
-			state, style = "healthy", tui.StyleOK
-		default:
-			state, style = "degraded", tui.StyleWarn
-		}
-
 		cells = append(cells, []string{
-			c.Namespace + "/" + c.Name,
-			c.Kind,
-			fmt.Sprintf("%d/%d", ready, len(matched)),
-			state,
+			pin.Namespace + "/" + pin.Name,
+			pin.Kind,
+			fmt.Sprintf("%d/%d", pin.Ready, pin.Desired),
+			pin.State(),
 		})
 		styles = append(styles, []lipgloss.Style{{}, tui.StyleMuted, style, style})
 	}

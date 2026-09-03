@@ -294,6 +294,9 @@ func Merge(parent, child Profile) Profile {
 	if len(child.CriticalWorkloads) > 0 {
 		out.CriticalWorkloads = child.CriticalWorkloads
 	}
+	if len(child.ManagementWorkloads) > 0 {
+		out.ManagementWorkloads = child.ManagementWorkloads
+	}
 
 	out.Plugins = mergeSettings(parent.Plugins, child.Plugins)
 
@@ -434,15 +437,8 @@ func (p Profile) Validate() error {
 		}
 	}
 
-	for i, c := range p.CriticalWorkloads {
-		if c.Name == "" {
-			problems = append(problems, fmt.Sprintf("critical_workloads[%d] has no name", i))
-		}
-		if c.Namespace == "" {
-			problems = append(problems,
-				fmt.Sprintf("critical_workloads[%d] (%q) has no namespace", i, c.Name))
-		}
-	}
+	problems = append(problems, validateWorkloads("critical_workloads", p.CriticalWorkloads)...)
+	problems = append(problems, validateWorkloads("management_workloads", p.ManagementWorkloads)...)
 
 	problems = append(problems, validatePattern("clusters.management.context_pattern", p.Clusters.Management.ContextPattern)...)
 	problems = append(problems, validatePattern("clusters.workload.context_pattern", p.Clusters.Workload.ContextPattern)...)
@@ -455,6 +451,23 @@ func (p Profile) Validate() error {
 		return &ValidationError{Profile: p.Name, Problems: problems}
 	}
 	return nil
+}
+
+// validateWorkloads checks one list of pinned workloads. Both lists are checked
+// the same way and reported under their own field name, so an error says which
+// list to go and fix.
+func validateWorkloads(field string, workloads []CriticalWorkload) []string {
+	var problems []string
+	for i, c := range workloads {
+		if c.Name == "" {
+			problems = append(problems, fmt.Sprintf("%s[%d] has no name", field, i))
+		}
+		if c.Namespace == "" {
+			problems = append(problems,
+				fmt.Sprintf("%s[%d] (%q) has no namespace", field, i, c.Name))
+		}
+	}
+	return problems
 }
 
 func validatePattern(field, pattern string) []string {

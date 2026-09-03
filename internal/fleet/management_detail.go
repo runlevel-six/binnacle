@@ -49,11 +49,7 @@ func (f *Fleet) ManagementDetail() ManagementDetail {
 	if snap, ok := store.Get[model.Snapshot[model.Node]](s, model.KeyWorkloadNodes); ok && snap.Err == nil {
 		rows := make([]NodeRow, 0, len(snap.Items))
 		for _, n := range snap.Items {
-			rows = append(rows, NodeRow{
-				Node:       n,
-				CPUPercent: percent(n.RequestedCPU, n.AllocatableCPU),
-				MemPercent: percent(n.RequestedMemory, n.AllocatableMemory),
-			})
+			rows = append(rows, newNodeRow(n, f.opts.Profile))
 		}
 		d.NodeRows = splitNodes(rows)
 	}

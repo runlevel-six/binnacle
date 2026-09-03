@@ -274,6 +274,30 @@
     </section>
     {{end}}
 
+    {{if .CriticalWorkloads}}
+    {{/* The workloads this site pins, healthy or not. It sits above the
+         unhealthy list because it answers what that list cannot: a workload
+         that has been deleted or scaled to zero has no unhealthy pods, and a
+         page built only from what is failing renders its absence as silence.
+         Its height is the profile's, not the cluster's, so it is safe above a
+         table that runs to sixty rows during maintenance. */}}
+    <section class="pane" id="critical">
+      <h3>Critical workloads <span class="count">{{len .CriticalWorkloads}}</span></h3>
+      <table class="packed cols-4 spread">
+        <thead><tr><th>WORKLOAD</th><th>KIND</th><th>NAMESPACE</th><th>READY</th></tr></thead>
+        <tbody>
+        {{range .CriticalWorkloads}}
+          <tr><td>{{.Name}}</td>
+            <td class="dim">{{.Kind}}</td>
+            <td class="dim">{{.Namespace}}</td>
+            <td class="{{if .Absent}}errish{{else if lt .Ready .Desired}}warnish{{end}}">
+              {{if .Absent}}absent{{else}}{{.Ready}}/{{.Desired}}{{end}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </section>
+    {{end}}
+
     <section class="pane" id="pods">
       <h3>Unhealthy pods{{if .UnhealthyPods}} <span class="count">{{len .UnhealthyPods}}{{if .PodsTruncated}} of {{add (len .UnhealthyPods) .PodsTruncated}}{{end}}</span>{{end}}</h3>
       {{if .UnhealthyPods}}
@@ -502,8 +526,13 @@
   <tbody>
   {{range .}}
     <tr>
-      <td>{{.Name}}</td><td class="dim nowrap">{{.Role}}</td>
-      <td class="nowrap{{if not .Ready}} errish{{else if .Cordoned}} warnish{{end}}">
+      <td>{{.Name}}</td><td class="dim nowrap">{{.RoleLabel}}</td>
+      {{/* CordonNews, not Cordoned: a cordon the profile declares expected is
+           the steady state, and coloring it amber is a warning that never
+           clears — which is also how this table came to disagree with the
+           cordon count beside it, since that has always asked the profile. The
+           word still shows; only the alarm is withdrawn. */}}
+      <td class="nowrap{{if not .Ready}} errish{{else if .CordonNews}} warnish{{end}}">
         {{.Status}}{{if .Cordoned}} &middot; cordoned{{end}}{{if .Pressure}} &middot; <span class="warnish">pressure</span>{{end}}</td>
       <td class="dim">{{.Version}}</td>
       <td class="r">{{.CPUPercent}}%</td><td class="r">{{.MemPercent}}%</td>

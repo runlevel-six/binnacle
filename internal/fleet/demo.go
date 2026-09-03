@@ -11,6 +11,7 @@ import (
 	"github.com/runlevel-six/binnacle/internal/wire"
 	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/profile"
 	"github.com/runlevel-six/binnacle/pkg/rollout"
 	"github.com/runlevel-six/binnacle/pkg/subsystem"
 	"github.com/runlevel-six/binnacle/pkg/subsystem/ceph"
@@ -422,7 +423,7 @@ func (d *Demo) ManagementDetail() ManagementDetail {
 	}
 	rows := make([]NodeRow, 0, len(nodes))
 	for _, n := range nodes {
-		rows = append(rows, NodeRow{Node: n})
+		rows = append(rows, newNodeRow(n, profile.Default()))
 	}
 	md.NodeRows = splitNodes(rows)
 
@@ -525,11 +526,7 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 			n.Status = "NotReady"
 			n.MemoryPressure = true
 		}
-		nodeRows = append(nodeRows, NodeRow{
-			Node:       n,
-			CPUPercent: percent(n.RequestedCPU, n.AllocatableCPU),
-			MemPercent: percent(n.RequestedMemory, n.AllocatableMemory),
-		})
+		nodeRows = append(nodeRows, newNodeRow(n, profile.Default()))
 		machines = append(machines, model.Machine{
 			Namespace: namespace, Name: fmt.Sprintf("%s-machine-%d", name, i+1),
 			ClusterName: name, NodeName: n.Name, Phase: "Running",
@@ -581,6 +578,15 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 	mine, elsewhere := hostsFor(hosts, detail.Machines.All())
 	detail.HostsElsewhere = elsewhere
 	detail.Hosts = splitHosts(mine)
+
+	// One of each state, because the demo is where a pane gets exercised
+	// without waiting for a real cluster to break: a healthy pin, a degraded
+	// one, and the missing one that is the reason for pinning names at all.
+	detail.CriticalWorkloads = []CriticalWorkloadStatus{
+		{Kind: "StatefulSet", Namespace: "example-system", Name: "database", Ready: 3, Desired: 3},
+		{Kind: "Deployment", Namespace: "example-system", Name: "api", Ready: 1, Desired: 2},
+		{Kind: "Deployment", Namespace: "ingress", Name: "ingress-controller", Absent: true},
+	}
 
 	for i := 0; i < view.UnhealthyPods; i++ {
 		detail.UnhealthyPods = append(detail.UnhealthyPods, model.Pod{

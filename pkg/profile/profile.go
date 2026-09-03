@@ -43,12 +43,29 @@ type Profile struct {
 	// loadable from YAML; declared here so the schema is stable.
 	Extends string `yaml:"extends,omitempty"`
 
-	Clusters          Clusters            `yaml:"clusters"`
-	NodeRoles         NodeRoles           `yaml:"node_roles"`
-	Events            Events              `yaml:"events"`
-	CriticalWorkloads []CriticalWorkload  `yaml:"critical_workloads,omitempty"`
-	Plugins           map[string]Settings `yaml:"plugins,omitempty"`
-	Layout            Layout              `yaml:"layout,omitempty"`
+	Clusters  Clusters  `yaml:"clusters"`
+	NodeRoles NodeRoles `yaml:"node_roles"`
+	Events    Events    `yaml:"events"`
+	// CriticalWorkloads pins workloads on the cluster being watched — the
+	// *workload* cluster. See [Profile.ManagementWorkloads] for the management
+	// cluster's own, which is a different list about different clusters.
+	CriticalWorkloads []CriticalWorkload `yaml:"critical_workloads,omitempty"`
+	// ManagementWorkloads pins workloads on the management cluster: the
+	// controllers whose failure stops every workload cluster reconciling —
+	// Cluster API's controller managers, the bare-metal operator, whatever
+	// provisions your hardware.
+	//
+	// It is a separate list from [Profile.CriticalWorkloads] because the two
+	// describe different clusters, and reusing one for both is wrong in both
+	// directions at once. Checking a workload cluster's databases against the
+	// management cluster reports every one of them missing — a page full of red
+	// for workloads that are running perfectly well somewhere else. And where a
+	// name happens to exist on both (an ingress controller, a monitoring agent),
+	// it reports *healthy*, which is worse: a green verdict about an object
+	// nobody asked about.
+	ManagementWorkloads []CriticalWorkload  `yaml:"management_workloads,omitempty"`
+	Plugins             map[string]Settings `yaml:"plugins,omitempty"`
+	Layout              Layout              `yaml:"layout,omitempty"`
 }
 
 // Settings is a plugin's opaque configuration block, interpreted by that plugin.
@@ -181,6 +198,10 @@ type Events struct {
 // CriticalWorkload pins a workload whose readiness is always shown, whether or
 // not it is currently unhealthy — the things whose absence you want to notice
 // immediately rather than discover by scrolling.
+//
+// The same type serves [Profile.CriticalWorkloads] and
+// [Profile.ManagementWorkloads]; which cluster a pin is checked against is
+// decided by the list it is in, never by the entry.
 type CriticalWorkload struct {
 	Kind      string `yaml:"kind"`
 	Namespace string `yaml:"namespace"`

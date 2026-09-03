@@ -89,7 +89,7 @@ subjects:
 # Nodes and pods and nothing else, deliberately. The collector shares its
 # watcher with the workload clusters, where the same code also lists
 # Deployments, StatefulSets and DaemonSets — and the management section reads
-# none of them, matching the profile's critical workloads against pod names
+# none of them, matching the profile's management workloads against pod names
 # instead. That watch is switched off for this cluster
 # (workload.Options.SkipWorkloads), so if a permission error for one of those
 # three ever appears in the log, the fix is at the call site in

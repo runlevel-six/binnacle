@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/runlevel-six/binnacle/internal/wire"
+	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/profile"
 	"github.com/runlevel-six/binnacle/pkg/store"
 	"github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
 )
@@ -25,11 +27,29 @@ const (
 	maxUnhealthyPods = 60
 )
 
-// NodeRow is a node with its commitment already worked out.
+// NodeRow is a node with its commitment, its role label and its cordon verdict
+// already worked out.
+//
+// The last two are here rather than in the template because both are the
+// profile's judgement, and a template cannot ask a profile anything. Deriving
+// them in Go is also what keeps this table agreeing with the counts above it,
+// which have always consulted the profile.
 type NodeRow struct {
 	model.Node
 	CPUPercent int
 	MemPercent int
+	// RoleLabel is the role as the site names it — "Control-Plane" where the
+	// label value is "controller". Falls back to the raw role, and reads
+	// "(unlabeled)" when a node carries none.
+	RoleLabel string
+	// CordonNews reports whether this node's cordon deserves attention. False
+	// for a role the profile declares cordoned by design, which is the whole
+	// reason the field exists: a fleet whose hypervisors are permanently
+	// cordoned would otherwise show a page of amber that never clears, next to
+	// a cordon count of zero that already knows better.
+	//
+	// A cordoned node that is not Ready is news whatever its role.
+	CordonNews bool
 }
 
 // Pressure reports whether the kubelet is complaining about any resource.
@@ -74,6 +94,15 @@ type ClusterDetail struct {
 	// template asking for .Nodes.Ready would resolve to this slice and fail at
 	// render time, halfway down an already-written page.
 	NodeRows Split[NodeRow]
+
+	// CriticalWorkloads is the profile's pinned workloads for this cluster,
+	// shown whether or not they are healthy.
+	//
+	// It answers what the unhealthy list below structurally cannot: a workload
+	// that has been deleted or scaled to zero has no unhealthy pods, so a page
+	// built only from what is failing reports its absence as silence. Empty
+	// when the profile pins nothing, and the section then does not render.
+	CriticalWorkloads []CriticalWorkloadStatus
 
 	UnhealthyPods []model.Pod
 	// PodsTruncated is how many unhealthy pods are not listed. Shown, because
@@ -145,8 +174,8 @@ func (f *Fleet) Cluster(namespace, name string) (ClusterDetail, bool) {
 		d.Hosts = splitHosts(mine)
 	}
 
-	d.readNodes(s)
-	d.readPods(s)
+	d.readNodes(s, f.opts.Profile)
+	d.readPods(s, f.opts.Profile)
 	d.readEvents(s)
 
 	d.Subsystems = readSubsystems(s)
@@ -178,27 +207,44 @@ func (f *Fleet) StoreSnapshot(namespace, name string) ([]wire.Entry, bool) {
 	return wire.Dump(t.store), true
 }
 
-func (d *ClusterDetail) readNodes(s *store.Store) {
+func (d *ClusterDetail) readNodes(s *store.Store, prof profile.Profile) {
 	snap, ok := store.Get[model.Snapshot[model.Node]](s, model.KeyWorkloadNodes)
 	if !ok {
 		return
 	}
 	rows := make([]NodeRow, 0, len(snap.Items))
 	for _, n := range snap.Items {
-		rows = append(rows, NodeRow{
-			Node:       n,
-			CPUPercent: percent(n.RequestedCPU, n.AllocatableCPU),
-			MemPercent: percent(n.RequestedMemory, n.AllocatableMemory),
-		})
+		rows = append(rows, newNodeRow(n, prof))
 	}
 	d.NodeRows = splitNodes(rows)
 }
 
-func (d *ClusterDetail) readPods(s *store.Store) {
+// newNodeRow builds one row, applying the profile.
+//
+// Every node table in the product goes through here — cluster page, management
+// page and demo alike — because the profile-derived fields are exactly the ones
+// nothing reminds you to set: a row built by hand renders an empty ROLE column
+// and a cordon that is always news, and both look like data rather than like a
+// mistake.
+func newNodeRow(n model.Node, prof profile.Profile) NodeRow {
+	return NodeRow{
+		Node:       n,
+		CPUPercent: percent(n.RequestedCPU, n.AllocatableCPU),
+		MemPercent: percent(n.RequestedMemory, n.AllocatableMemory),
+		RoleLabel:  prof.NodeRoles.DisplayName(n.Role),
+		CordonNews: n.Cordoned && prof.NodeRoles.CordonIsNews(n.Role, n.Ready()),
+	}
+}
+
+func (d *ClusterDetail) readPods(s *store.Store, prof profile.Profile) {
 	snap, ok := store.Get[model.Snapshot[model.Pod]](s, model.KeyWorkloadPods)
 	if !ok {
 		return
 	}
+	// Both from the same snapshot, deliberately: the pinned rows and the
+	// unhealthy list are two readings of one set of pods, and taking them from
+	// different reads would let the page contradict itself between refreshes.
+	d.CriticalWorkloads = health.Pins(snap.Items, prof.CriticalWorkloads)
 	d.UnhealthyPods, d.PodsTruncated = unhealthyPods(snap.Items, maxUnhealthyPods)
 }
 

@@ -114,6 +114,11 @@ critical_workloads:
   - namespace: ingress
     kind: Deployment
     name: ingress-nginx
+
+management_workloads:
+  - namespace: capi-system
+    kind: Deployment
+    name: capi-controller-manager
 ```
 
 Event watches are the most expensive thing here. Scoping them to the namespaces you
@@ -122,6 +127,13 @@ deliberate choice with a cost.
 
 Critical workloads are pinned to the top of Pod Health whether or not they are
 unhealthy, so you can see at a glance that the thing you care about survived a drain.
+
+Management workloads are the same idea for the other cluster: the controllers whose
+failure stops everything reconciling. They are a separate list because they describe
+a different cluster — pinning a workload cluster's components against the management
+cluster reports them all missing, and any name that happens to exist on both reports
+healthy about the wrong one. Confirm each entry is really there before pinning it;
+an unmatched entry is a red row that will outlive your memory of typing it.
 
 ## 7. Plugin settings, only where discovery is wrong
 
