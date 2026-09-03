@@ -269,6 +269,21 @@ your `--scope-file` keys on, and — for the nicest terminal experience —
 permitted to use the device authorization grant (RFC 8628), which is what lets
 an operator authenticate over SSH with no browser on the same machine.
 
+**Registering it declaratively may not be possible, and half is worse than
+none.** It is worth checking what your provider's operator can express before
+committing to it. The requirement above has two halves — a public client with
+the device grant, and an ID token carrying the claim `--scope-file` keys on —
+and an operator that covers only the first leaves the second in a console,
+where it is the half that governs authorization. That is not a partial win: it
+splits ownership of one object between git and a console, and a reconciler that
+does not know about the claim mapper is free to remove it. The failure is
+silent, because a user whose token carries no groups is scoped to nothing and
+sees an empty fleet rather than an error.
+
+So either register the whole client declaratively or register all of it by
+hand. A console-registered client is not worse at runtime; it is only worse to
+audit, and that is the smaller cost.
+
 **Clients discover all of this themselves.** `GET /api/v1/authinfo` is served
 without authentication, necessarily: a client asks it precisely because it does
 not yet hold a credential.

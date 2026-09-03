@@ -349,8 +349,29 @@ func (d *Demo) Management() ManagementView {
 			Ready: 3,
 		},
 		NodesKnown: true,
+		// Two, and the count, the cells and the list all say two. A card that
+		// counts differently from the table under it is a page disagreeing
+		// with itself, and the demo is where that would be seen first.
+		//
+		// One of them is the capm3 controller the Critical table below shows
+		// at 0/1, because that is what a real management cluster looks like:
+		// the controller row and the pod row are the same problem seen twice.
+		// The other carries a restart count, so the worst-first ordering is
+		// visible in a screenshot rather than only in a test.
+		UnhealthyPods: []model.Pod{
+			{
+				Namespace: "metallb-system", Name: "controller-6d9b7c8f4-x2jkl",
+				ReadyReady: 0, ReadyTotal: 1, Status: "CrashLoopBackOff",
+				Restarts: 47, Age: 3 * time.Hour, Node: "mgmt-cp-02",
+			},
+			{
+				Namespace: "capm3-system", Name: "capm3-controller-manager-7f8d9c5b6-mn4pq",
+				ReadyReady: 0, ReadyTotal: 1, Status: "ContainerCreating",
+				Restarts: 0, Age: 90 * time.Second, Node: "mgmt-cp-01",
+			},
+		},
 		ControllerHealth: &ControllerHealth{
-			Unhealthy: 1,
+			Unhealthy: 2,
 			Critical: []CriticalWorkloadStatus{
 				{Kind: "Deployment", Namespace: "capi-system", Name: "capi-controller-manager", Ready: 1, Desired: 1},
 				{Kind: "Deployment", Namespace: "capi-kubeadm-bootstrap-system", Name: "capi-kubeadm-bootstrap-controller-manager", Ready: 1, Desired: 1},
@@ -361,7 +382,7 @@ func (d *Demo) Management() ManagementView {
 		},
 		Cells: []health.Cell{
 			{Name: "Nodes", Status: health.StatusOK, Detail: "3/3"},
-			{Name: "Pods", Status: health.StatusWarn, Detail: "1 unhealthy"},
+			{Name: "Pods", Status: health.StatusWarn, Detail: "2 unhealthy"},
 		},
 		Status:    health.StatusWarn,
 		UpdatedAt: time.Now(),

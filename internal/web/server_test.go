@@ -1375,3 +1375,104 @@ func TestClusterPage_IdentifierTablesArePacked(t *testing.T) {
 		t.Error("the events message column lost its growth claim")
 	}
 }
+
+// The management section's whole original failure: it could say the management
+// cluster had failing pods and could not say which. There is no drill-down to
+// defer to — the management cluster has no Cluster API Cluster object and so no
+// cluster page — so the names have to be on the fleet page itself.
+func TestFleetPage_ManagementNamesItsFailingPods(t *testing.T) {
+	mgmt := fleet.ManagementView{
+		Reachable:  true,
+		Version:    "v1.31.4",
+		Nodes:      fleet.NodeCount{Ready: 3, Total: 3},
+		NodesKnown: true,
+		UnhealthyPods: []model.Pod{
+			{
+				Namespace: "metallb-system", Name: "controller-6d9b7c8f4-x2jkl",
+				ReadyReady: 0, ReadyTotal: 1, Status: "CrashLoopBackOff",
+				Restarts: 47, Age: 3 * time.Hour, Node: "mgmt-cp-02",
+			},
+			{
+				Namespace: "capm3-system", Name: "capm3-controller-manager-7f8d9c5b6-mn4pq",
+				ReadyReady: 0, ReadyTotal: 1, Status: "ContainerCreating",
+				Age: 90 * time.Second, Node: "mgmt-cp-01",
+			},
+		},
+		ControllerHealth: &fleet.ControllerHealth{Unhealthy: 2},
+		Cells: []health.Cell{
+			{Name: "Pods", Status: health.StatusWarn, Detail: "2 unhealthy"},
+		},
+		Status:    health.StatusWarn,
+		UpdatedAt: time.Now(),
+	}
+	s, err := New(&fakeFleet{
+		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01", Status: health.StatusOK}},
+		changed:  make(chan struct{}, 1),
+		mgmt:     mgmt,
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+
+	for _, want := range []string{
+		"metallb-system/controller-6d9b7c8f4-x2jkl",
+		"capm3-system/capm3-controller-manager-7f8d9c5b6-mn4pq",
+		"CrashLoopBackOff",
+		"ContainerCreating",
+		"mgmt-cp-02", // the node, which is how a pattern across one node is spotted
+		">47<",       // the restart count, rendered as its own cell
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("management pod list missing %q", want)
+		}
+	}
+
+	// Nothing is truncated here, so the remainder line must not appear.
+	if strings.Contains(body, "more not shown") {
+		t.Error("claimed truncation with nothing truncated")
+	}
+}
+
+// The truncation branch, which is otherwise a path nothing exercises: a
+// management cluster with more failing pods than the section will render says
+// how many it left out. "12 unhealthy" and "12 of 90" are different
+// situations.
+func TestFleetPage_ManagementStatesPodTruncation(t *testing.T) {
+	var pods []model.Pod
+	for i := 0; i < 12; i++ {
+		pods = append(pods, model.Pod{
+			Namespace: "ns", Name: "broken-" + strconv.Itoa(i),
+			ReadyTotal: 1, Status: "CrashLoopBackOff", Restarts: int32(12 - i),
+			Age: time.Hour, Node: "mgmt-cp-01",
+		})
+	}
+	mgmt := fleet.ManagementView{
+		Reachable:     true,
+		NodesKnown:    true,
+		UnhealthyPods: pods,
+		PodsTruncated: 78,
+		Cells: []health.Cell{
+			{Name: "Pods", Status: health.StatusWarn, Detail: "90 unhealthy"},
+		},
+		Status:    health.StatusWarn,
+		UpdatedAt: time.Now(),
+	}
+	s, err := New(&fakeFleet{
+		clusters: []fleet.ClusterView{{Namespace: "capi", Name: "tenant-01", Status: health.StatusOK}},
+		changed:  make(chan struct{}, 1),
+		mgmt:     mgmt,
+	}, auth.Open{}, "test", "site-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s.Handler(), "/").Body.String()
+
+	if !strings.Contains(body, "78 more not shown") {
+		t.Error("did not say how many pods were left out")
+	}
+	// The heading counts the whole set, not just the rows that fit.
+	if !strings.Contains(body, "12 of 90") {
+		t.Error("heading does not state the total behind the truncated list")
+	}
+}

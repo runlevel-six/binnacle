@@ -195,6 +195,14 @@ func ProjectPod(p *corev1.Pod) model.Pod {
 		Phase:     string(p.Status.Phase),
 	}
 
+	// Sidecars count as containers, because that is what they are. A native
+	// sidecar is declared as an init container with restartPolicy Always
+	// (Kubernetes 1.29+), and it runs for the life of the pod rather than
+	// completing. Left out of these totals, a pod with one reads 3/3 where
+	// kubectl reads 4/4 — and worse, see podStatus: it never finishes
+	// initializing, so the pod is permanently unhealthy.
+	sidecars := restartableInitContainers(p)
+
 	var ready, restarts int32
 	for _, cs := range p.Status.ContainerStatuses {
 		if cs.Ready {
@@ -202,8 +210,17 @@ func ProjectPod(p *corev1.Pod) model.Pod {
 		}
 		restarts += cs.RestartCount
 	}
+	for _, cs := range p.Status.InitContainerStatuses {
+		if !sidecars[cs.Name] {
+			continue
+		}
+		if cs.Ready {
+			ready++
+		}
+		restarts += cs.RestartCount
+	}
 	out.ReadyReady = ready
-	out.ReadyTotal = int32(len(p.Spec.Containers))
+	out.ReadyTotal = int32(len(p.Spec.Containers) + len(sidecars))
 	out.Restarts = restarts
 	out.Status = podStatus(p)
 
@@ -227,9 +244,19 @@ func podStatus(p *corev1.Pod) string {
 
 	// An init container that has not completed successfully surfaces as
 	// "Init:<reason>" or "Init:N/M".
+	sidecars := restartableInitContainers(p)
 	for i, ic := range p.Status.InitContainerStatuses {
 		switch {
 		case ic.State.Terminated != nil && ic.State.Terminated.ExitCode == 0:
+			continue
+		// A started sidecar is not unfinished initialization, it is a running
+		// container. It never terminates, so without this it holds the pod at
+		// "Init:1/2" for as long as the pod lives — which was reported as an
+		// unhealthy pod, forever, on every cluster running one. Three dmzproxy
+		// replicas and four virt-launchers on one management cluster read as
+		// failing for twenty-seven and eighty-four days respectively, and a
+		// signal that is never clear is a signal nobody reads.
+		case sidecars[ic.Name] && ic.Started != nil && *ic.Started:
 			continue
 		case ic.State.Terminated != nil && ic.State.Terminated.Reason != "":
 			return "Init:" + ic.State.Terminated.Reason
@@ -258,6 +285,26 @@ func podStatus(p *corev1.Pod) string {
 	default:
 		return string(p.Status.Phase)
 	}
+}
+
+// restartableInitContainers names the pod's native sidecars.
+//
+// A sidecar is an init container with restartPolicy Always: it starts in init
+// order and then keeps running, so it is an init container by declaration and
+// a regular container by behavior. Both the READY column and the init-progress
+// status have to treat it as the latter, which is what kubectl does and what
+// this reproduces.
+func restartableInitContainers(p *corev1.Pod) map[string]bool {
+	var out map[string]bool
+	for _, ic := range p.Spec.InitContainers {
+		if ic.RestartPolicy != nil && *ic.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+			if out == nil {
+				out = make(map[string]bool, len(p.Spec.InitContainers))
+			}
+			out[ic.Name] = true
+		}
+	}
+	return out
 }
 
 // terminatingReason picks the most informative reason from a pod being deleted,

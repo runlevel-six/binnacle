@@ -621,3 +621,138 @@ func TestFilterEvents_AllNamespaces(t *testing.T) {
 		t.Errorf("got %d want 2", len(got))
 	}
 }
+
+// sidecarPod builds the shape that was misreported: a pod with regular
+// containers plus one native sidecar — an init container with restartPolicy
+// Always, which starts in init order and then runs for the life of the pod.
+//
+// Modeled on a real pod (three dmzproxy containers plus a dnstap-writer
+// sidecar) because the fixture being shaped like real data is the whole point:
+// the previous fixtures had init containers that terminate, which is the case
+// that already worked.
+func sidecarPod(sidecarStarted, sidecarReady bool) *corev1.Pod {
+	always := corev1.ContainerRestartPolicyAlways
+	started := sidecarStarted
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "dmzproxy", Name: "dmzproxy-1"},
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{
+				{Name: "squid-init"},
+				{Name: "dnstap-writer", RestartPolicy: &always},
+			},
+			Containers: []corev1.Container{{Name: "squid"}, {Name: "exporter"}, {Name: "sidecar-tls"}},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			InitContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name:  "squid-init",
+					Ready: true,
+					State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+						ExitCode: 0, Reason: "Completed",
+					}},
+				},
+				{
+					Name:    "dnstap-writer",
+					Ready:   sidecarReady,
+					Started: &started,
+					State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{
+						StartedAt: metav1.Now(),
+					}},
+				},
+			},
+			ContainerStatuses: []corev1.ContainerStatus{
+				{Name: "squid", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+				{Name: "exporter", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+				{Name: "sidecar-tls", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+			},
+		},
+	}
+}
+
+// The defect: a running sidecar never terminates, so the init loop reported
+// "Init:1/2" for the life of the pod and the pod was permanently unhealthy.
+// On one real management cluster this flagged ten pods, three of them for
+// twenty-seven days and four for eighty-four.
+func TestProjectPod_RunningSidecarIsNotUnfinishedInit(t *testing.T) {
+	got := ProjectPod(sidecarPod(true, true))
+
+	if got.Status != "Running" {
+		t.Errorf("Status = %q, want %q — kubectl reports Running for this pod", got.Status, "Running")
+	}
+	// kubectl counts a restartable init container in both halves: three
+	// regular containers plus the sidecar is 4/4, not 3/3.
+	if got.ReadyReady != 4 || got.ReadyTotal != 4 {
+		t.Errorf("READY = %d/%d, want 4/4", got.ReadyReady, got.ReadyTotal)
+	}
+	if !got.IsHealthy {
+		t.Error("a pod whose every container is ready is not unhealthy")
+	}
+}
+
+// A sidecar that has not started yet is genuine initialization, and must still
+// hold the pod at Init:N/M — the fix must not excuse every sidecar, only the
+// ones actually running.
+func TestProjectPod_UnstartedSidecarIsStillInitializing(t *testing.T) {
+	got := ProjectPod(sidecarPod(false, false))
+
+	if got.Status != "Init:1/2" {
+		t.Errorf("Status = %q, want %q", got.Status, "Init:1/2")
+	}
+	if got.IsHealthy {
+		t.Error("a pod still running its init containers is not healthy")
+	}
+	// The sidecar counts toward the denominator whether or not it is up: the
+	// pod has four containers to get ready either way.
+	if got.ReadyTotal != 4 {
+		t.Errorf("ReadyTotal = %d, want 4", got.ReadyTotal)
+	}
+	if got.ReadyReady != 3 {
+		t.Errorf("ReadyReady = %d, want 3 (the sidecar is not ready)", got.ReadyReady)
+	}
+}
+
+// A started sidecar that is not ready still counts against READY, so a pod
+// whose sidecar is failing its probe does not read as fully ready.
+func TestProjectPod_StartedButUnreadySidecarCountsAgainstReady(t *testing.T) {
+	got := ProjectPod(sidecarPod(true, false))
+
+	if got.Status != "Running" {
+		t.Errorf("Status = %q, want Running", got.Status)
+	}
+	if got.ReadyReady != 3 || got.ReadyTotal != 4 {
+		t.Errorf("READY = %d/%d, want 3/4", got.ReadyReady, got.ReadyTotal)
+	}
+	if got.IsHealthy {
+		t.Error("3/4 ready is not healthy")
+	}
+}
+
+// Restarts include the sidecar's, the way kubectl's RESTARTS column does.
+func TestProjectPod_SidecarRestartsAreCounted(t *testing.T) {
+	p := sidecarPod(true, true)
+	p.Status.InitContainerStatuses[1].RestartCount = 7
+	p.Status.ContainerStatuses[0].RestartCount = 2
+
+	if got := ProjectPod(p).Restarts; got != 9 {
+		t.Errorf("Restarts = %d, want 9 (2 from a container, 7 from the sidecar)", got)
+	}
+}
+
+// An ordinary init container that has not finished is unchanged by any of
+// this: no restartPolicy means no sidecar, and the pod is initializing.
+func TestProjectPod_PlainInitContainerUnaffected(t *testing.T) {
+	p := sidecarPod(true, true)
+	p.Spec.InitContainers[1].RestartPolicy = nil
+	p.Status.InitContainerStatuses[1].State = corev1.ContainerState{
+		Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"},
+	}
+
+	got := ProjectPod(p)
+	if got.Status != "Init:1/2" {
+		t.Errorf("Status = %q, want Init:1/2", got.Status)
+	}
+	if got.ReadyTotal != 3 {
+		t.Errorf("ReadyTotal = %d, want 3 — a plain init container is not a container", got.ReadyTotal)
+	}
+}

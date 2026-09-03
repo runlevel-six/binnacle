@@ -1,12 +1,12 @@
 ---
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 #
-# Rolling "edge" prerelease: every merge to main republishes the `edge` release
-# with binaries built from that commit.
+# Rolling "edge" prerelease: every merge to the default branch republishes the
+# `edge` release with binaries built from that commit.
 #
 # This is deliberately not a version bump. Tags stay the only thing that mints a
 # version number and writes release notes (see release.yaml); `edge` exists so
-# that someone who wants what is on main does not have to install Go and build
+# that someone who wants the current tree does not have to install Go and build
 # it, and so the download URL in the README never has to change.
 #
 # The release is deleted and recreated rather than updated in place, so a build
@@ -17,7 +17,12 @@ name: Edge
 
 on:
   push:
-    branches: [main]
+    # Both, like ci.yaml and image.yaml. Sextant's default branch was main and
+    # this repo's is master; listing only main is why the merged tree published
+    # no edge binaries at all, while the container image — built by image.yaml,
+    # which already named both — kept updating. A workflow that silently does
+    # not run is the one kind of CI failure nothing reports.
+    branches: [main, master]
 
 permissions:
   contents: write
@@ -65,7 +70,7 @@ jobs:
           gh release delete edge --yes --cleanup-tag || true
           gh release create edge \
             --target "${GITHUB_SHA}" \
-            --title "Edge build (main)" \
+            --title "Edge build" \
             --prerelease \
-            --notes "Built from [\`${GITHUB_SHA:0:7}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}) on main. Unversioned and replaced on every merge — pin a tagged release for anything you depend on. Reports its version as \`edge\`." \
+            --notes "Built from [\`${GITHUB_SHA:0:7}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}) on the default branch. Unversioned and replaced on every merge — pin a tagged release for anything you depend on. Reports its version as \`edge\`." \
             dist/*.tar.gz dist/checksums.txt

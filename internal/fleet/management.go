@@ -47,6 +47,21 @@ type ManagementView struct {
 	// depends on. Nil when the pod snapshot has not arrived.
 	ControllerHealth *ControllerHealth
 
+	// UnhealthyPods names the pods behind ControllerHealth.Unhealthy, worst
+	// first, capped at maxManagementPods.
+	//
+	// The count alone was the section's original failure: it could say the
+	// management cluster had failing pods and could not say which, so the one
+	// thing it reported was the one thing nobody could act on. There is no
+	// drill-down to defer to either — the management cluster has no Cluster
+	// API Cluster object and therefore no cluster page — so whatever a reader
+	// needs has to be here.
+	UnhealthyPods []model.Pod
+	// PodsTruncated is how many unhealthy pods are not listed. Shown for the
+	// same reason the cluster pane shows it: "12 unhealthy pods" and "12 of
+	// 90" are different situations.
+	PodsTruncated int
+
 	// Cells is the health strip: Nodes and Pods only, in that order. Two
 	// cells rather than five, because the other three are fleet-wide and
 	// already on the cards below.
@@ -78,6 +93,16 @@ type ControllerHealth struct {
 	// the section can name it alongside the critical-workload list.
 	Unhealthy int
 }
+
+// maxManagementPods caps the management section's pod list.
+//
+// A fifth of the cluster pane's cap, because this section is on the fleet page
+// and the fleet page's discipline is that nothing on it grows with what it
+// describes: sixty rows here would push the cluster grid off the screen to
+// report a problem a dozen rows already name. Twelve is enough to show a
+// pattern — one namespace repeating, or one node — and the remainder is
+// counted, so the number is never wrong even when the list is short.
+const maxManagementPods = 12
 
 // CriticalWorkloadStatus is one profile-declared critical workload and its
 // current readiness on the management cluster.
@@ -339,6 +364,7 @@ func (f *Fleet) Management() ManagementView {
 
 	if podsOK && pods.Err == nil {
 		view.ControllerHealth = buildControllerHealth(pods.Items, f.opts.Profile)
+		view.UnhealthyPods, view.PodsTruncated = unhealthyPods(pods.Items, maxManagementPods)
 	}
 
 	view.Cells = managementCells(

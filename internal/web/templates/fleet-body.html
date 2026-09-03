@@ -28,10 +28,36 @@
     </table>
   </div>
   {{end}}
-  {{if .Management.ControllerHealth.Unhealthy}}
-  <p class="unhealthy-count">{{.Management.ControllerHealth.Unhealthy}} unhealthy pod{{if ne .Management.ControllerHealth.Unhealthy 1}}s{{end}} on management cluster</p>
   {{end}}
-  {{end}}
+  {{- /* The list, not just the count. This section could report failing pods
+         and not say which, and there is no drill-down to send a reader to:
+         the management cluster has no Cluster API Cluster object, so it has
+         no cluster page. Everything actionable has to be on this row.
+
+         Trimmed with {{- because a skipped block still leaves its newlines,
+         and every line of this fragment is prefixed with `data: ` on its way
+         out over SSE. */}}
+  {{- if .Management.UnhealthyPods}}
+  <div class="mgmt-pods">
+    <div class="mgmt-pods-title">Unhealthy pods
+      <span class="count">{{len .Management.UnhealthyPods}}{{if .Management.PodsTruncated}} of {{add (len .Management.UnhealthyPods) .Management.PodsTruncated}}{{end}}</span>
+    </div>
+    <table class="packed">
+      <thead><tr><th>POD</th><th class="r">READY</th><th>STATUS</th><th class="r">RESTARTS</th><th>NODE</th><th class="r">AGE</th></tr></thead>
+      <tbody>
+      {{range .Management.UnhealthyPods}}
+        <tr><td>{{.Namespace}}/{{.Name}}</td>
+          <td class="r">{{.ReadyReady}}/{{.ReadyTotal}}</td>
+          <td class="errish">{{.Status}}</td>
+          <td class="r">{{.Restarts}}</td>
+          <td class="dim">{{.Node}}</td>
+          <td class="r dim nowrap">{{age .Age}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{if .Management.PodsTruncated}}<p class="empty">{{.Management.PodsTruncated}} more not shown.</p>{{end}}
+  </div>
+  {{- end}}
 </div>
 {{else if .Management.ErrText}}
 <div class="management management-unreachable" data-status="err">

@@ -564,8 +564,26 @@
   .management .controller-health tr.err td:first-child { color: var(--err); }
   .management .controller-health tr.warn td:first-child { color: var(--warn); }
   .management .controller-health tr.ok td:first-child { color: var(--ok); }
-  .management .unhealthy-count {
-    margin-top: .3rem; font-size: .75rem; color: var(--warn);
+  /* The management section styles its own tables. `.pane table.packed` is a
+     grid with display:contents on the rows, and none of those rules apply
+     here — this is not a pane. Right alignment is spelled out for the same
+     reason: `.pane td.r` does not reach inside .management. */
+  .management .mgmt-pods { margin-top: .5rem; }
+  .management .mgmt-pods-title {
+    font-size: .72rem; font-weight: 600; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--warn); margin-bottom: .2rem;
   }
+  .management .mgmt-pods table { width: 100%; font-size: .78rem; }
+  .management .mgmt-pods th {
+    text-align: left; font-weight: 600; padding: .2rem .5rem;
+    border-bottom: 1px solid var(--line); font-size: .72rem;
+  }
+  .management .mgmt-pods td { padding: .2rem .5rem; }
+  /* Restarts, ready and age are comparable numbers down the column, which is
+     where right alignment earns its place. The pod name and node are not. */
+  .management .mgmt-pods td.r, .management .mgmt-pods th.r {
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .management .mgmt-pods .empty { margin-top: .25rem; font-size: .72rem; }
 </style>
 {{end}}

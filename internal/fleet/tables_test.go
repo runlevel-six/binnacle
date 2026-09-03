@@ -2,8 +2,10 @@ package fleet
 
 import (
 	"testing"
+	"time"
 
 	"github.com/runlevel-six/binnacle/pkg/model"
+	"github.com/runlevel-six/binnacle/pkg/profile"
 )
 
 func node(name, role, status string, cordoned, pressure bool) NodeRow {
@@ -303,5 +305,102 @@ func TestSplit_AllIsEveryRow(t *testing.T) {
 	all[0].Name = "clobbered"
 	if got.Shown[0].Name == "clobbered" {
 		t.Error("All() aliased Shown; a caller mutating it would corrupt the split")
+	}
+}
+
+// pod builds a pod fixture. Deliberately shaped like the real projection:
+// IsHealthy is what health.NeedsAttention actually reads, and a fixture that
+// sets a scary Status while leaving IsHealthy true tests nothing.
+func pod(ns, name, status string, restarts int32, age time.Duration, healthy bool) model.Pod {
+	return model.Pod{
+		Namespace: ns, Name: name, Status: status,
+		Restarts: restarts, Age: age, IsHealthy: healthy,
+		ReadyTotal: 1,
+	}
+}
+
+// The list is filtered by the same verdict the cells count, ordered so the
+// worst offender is first, and capped with the remainder reported rather than
+// dropped.
+func TestUnhealthyPods_FiltersOrdersAndCaps(t *testing.T) {
+	pods := []model.Pod{
+		pod("kube-system", "healthy-one", "Running", 0, time.Hour, true),
+		pod("a-ns", "few-restarts", "CrashLoopBackOff", 3, time.Hour, false),
+		pod("z-ns", "many-restarts", "CrashLoopBackOff", 400, time.Hour, false),
+		// Starting, unrestarted and inside the grace period: not a problem yet,
+		// and counting it is what made the pods chip permanently amber.
+		pod("kube-system", "just-starting", "ContainerCreating", 0, 5*time.Second, false),
+		pod("m-ns", "also-few", "Error", 3, time.Hour, false),
+	}
+
+	shown, truncated := unhealthyPods(pods, 10)
+	if truncated != 0 {
+		t.Errorf("truncated = %d, want 0 under the cap", truncated)
+	}
+	var got []string
+	for _, p := range shown {
+		got = append(got, p.Namespace+"/"+p.Name)
+	}
+	want := []string{
+		"z-ns/many-restarts", // 400 restarts, alphabetically last: only ranking brings it up
+		"a-ns/few-restarts",  // ties on 3 restarts break by namespace/name
+		"m-ns/also-few",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d = %s, want %s", i, got[i], want[i])
+		}
+	}
+
+	// The cap keeps the worst and counts the rest.
+	shown, truncated = unhealthyPods(pods, 2)
+	if len(shown) != 2 || truncated != 1 {
+		t.Errorf("cap 2: %d shown, %d truncated; want 2 and 1", len(shown), truncated)
+	}
+	if shown[0].Name != "many-restarts" {
+		t.Errorf("cap dropped the worst row: first is %s", shown[0].Name)
+	}
+}
+
+// Nil rather than empty, so a template's {{if}} renders the "everything is
+// healthy" branch instead of an empty table with headings.
+func TestUnhealthyPods_HealthyClusterReturnsNil(t *testing.T) {
+	shown, truncated := unhealthyPods([]model.Pod{
+		pod("kube-system", "fine", "Running", 0, time.Hour, true),
+	}, 10)
+	if shown != nil {
+		t.Errorf("got %v, want nil", shown)
+	}
+	if truncated != 0 {
+		t.Errorf("truncated = %d, want 0", truncated)
+	}
+}
+
+// The invariant this whole shared helper exists for: the number the health
+// cell counts and the number the table accounts for are the same number.
+// A card counting differently from the list under it is a page disagreeing
+// with itself, and it has happened twice.
+func TestUnhealthyPods_CountAgreesWithTheCell(t *testing.T) {
+	var pods []model.Pod
+	for i := 0; i < 30; i++ {
+		pods = append(pods, pod("ns", "broken-"+itoa(i), "CrashLoopBackOff", int32(i), time.Hour, false))
+	}
+	for i := 0; i < 5; i++ {
+		pods = append(pods, pod("ns", "fine-"+itoa(i), "Running", 0, time.Hour, true))
+	}
+	pods = append(pods, pod("ns", "starting", "PodInitializing", 0, time.Second, false))
+
+	ch := buildControllerHealth(pods, profile.Profile{})
+	shown, truncated := unhealthyPods(pods, maxManagementPods)
+
+	if ch.Unhealthy != len(shown)+truncated {
+		t.Errorf("cell counts %d, table accounts for %d shown + %d truncated",
+			ch.Unhealthy, len(shown), truncated)
+	}
+	if ch.Unhealthy != 30 {
+		t.Errorf("Unhealthy = %d, want 30 (the healthy five and the starting one excluded)", ch.Unhealthy)
 	}
 }

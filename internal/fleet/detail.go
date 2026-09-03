@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/runlevel-six/binnacle/internal/wire"
-	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/model"
 	"github.com/runlevel-six/binnacle/pkg/store"
 	"github.com/runlevel-six/binnacle/pkg/subsystem/openstack"
@@ -200,29 +199,7 @@ func (d *ClusterDetail) readPods(s *store.Store) {
 	if !ok {
 		return
 	}
-	var unhealthy []model.Pod
-	for _, p := range snap.Items {
-		// The same filter the card and the health cell use: see
-		// [health.NeedsAttention]. A pane listing pods the cell does not count
-		// is a page disagreeing with itself.
-		if health.NeedsAttention(p) {
-			unhealthy = append(unhealthy, p)
-		}
-	}
-	sort.Slice(unhealthy, func(i, j int) bool {
-		// Most restarts first: a pod that has restarted four hundred times is
-		// the one somebody wants to see, and it is rarely the newest.
-		if unhealthy[i].Restarts != unhealthy[j].Restarts {
-			return unhealthy[i].Restarts > unhealthy[j].Restarts
-		}
-		return unhealthy[i].Namespace+"/"+unhealthy[i].Name <
-			unhealthy[j].Namespace+"/"+unhealthy[j].Name
-	})
-	if len(unhealthy) > maxUnhealthyPods {
-		d.PodsTruncated = len(unhealthy) - maxUnhealthyPods
-		unhealthy = unhealthy[:maxUnhealthyPods]
-	}
-	d.UnhealthyPods = unhealthy
+	d.UnhealthyPods, d.PodsTruncated = unhealthyPods(snap.Items, maxUnhealthyPods)
 }
 
 // EventGroup is a set of identical events collapsed into one row.

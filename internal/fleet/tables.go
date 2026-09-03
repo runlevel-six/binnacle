@@ -3,6 +3,7 @@ package fleet
 import (
 	"sort"
 
+	"github.com/runlevel-six/binnacle/pkg/health"
 	"github.com/runlevel-six/binnacle/pkg/model"
 )
 
@@ -137,6 +138,42 @@ func hostRank(h model.BareMetalHost) int {
 		return 1
 	}
 	return hostQuiet
+}
+
+// unhealthyPods selects the pods worth showing, worst-first, and caps the list.
+//
+// Not a Split, deliberately. Folding exists to hide rows that are fine, and
+// every row here is already a problem — [health.NeedsAttention] is the filter —
+// so there is no quiet tail to put behind a disclosure. The only question is
+// how many fit, which is what the cap and the returned remainder answer.
+//
+// Shared by the cluster page's pane and the management section because both
+// answer "which pods need attention" and must answer it identically. The two
+// differ only in how many rows their page can afford, which is the argument.
+func unhealthyPods(pods []model.Pod, limit int) (shown []model.Pod, truncated int) {
+	for _, p := range pods {
+		// The same filter the cards and the health cells use. A list showing
+		// pods a cell does not count is a page disagreeing with itself.
+		if health.NeedsAttention(p) {
+			shown = append(shown, p)
+		}
+	}
+
+	sort.SliceStable(shown, func(i, j int) bool {
+		// Most restarts first: a pod that has restarted four hundred times is
+		// the one somebody wants to see, and it is rarely the newest.
+		if shown[i].Restarts != shown[j].Restarts {
+			return shown[i].Restarts > shown[j].Restarts
+		}
+		return shown[i].Namespace+"/"+shown[i].Name <
+			shown[j].Namespace+"/"+shown[j].Name
+	})
+
+	if len(shown) > limit {
+		truncated = len(shown) - limit
+		shown = shown[:limit]
+	}
+	return shown, truncated
 }
 
 func splitNodes(rows []NodeRow) Split[NodeRow] {
