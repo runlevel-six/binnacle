@@ -41,7 +41,7 @@ What to change first:
 | `my-site` | `binnacle.yaml` (`--profile`) | Your sextant site profile. |
 | `binnacle.site-a.example` | `binnacle.yaml` (Ingress host, `--oidc-redirect-url`) | The hostname this instance is served on. |
 | `https://sso.example/realms/platform` | `binnacle.yaml` | Your OpenID Connect issuer. |
-| `binnacle:latest` | `binnacle.yaml` | Your built image. |
+| `binnacle:1.8.0` | `binnacle.yaml` | The release to run. Pin a version — and ideally its digest too, `binnacle:1.8.0@sha256:…`. `latest` and `edge` move, and this manifest sets no `imagePullPolicy`, so a node that has cached a moving tag keeps serving the build it has while the deployment reports Available. |
 
 The profile has to reach the pod. Mount it and point `--profile` at the path,
 or bake it into the image; without it binnacle uses the built-in default, which

@@ -46,7 +46,20 @@ spec:
         - name: binnacle
           # Published to GHCR by .github/workflows/image.yaml. A registry that
           # proxies GHCR works too — point this at the proxy.
-          image: ghcr.io/runlevel-six/binnacle:latest
+          #
+          # A version, not `latest` or `edge`. Both of those move, and this
+          # manifest sets no imagePullPolicy — so the default, IfNotPresent,
+          # means a node that has already cached the tag will keep running the
+          # image it has. The deployment reports Available, `rollout restart`
+          # does nothing, and the page serves an old build with nothing
+          # anywhere saying so. Pinning is what makes the version on the
+          # cluster the version in this file.
+          #
+          # Better still, pin the digest alongside the tag —
+          # `binnacle:1.8.0@sha256:...` — which is immutable even if a tag is
+          # moved or rebuilt. `docker buildx imagetools inspect` or a registry
+          # HEAD on the manifest will give you one.
+          image: ghcr.io/runlevel-six/binnacle:1.8.0
           args:
             - --addr=:8080
             # Names this instance in the header and browser title. Sites reuse
