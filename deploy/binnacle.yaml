@@ -66,6 +66,14 @@ spec:
             - --oidc-issuer=https://sso.example/realms/platform
             - --oidc-client-id=binnacle
             - --oidc-redirect-url=https://binnacle.site-a.example/auth/callback
+            # Optional, and only for `sextant --server`. A terminal cannot hold
+            # the client secret the browser uses, so it authenticates as a
+            # separate *public* client, and a public client stamps its own
+            # audience on the token. Naming it here is what makes that audience
+            # acceptable; leaving it out accepts only --oidc-client-id, which is
+            # right for a deployment with one client. Clients see whichever
+            # applies at /api/v1/authinfo.
+            - --oidc-cli-client-id=binnacle-cli
           env:
             # Neither of these is a flag: a command line is visible in the
             # process table.

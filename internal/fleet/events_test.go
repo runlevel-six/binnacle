@@ -190,8 +190,8 @@ func TestSetEvents_TruncationCountsGroups(t *testing.T) {
 }
 
 // The live regression this scoping exists for. Both underclouds in a
-// datacenter share one management namespace, so k8s01's control plane being
-// paused was reported on k8s00's page — where it reads as k8s00's own control
+// datacenter share one management namespace, so tenant-02's control plane being
+// paused was reported on tenant-01's page — where it reads as tenant-01's own control
 // plane being paused, which is the most alarming thing that page can say.
 func TestEventsFor_AnotherClustersManagementEventIsNotOurs(t *testing.T) {
 	var d ClusterDetail

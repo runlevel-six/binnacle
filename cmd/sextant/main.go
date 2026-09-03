@@ -127,12 +127,22 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	// MergeFile have already layered underneath the flags.
 	serverURL := firstNonEmpty(opts.serverURL, opts.cfg.Server.URL)
 	if serverURL != "" {
-		token := firstNonEmpty(opts.token, opts.cfg.Server.Token)
 		cluster := firstNonEmpty(opts.serverCluster, opts.cfg.Server.Cluster)
 		theme, err := tui.LookupTheme(opts.cfg.Theme)
 		if err != nil {
 			return err
 		}
+
+		// Settle the credential before the UI takes the screen: signing in may
+		// have to ask the operator something. An empty token is a valid
+		// answer — a binnacle with no identity provider wants none.
+		srv := opts.cfg.Server
+		srv.Token = firstNonEmpty(opts.token, srv.Token)
+		token, err := app.ResolveServerToken(ctx, serverURL, srv, os.Stderr)
+		if err != nil {
+			return err
+		}
+
 		return app.RunServer(ctx, serverURL, token, cluster, buildInfo(), theme)
 	}
 

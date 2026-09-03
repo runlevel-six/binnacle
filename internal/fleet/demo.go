@@ -48,6 +48,10 @@ func NewDemo() *Demo {
 // Changed satisfies the same contract as [Fleet.Changed].
 func (d *Demo) Changed() <-chan struct{} { return d.changed }
 
+// Problem reports nothing: the fixture is always readable, which is the point
+// of it. A demo that could fail to load would be exercising the wrong thing.
+func (d *Demo) Problem() string { return "" }
+
 // StoreSnapshot returns nil for the demo. The fleet demo drills into
 // the single-cluster demo fixture through the router, not through the
 // store-stream API endpoint.
@@ -285,7 +289,7 @@ func (d *Demo) Storage() Storage {
 			OperationalStatus: status, ErrorMessage: errMsg, PoweredOn: true, Online: true,
 			Labels: map[string]string{
 				LabelRole:      role,
-				LabelClusterID: "24413730-08bc-11ef-b140-23a2dd2fc842",
+				LabelClusterID: "a7c3e9f1-4b2d-4e8a-9c1f-3d5b7e9a1c2d",
 			},
 		}
 	}
@@ -315,7 +319,7 @@ func (d *Demo) Storage() Storage {
 	return StorageFor(hosts, []CephReport{{
 		Cluster: ClusterRef{Namespace: "managed-clusters", Name: "tenant-01"},
 		Status: ceph.Status{
-			FSID: "24413730-08bc-11ef-b140-23a2dd2fc842", Health: "HEALTH_WARN",
+			FSID: "a7c3e9f1-4b2d-4e8a-9c1f-3d5b7e9a1c2d", Health: "HEALTH_WARN",
 			Mons: ceph.Mons{Total: 3, InQuorum: 3},
 			OSDs: ceph.OSDs{Total: 36, Up: 36, In: 36},
 			PGs: ceph.PGs{
@@ -644,7 +648,7 @@ func (d *Demo) Cluster(namespace, name string) (ClusterDetail, bool) {
 	detail.Subsystems.Ceph = &ceph.State{
 		Tier: subsystem.TierFull, Pod: "ceph-tools-0",
 		Status: ceph.Status{
-			FSID: "24413730-08bc-11ef-b140-23a2dd2fc842", Health: "HEALTH_WARN",
+			FSID: "a7c3e9f1-4b2d-4e8a-9c1f-3d5b7e9a1c2d", Health: "HEALTH_WARN",
 			Mons: ceph.Mons{Total: 3, InQuorum: 3},
 			// One OSD down, so the tile disagrees with the total beside it —
 			// which is the thing the pre-formatted block could not show.

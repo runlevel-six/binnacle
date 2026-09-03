@@ -204,14 +204,14 @@ func TestHostsFor_KeepsOnlyThisClustersHosts(t *testing.T) {
 		{Namespace: "capi", Name: "ours-kcp-aaa", InfraName: "ours-kcp-aaa", InfraKind: "Metal3Machine"},
 	}
 	hosts := []model.BareMetalHost{
-		{Name: "a03-17-controller", ConsumerNamespace: "capi", ConsumerName: "ours-kcp-aaa"},
-		{Name: "a03-20-compute", ConsumerNamespace: "capi", ConsumerName: "theirs-kcp-bbb"},
-		{Name: "a03-05-cephosd"}, // no consumer at all
+		{Name: "host-17-controller", ConsumerNamespace: "capi", ConsumerName: "ours-kcp-aaa"},
+		{Name: "host-20-compute", ConsumerNamespace: "capi", ConsumerName: "theirs-kcp-bbb"},
+		{Name: "host-05-cephosd"}, // no consumer at all
 	}
 
 	mine, elsewhere := hostsFor(hosts, machines)
-	if len(mine) != 1 || mine[0].Name != "a03-17-controller" {
-		t.Fatalf("kept %+v, want only a03-17-controller", mine)
+	if len(mine) != 1 || mine[0].Name != "host-17-controller" {
+		t.Fatalf("kept %+v, want only host-17-controller", mine)
 	}
 	if elsewhere != 2 {
 		t.Errorf("elsewhere = %d, want 2 (another cluster's host, and a Ceph node)", elsewhere)

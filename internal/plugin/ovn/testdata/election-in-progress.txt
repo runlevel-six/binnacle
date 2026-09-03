@@ -1,7 +1,7 @@
 8469
 Name: OVN_Northbound
-Cluster ID: e715 (e715f8c2-0b7e-4dbd-ae62-7b8f871bd527)
-Server ID: 8469 (84692da6-7258-4c5f-b510-1a95e92d7f41)
+Cluster ID: e715 (e7150000-1111-4222-8333-444455556667)
+Server ID: 8469 (84690000-1111-4222-8333-444455556666)
 Address: tcp:ovn-ovsdb-nb-0.ovn-ovsdb-nb.openstack.svc.cluster.local:6643
 Status: cluster member
 Role: candidate

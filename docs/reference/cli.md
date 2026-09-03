@@ -56,10 +56,36 @@ sextant renders the fleet list and per-cluster detail in the terminal.
 |---|---|
 | `--server URL` | Connect to a binnacle server at this URL instead of reading a kubeconfig. |
 | `--server-cluster NS/NAME` | With `--server`, skip the fleet list and go straight to one cluster's detail. Press Esc to return to the fleet. |
-| `--token` | Bearer token for `--server`. A server running with `--allow-unauthenticated` does not need one. |
+| `--token` | Bearer token for `--server`. Usually unnecessary: sextant signs in on its own. |
 
 These can also be set in the config file's `server:` section or via environment
 variables; see [Configuration](configuration.md).
+
+### Signing in
+
+Sextant asks the server what it wants before presenting anything, so most
+deployments need no configuration at all. In order:
+
+1. **The server may want nothing.** A binnacle with no identity provider in
+   front of it says so at `/api/v1/authinfo`, and sextant sends no credential.
+2. **`--token` / `SEXTANT_SERVER_TOKEN` / `server.token`**, when you have
+   already obtained one.
+3. **`server.token_command`**, run to print a token on stdout — for a provider
+   sextant cannot drive itself. See [Configuration](configuration.md).
+4. **A saved token** from a previous sign-in, refreshed if it has aged out.
+5. **An interactive sign-in** with the OAuth 2.0 device grant: sextant prints a
+   URL and a code, you approve it in any browser, and it continues.
+
+Tokens are saved under your user cache directory (`sextant/tokens.json`, mode
+`0600`) so a sign-in lasts across runs rather than per invocation. Delete that
+file to sign out.
+
+Sextant only offers to sign in when stdin and stderr are both terminals. In a
+script or a pipeline it reports what it needs instead of waiting for a browser
+nobody is going to open.
+
+See [Connect to a binnacle server](../how-to/connect-to-a-server.md) for the
+whole flow, and for what the provider has to allow.
 
 ## Environment variables
 

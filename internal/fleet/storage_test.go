@@ -34,11 +34,11 @@ func undercloud(name, role, shortname string) model.BareMetalHost {
 // undercloud, named after the undercloud and full of its controllers.
 func TestStorageFor_UndercloudHostsAreNotAStorageCluster(t *testing.T) {
 	s := StorageFor([]model.BareMetalHost{
-		undercloud("a03-17-controller", "controller", "k8s00"),
-		undercloud("a03-20-compute", "controller", "k8s01"),
-		undercloud("a03-26-compute", "managed-services", "k8s00"),
-		cephHost("a03-05-cephosd", "cephosd", "fsid-one"),
-		cephHost("a03-11-cephmon", "cephmon", "fsid-one"),
+		undercloud("host-17-controller", "controller", "tenant-01"),
+		undercloud("host-20-compute", "controller", "tenant-02"),
+		undercloud("host-26-compute", "managed-services", "tenant-01"),
+		cephHost("host-05-cephosd", "cephosd", "fsid-one"),
+		cephHost("host-11-cephmon", "cephmon", "fsid-one"),
 	}, nil)
 
 	if len(s.Clusters) != 1 {
@@ -152,7 +152,7 @@ func TestStorage_UnreadableInventoryIsNotAnEmptyOne(t *testing.T) {
 // empty fsid is honest; dropping it makes hardware disappear.
 func TestStorageFor_CephHostWithNoFSIDIsStillShown(t *testing.T) {
 	s := StorageFor([]model.BareMetalHost{
-		{Namespace: "machines", Name: "a03-05-cephosd", State: "provisioned",
+		{Namespace: "machines", Name: "host-05-cephosd", State: "provisioned",
 			Labels: map[string]string{LabelRole: "cephosd"}},
 	}, nil)
 
@@ -200,15 +200,15 @@ func TestStorageFor_ErroredHardwareRanksFirst(t *testing.T) {
 // An fsid is a UUID and unreadable as a heading, but two of them have to be
 // told apart.
 func TestStorageCluster_ShortIsTheFSIDPrefix(t *testing.T) {
-	c := StorageCluster{FSID: "24413730-08bc-11ef-b140-23a2dd2fc842"}
-	if got := c.Short(); got != "24413730" {
-		t.Errorf("Short() = %q, want 24413730", got)
+	c := StorageCluster{FSID: "a7c3e9f1-4b2d-4e8a-9c1f-3d5b7e9a1c2d"}
+	if got := c.Short(); got != "a7c3e9f1" {
+		t.Errorf("Short() = %q, want a7c3e9f1", got)
 	}
 }
 
-// The bug this exists for, seen live: k8s00's page showed a red "Hosts 1
+// The bug this exists for, seen live: tenant-01's page showed a red "Hosts 1
 // errored" while every host in its table read provisioned OK. The errored host
-// was a03-22-compute, which belongs to k8s01.
+// was host-22-compute, which belongs to tenant-02.
 func TestScopeHostsCell_AnotherClustersFailureIsNotOurs(t *testing.T) {
 	s := store.New()
 	s.Put(model.KeyMgmtMachines, model.Snapshot[model.Machine]{UpdatedAt: time.Now(),
@@ -217,11 +217,11 @@ func TestScopeHostsCell_AnotherClustersFailureIsNotOurs(t *testing.T) {
 		}})
 	s.Put(model.KeyMgmtBareMetalHosts, model.Snapshot[model.BareMetalHost]{UpdatedAt: time.Now(),
 		Items: []model.BareMetalHost{
-			{Namespace: "machines", Name: "a03-17-controller", State: "provisioned",
+			{Namespace: "machines", Name: "host-17-controller", State: "provisioned",
 				OperationalStatus: "OK",
 				ConsumerNamespace: "machines", ConsumerName: "ours-kcp-aaa"},
 			// Another cluster's host, mid-deprovision and failing to clean.
-			{Namespace: "machines", Name: "a03-22-compute", State: "deprovisioning",
+			{Namespace: "machines", Name: "host-22-compute", State: "deprovisioning",
 				OperationalStatus: "error", ErrorMessage: "Cleaning failed",
 				ConsumerNamespace: "machines", ConsumerName: "theirs-kcp-bbb"},
 		}})
@@ -246,7 +246,7 @@ func TestScopeHostsCell_OurOwnFailureIsReported(t *testing.T) {
 		Items: []model.Machine{{Namespace: "machines", Name: "ours-kcp-aaa", Phase: "Running"}}})
 	s.Put(model.KeyMgmtBareMetalHosts, model.Snapshot[model.BareMetalHost]{UpdatedAt: time.Now(),
 		Items: []model.BareMetalHost{
-			{Namespace: "machines", Name: "a03-17-controller", State: "deprovisioning",
+			{Namespace: "machines", Name: "host-17-controller", State: "deprovisioning",
 				OperationalStatus: "error", ErrorMessage: "Cleaning failed",
 				ConsumerNamespace: "machines", ConsumerName: "ours-kcp-aaa"},
 		}})
@@ -267,7 +267,7 @@ func TestScopeHostsCell_NoMachinesLeavesTheCellAlone(t *testing.T) {
 	s := store.New()
 	s.Put(model.KeyMgmtBareMetalHosts, model.Snapshot[model.BareMetalHost]{UpdatedAt: time.Now(),
 		Items: []model.BareMetalHost{
-			{Name: "a03-22-compute", OperationalStatus: "error", ErrorMessage: "Cleaning failed"},
+			{Name: "host-22-compute", OperationalStatus: "error", ErrorMessage: "Cleaning failed"},
 		}})
 
 	before := []health.Cell{{Name: health.CellNameHosts, Status: health.StatusErr, Detail: "1 errored"}}

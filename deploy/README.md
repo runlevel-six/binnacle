@@ -221,6 +221,52 @@ The hardware inventory (BareMetalHosts) is datacenter-wide and cannot be
 narrowed per-namespace — it is either shown or hidden with the storage cluster
 it belongs to.
 
+## Letting the terminal client in
+
+`sextant --server` reads the same API the fleet page does, so it has to get past
+the same authentication. It presents an OpenID Connect **ID token** as
+`Authorization: Bearer`, which binnacle verifies against the issuer it already
+trusts — same signature, audience and expiry checks as the browser session, and
+the same `groups` claim feeds the same scoping.
+
+**A terminal needs its own client.** The browser client is confidential: it
+holds a secret, and a binary distributed to laptops cannot. So register a
+*public* client for the CLI, with the device authorization grant enabled, and
+tell binnacle its tokens are acceptable:
+
+```
+--oidc-cli-client-id=binnacle-cli
+```
+
+Without that flag binnacle accepts only `--oidc-client-id`'s audience, which is
+correct for a deployment that registers one client and uses it for both.
+
+Nothing here is specific to one provider. Any OpenID Connect issuer works; the
+client needs to be public, allowed to issue ID tokens carrying whatever claim
+your `--scope-file` keys on, and — for the nicest terminal experience —
+permitted to use the device authorization grant (RFC 8628), which is what lets
+an operator authenticate over SSH with no browser on the same machine.
+
+**Clients discover all of this themselves.** `GET /api/v1/authinfo` is served
+without authentication, necessarily: a client asks it precisely because it does
+not yet hold a credential.
+
+```console
+$ curl -s https://binnacle.example/api/v1/authinfo | jq
+{
+  "auth_required": true,
+  "issuer": "https://sso.example/realms/platform",
+  "client_id": "binnacle-cli",
+  "scopes": ["openid", "profile", "email"]
+}
+```
+
+It publishes nothing the provider's own discovery document does not, plus the
+one fact only this deployment knows: whether a credential is wanted at all. A
+binnacle running without `--oidc-issuer` answers `"auth_required": false`, and
+a terminal client then sends nothing — which is what keeps `--server` usable by
+a deployment that has not adopted an identity provider.
+
 ## Ingress and Server-Sent Events
 
 The fleet page is pushed over SSE, so the connection is long-lived by design.

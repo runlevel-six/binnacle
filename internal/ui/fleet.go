@@ -24,6 +24,11 @@ type fleetSource interface {
 	Cluster(namespace, name string) (fleet.ClusterDetail, bool)
 	Storage() fleet.Storage
 	Changed() <-chan struct{}
+	// Problem reports why the fleet could not be read, or empty when it
+	// could. Without it an unreachable server and an empty fleet render
+	// identically, and a screen that cannot reach anything says nothing is
+	// wrong.
+	Problem() string
 }
 
 // FleetModel is the Bubble Tea model for --server mode: a fleet list with
@@ -50,6 +55,9 @@ type FleetModel struct {
 
 	width, height int
 	keys          fleetKeymap
+
+	// problem is the source's last read failure, refreshed on every update.
+	problem string
 
 	// builder, when non-nil, causes Enter to emit a DrillDownMsg instead
 	// of fetching the text detail view. The router sets this; standalone
@@ -88,6 +96,10 @@ func (m *FleetModel) SetBuilder(b ClusterBuilder) {
 type FleetUpdateMsg struct {
 	Clusters []fleet.ClusterView
 	Storage  fleet.Storage
+	// Problem is why the read failed, or empty. Carried with the data rather
+	// than read separately so the two cannot disagree about which read they
+	// describe.
+	Problem string
 }
 
 // changedMsg signals that the source reported a change.
@@ -140,6 +152,7 @@ func (m *FleetModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FleetUpdateMsg:
 		m.clusters = m.sortClusters(msg.Clusters)
 		m.storage = msg.Storage
+		m.problem = msg.Problem
 		if m.selected >= len(m.filteredClusters()) {
 			m.selected = max(len(m.filteredClusters())-1, 0)
 		}
@@ -294,15 +307,30 @@ func (m *FleetModel) fleetHeader() string {
 func (m *FleetModel) fleetBody(th tui.Theme) string {
 	clusters := m.filteredClusters()
 	if len(clusters) == 0 {
-		if m.filter != "" {
+		switch {
+		case m.problem != "":
+			// Not "waiting for data": nothing is coming, and saying so is the
+			// difference between an operator retrying and an operator
+			// believing the fleet is empty.
+			return tui.StyleErr.Render(m.problem)
+		case m.filter != "":
 			return tui.StyleMuted.Render("no clusters match \"" + m.filter + "\"")
+		default:
+			return tui.StyleMuted.Render("waiting for data…")
 		}
-		return tui.StyleMuted.Render("waiting for data…")
+	}
+
+	var body string
+	if m.problem != "" {
+		// Clusters *and* a problem means what is on screen is the last good
+		// read. It is still worth showing — stale numbers beat none — but not
+		// worth showing silently.
+		body += tui.StyleWarn.Render("stale: "+m.problem) + "\n"
 	}
 
 	header := fmt.Sprintf("%-3s  %-30s  %-10s  %-8s  %s",
 		"", "CLUSTER", "VERSION", "NODES", "PROBLEM")
-	body := tui.StyleMuted.Render(header) + "\n"
+	body += tui.StyleMuted.Render(header) + "\n"
 
 	availH := m.height - 4 // header(2) + footer(1) + column header(1)
 	if availH < 1 {

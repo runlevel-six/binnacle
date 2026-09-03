@@ -353,7 +353,7 @@ func TestProjectBareMetalHosts_CarriesLabels(t *testing.T) {
 			"metadata": md("bmh-ns", "host-1", map[string]any{
 				"labels": map[string]any{
 					"atmosphere-role": "cephosd",
-					"cluster-id":      "24413730-08bc-11ef-b140-23a2dd2fc842",
+					"cluster-id":      "a7c3e9f1-4b2d-4e8a-9c1f-3d5b7e9a1c2d",
 					"rack":            "r0102",
 				},
 			}),
@@ -373,7 +373,7 @@ func TestProjectBareMetalHosts_CarriesLabels(t *testing.T) {
 	if got := snap.Items[0].Labels["atmosphere-role"]; got != "cephosd" {
 		t.Errorf("atmosphere-role = %q, want cephosd", got)
 	}
-	if got := snap.Items[0].Labels["cluster-id"]; got != "24413730-08bc-11ef-b140-23a2dd2fc842" {
+	if got := snap.Items[0].Labels["cluster-id"]; got != "a7c3e9f1-4b2d-4e8a-9c1f-3d5b7e9a1c2d" {
 		t.Errorf("cluster-id = %q", got)
 	}
 	// Nothing here filters the keys: a consumer decides what it cares about.

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/runlevel-six/binnacle/internal/fleet"
@@ -26,6 +27,16 @@ type Source struct {
 	client  *http.Client
 	token   string
 	changed chan struct{}
+
+	// mu guards problem, which the UI reads from its own goroutine.
+	mu sync.Mutex
+	// problem is why the last fleet read failed, or empty when it worked.
+	//
+	// Without it an unreachable server and an empty fleet are the same
+	// picture: View returns no clusters either way, and the screen says the
+	// fleet is fine when nobody has heard from it. That is the distinction
+	// NodesKnown draws one layer down, drawn again here.
+	problem string
 }
 
 // New builds a Source pointing at base, which is the binnacle server's root
@@ -68,22 +79,60 @@ func (s *Source) Run(ctx context.Context) error {
 }
 
 // View returns the current fleet view, or nil if the server could not be
-// reached.
+// read. When it returns nil, [Source.Problem] says why.
 func (s *Source) View() []fleet.ClusterView {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	resp, err := s.get(ctx, "/api/v1/fleet")
 	if err != nil {
+		s.setProblem(fmt.Sprintf("cannot reach %s: %v", s.base, err))
 		return nil
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		s.setProblem(describeStatus(s.base, resp.StatusCode))
+		return nil
+	}
+
 	var fr struct {
 		Clusters []fleet.ClusterView `json:"clusters"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&fr); err != nil {
+		s.setProblem(fmt.Sprintf("unreadable reply from %s: %v", s.base, err))
 		return nil
 	}
+	s.setProblem("")
 	return fr.Clusters
+}
+
+// Problem reports why the fleet could not be read, or empty when it could.
+func (s *Source) Problem() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.problem
+}
+
+func (s *Source) setProblem(p string) {
+	s.mu.Lock()
+	s.problem = p
+	s.mu.Unlock()
+}
+
+// describeStatus turns a status code into something an operator can act on.
+//
+// 401 gets named specifically because it is the one with an obvious remedy and
+// the one most likely to happen mid-session: tokens expire, and "unauthorized"
+// on its own does not tell anyone to sign in again.
+func describeStatus(base string, code int) string {
+	switch code {
+	case http.StatusUnauthorized:
+		return "not signed in to " + base + " — the token may have expired; restart sextant to sign in again"
+	case http.StatusForbidden:
+		return "not allowed to read the fleet on " + base
+	default:
+		return fmt.Sprintf("%s returned %s", base, http.StatusText(code))
+	}
 }
 
 // Cluster returns one cluster's detail. False means the server does not track

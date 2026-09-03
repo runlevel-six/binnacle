@@ -68,9 +68,19 @@ os_cloud: my-cloud
 # SEXTANT_SERVER_CLUSTER, SEXTANT_SERVER_TOKEN environment variables.
 server:
   url: http://binnacle:8080
-  token: s3cr3t
   # Skip the fleet list and go straight to one cluster (namespace/name):
   # cluster: managed-clusters/tenant-03-cluster
+  #
+  # A token is usually unnecessary — sextant signs in on its own and saves the
+  # result. Prefer $SEXTANT_SERVER_TOKEN over writing one here: a config file
+  # gets copied between machines and committed by accident, and this is a
+  # credential for every cluster in the fleet.
+  # token: s3cr3t
+  #
+  # For an identity provider sextant cannot drive itself, name a command that
+  # prints a token on stdout. Anything works — a vendor CLI, a login helper, a
+  # shell script — and sextant does not need to know what it is.
+  # token_command: ["my-idp-cli", "token", "--audience", "binnacle-cli"]
 ```
 
 Every key is optional, and an absent key is not the same as an empty one: omitting

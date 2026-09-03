@@ -19,6 +19,7 @@ know — which is the part that matters at 3am.
 - [Point it at a cluster](how-to/point-at-a-cluster.md) — contexts, separate management and workload clusters, ambiguity.
 - [Write a site profile](how-to/write-a-site-profile.md) — teach it your naming, roles and plugin layout.
 - [Run without a cluster](how-to/run-without-a-cluster.md) — demo mode, and regenerating the screenshots.
+- [Connect to a binnacle server](how-to/connect-to-a-server.md) — the whole fleet, with no cluster credentials of your own.
 - [When a pane says nothing](how-to/troubleshoot.md) — missing detail, absent panes, slow startup.
 
 ## Reference — look it up

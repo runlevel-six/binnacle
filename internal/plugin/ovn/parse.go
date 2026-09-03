@@ -20,8 +20,8 @@ import (
 //
 //	8469
 //	Name: OVN_Northbound
-//	Cluster ID: e715 (e715f8c2-0b7e-4dbd-ae62-7b8f871bd527)
-//	Server ID: 8469 (84692da6-7258-4c5f-b510-1a95e92d7f41)
+//	Cluster ID: e715 (e7150000-1111-4222-8333-444455556667)
+//	Server ID: 8469 (84690000-1111-4222-8333-444455556666)
 //	Address: tcp:ovn-ovsdb-nb-0...:6643
 //	Status: cluster member
 //	Role: follower
@@ -38,7 +38,7 @@ import (
 //	Disconnections: 20
 //	Servers:
 //	    cc1b (cc1b at tcp:...:6643) last msg 38 ms ago
-//	    8469 (8469 at tcp:...:6643) (self)
+//	    c3d4 (c3d4 at tcp:...:6643) (self)
 //	    7ed9 (7ed9 at tcp:...:6643) last msg 7965698 ms ago
 //
 // The status above is a *follower's*, and its "last msg" figures for the other
@@ -47,7 +47,7 @@ import (
 //
 //	Servers:
 //	    cc1b (cc1b at tcp:...:6643) (self) next_index=923207 match_index=924822
-//	    8469 (8469 at tcp:...:6643) next_index=924823 match_index=924822 last msg 46 ms ago
+//	    c3d4 (c3d4 at tcp:...:6643) next_index=924823 match_index=924822 last msg 46 ms ago
 //	    7ed9 (7ed9 at tcp:...:6643) next_index=924823 match_index=924822 last msg 46 ms ago
 
 var (
@@ -170,7 +170,7 @@ func parseServer(line string) (Server, bool) {
 	return srv, true
 }
 
-// shortID takes the abbreviated form from "e715 (e715f8c2-…)".
+// shortID takes the abbreviated form from "a1b2 (a1b2f8c2-…)".
 //
 // The short ID is what every other line refers to — Leader, Vote, Connections and
 // the Servers block all use it — so it is the useful identifier, and the full UUID

@@ -123,11 +123,11 @@ func TestCellPods_StartingPodsDoNotHoldTheCellAmber(t *testing.T) {
 // no row anywhere to explain it.
 func TestHostsCell_JudgesOnlyTheHostsGiven(t *testing.T) {
 	mine := []model.BareMetalHost{
-		{Name: "a03-17-controller", State: "provisioned", OperationalStatus: "OK"},
-		{Name: "a03-18-controller", State: "provisioned", OperationalStatus: "OK"},
+		{Name: "host-17-controller", State: "provisioned", OperationalStatus: "OK"},
+		{Name: "host-18-controller", State: "provisioned", OperationalStatus: "OK"},
 	}
 	theirs := model.BareMetalHost{
-		Name: "a03-22-compute", State: "deprovisioning",
+		Name: "host-22-compute", State: "deprovisioning",
 		OperationalStatus: "error", ErrorMessage: "Cleaning failed",
 	}
 

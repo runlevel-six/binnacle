@@ -77,7 +77,19 @@ type ServerConfig struct {
 	URL string `yaml:"url,omitempty"`
 	// Token is sent as a Bearer header. A server running with
 	// --allow-unauthenticated does not need one.
+	//
+	// Prefer $SEXTANT_SERVER_TOKEN or TokenCommand: a config file is the kind
+	// of thing that gets copied between machines and committed by accident,
+	// and this is a credential for every cluster in the fleet.
 	Token string `yaml:"token,omitempty"`
+	// TokenCommand is run to produce a token on stdout, in the style of
+	// kubectl's credential plugins.
+	//
+	// It is the escape hatch for an identity provider sextant cannot drive
+	// itself: anything that can print a token — a vendor CLI, kubelogin, a
+	// shell script — plugs in here without sextant knowing what it is. The
+	// first element is the program, the rest are its arguments.
+	TokenCommand []string `yaml:"token_command,omitempty"`
 	// Cluster, when set, skips the fleet list and goes straight to this
 	// cluster's detail view. Format is "namespace/name".
 	Cluster string `yaml:"cluster,omitempty"`
@@ -174,6 +186,9 @@ func (c *Config) MergeFile(path string) error {
 	setIfEmpty(&c.Server.URL, loaded.Server.URL)
 	setIfEmpty(&c.Server.Token, loaded.Server.Token)
 	setIfEmpty(&c.Server.Cluster, loaded.Server.Cluster)
+	if len(c.Server.TokenCommand) == 0 {
+		c.Server.TokenCommand = loaded.Server.TokenCommand
+	}
 	if len(c.Management.Namespaces) == 0 {
 		c.Management.Namespaces = loaded.Management.Namespaces
 	}
