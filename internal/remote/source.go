@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -96,6 +97,11 @@ func (s *Source) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			// Recorded, not just retried. A stream that is being refused looks
+			// exactly like a stream with nothing to say — both leave the screen
+			// waiting — and the difference is the whole of what an operator
+			// needs to know. The retry still happens; it is no longer silent.
+			s.setProblem(fmt.Sprintf("cannot subscribe to %s: %v", s.base, err))
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -268,6 +274,14 @@ func (s *Source) subscribe(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	// A non-200 is not an empty stream, and treating it as one is worse than
+	// it sounds: the read ends immediately, this returns nil, and Run loops
+	// straight back round with no backoff — a hot retry against a server that
+	// is refusing us, reported as silence.
+	if resp.StatusCode != http.StatusOK {
+		return errors.New(describeStatus(s.base, resp.StatusCode))
+	}
 
 	// An initial tick so the caller reads the current state immediately,
 	// matching the server's own SSE behavior.

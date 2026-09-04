@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/runlevel-six/binnacle/internal/wire"
@@ -33,6 +36,29 @@ type ClusterSource struct {
 	ns     string
 	name   string
 	client *http.Client
+
+	// mu guards problem, which a caller may read from another goroutine.
+	mu sync.Mutex
+	// problem is why the stream last failed, or empty when it is healthy.
+	//
+	// Without it a refused stream and a quiet one are the same picture: the
+	// store stays empty, every pane says "loading", and nothing anywhere says
+	// which. Run retries either way; this is how the reason escapes.
+	problem string
+}
+
+// Problem reports why the cluster stream last failed, or empty when it is
+// working.
+func (s *ClusterSource) Problem() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.problem
+}
+
+func (s *ClusterSource) setProblem(p string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.problem = p
 }
 
 // NewClusterSource builds a source for one cluster on the given server.
@@ -86,6 +112,7 @@ func (s *ClusterSource) Run(ctx context.Context, st *store.Store) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			s.setProblem(fmt.Sprintf("cannot stream %s/%s from %s: %v", s.ns, s.name, s.base, err))
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -111,25 +138,75 @@ func (s *ClusterSource) stream(ctx context.Context, st *store.Store) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Same reason as the fleet stream: a refused request reads as an empty
+	// stream, which returns nil, which Run retries with no delay at all.
+	if resp.StatusCode != http.StatusOK {
+		return errors.New(describeStatus(s.base, resp.StatusCode))
+	}
+
 	var entries []wire.Entry
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	// A bufio.Reader rather than a Scanner: the server sends one cluster's
+	// entire store as a single SSE data line, and a Scanner refuses any line
+	// over its buffer. That ceiling was 4 MiB, and a real OpenStack undercloud
+	// measured 4,178,484 bytes — 0.4% under it. Crossing it failed the read,
+	// which retried forever, silently, so every pane showed "loading" for the
+	// life of the process. maxFrame is the same protection with room to be
+	// wrong in.
+	br := bufio.NewReaderSize(resp.Body, 64*1024)
 
 	var dataLines []string
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.HasPrefix(line, "data: ") {
+	for {
+		line, err := readLine(br, maxFrame)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+		switch {
+		case strings.HasPrefix(line, "data: "):
 			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
-		} else if line == "" && len(dataLines) > 0 {
+		case line == "" && len(dataLines) > 0:
 			payload := strings.Join(dataLines, "\n")
 			dataLines = dataLines[:0]
 			if err := json.Unmarshal([]byte(payload), &entries); err != nil {
 				continue
 			}
 			wire.Load(entries, st)
+			s.setProblem("")
 		}
 	}
-	return sc.Err()
+}
+
+// maxFrame bounds one SSE line, so a server that never sends a newline cannot
+// exhaust this process's memory.
+//
+// 64 MiB against a measured 4 MiB: an order of magnitude of headroom, because
+// the store grows with the cluster and with how many namespaces the site
+// profile watches for events, and the failure at the boundary is invisible.
+const maxFrame = 64 << 20
+
+// readLine reads one newline-terminated line of any length up to limit,
+// returning it without the trailing newline.
+//
+// bufio.Reader.ReadString would do this with no limit at all; the limit is the
+// point. A line that exceeds it returns an error naming the size, because the
+// one thing this must never do is fail quietly.
+func readLine(br *bufio.Reader, limit int) (string, error) {
+	var b []byte
+	for {
+		chunk, more, err := br.ReadLine()
+		if err != nil {
+			return "", err
+		}
+		if len(b)+len(chunk) > limit {
+			return "", fmt.Errorf("server sent a line over %d bytes, which this client will not buffer", limit)
+		}
+		b = append(b, chunk...)
+		if !more {
+			return string(b), nil
+		}
+	}
 }
 
 var _ plugin.Source = (*ClusterSource)(nil)
