@@ -23,9 +23,10 @@ import (
 type ServerOptions struct {
 	// URL is the root of the binnacle deployment (e.g. "http://binnacle:8080").
 	URL string
-	// Token, when non-empty, is sent as a Bearer header. A server running with
-	// --allow-unauthenticated does not need one.
-	Token string
+	// Token supplies the bearer credential for each request. A session renews
+	// it as it ages, which is why this is a function and not a string — see
+	// [remote.TokenFunc].
+	Token remote.TokenFunc
 	// Cluster, when non-empty, skips the fleet list and goes straight to that
 	// cluster's dashboard. It is a "namespace/name" pair identifying one
 	// cluster in the fleet; Esc returns to the fleet list.

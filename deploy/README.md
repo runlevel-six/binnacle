@@ -69,6 +69,22 @@ cordons as a standing drain on a fleet whose compute nodes are cordoned by
 design, and pins no critical workloads on the management page. To run that way
 deliberately, drop the `--profile` flag along with the volume and its mount.
 
+## Terminal sessions
+
+`sextant --server` signs in with the device grant and caches the result, and
+with the default scopes that cache is tied to the provider's SSO session — half
+an hour of idle in a stock Keycloak. Operators who close sextant between
+meetings will sign in repeatedly.
+
+Adding `--oidc-cli-scopes=openid,profile,email,offline_access` gives the
+terminal a credential that is not bound to the SSO session. Before turning it
+on, bound it: cap the client's offline session at the provider, and leave
+sextant's own `max_session` ceiling (12h by default) alone. An offline token in
+a stock realm otherwise lasts 30 days. `sextant --sign-out` revokes one.
+
+The scope is set on the *terminal* client only. The browser's flow keeps the
+default scopes, because a web session should end when the SSO session does.
+
 Give `sextant --server` the same profile. The fleet's numbers come from the
 server, but critical workloads, node-role label keys and expected cordons are
 applied when a pane is drawn, on the operator's own machine — the server does

@@ -59,7 +59,7 @@ func (a *OIDC) ClientAuth() ClientAuthInfo {
 		Required: true,
 		Issuer:   a.cfg.Issuer,
 		ClientID: a.cliClientID(),
-		Scopes:   a.oauth.Scopes,
+		Scopes:   a.cliScopes,
 	}
 }
 

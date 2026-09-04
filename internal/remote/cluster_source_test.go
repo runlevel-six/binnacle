@@ -17,7 +17,7 @@ import (
 )
 
 func TestClusterSource_Name(t *testing.T) {
-	s := NewClusterSource("http://localhost", "", "ns", "name")
+	s := NewClusterSource("http://localhost", nil, "ns", "name")
 	if s.Name() != "remote" {
 		t.Errorf("Name: got %q want remote", s.Name())
 	}
@@ -33,7 +33,7 @@ func TestClusterSource_Detect_ClusterExists(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := NewClusterSource(srv.URL, "", "ns", "name")
+	s := NewClusterSource(srv.URL, nil, "ns", "name")
 	ok, err := s.Detect(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestClusterSource_Detect_ClusterNotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := NewClusterSource(srv.URL, "", "ns", "name")
+	s := NewClusterSource(srv.URL, nil, "ns", "name")
 	ok, err := s.Detect(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestClusterSource_Detect_ClusterNotFound(t *testing.T) {
 }
 
 func TestClusterSource_Detect_ServerUnreachable(t *testing.T) {
-	s := NewClusterSource("http://127.0.0.1:0", "", "ns", "name")
+	s := NewClusterSource("http://127.0.0.1:0", nil, "ns", "name")
 	_, err := s.Detect(context.Background())
 	if err == nil {
 		t.Error("expected error for unreachable server")
@@ -97,7 +97,7 @@ func TestClusterSource_Run_StoresEntries(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := NewClusterSource(srv.URL, "", "ns", "name")
+	s := NewClusterSource(srv.URL, nil, "ns", "name")
 	st := store.New()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -148,7 +148,7 @@ func TestClusterSource_Run_ReconnectsOnError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := NewClusterSource(srv.URL, "", "ns", "name")
+	s := NewClusterSource(srv.URL, nil, "ns", "name")
 	st := store.New()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -172,7 +172,7 @@ func TestClusterSource_Run_ContextCanceled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := NewClusterSource(srv.URL, "", "ns", "name")
+	s := NewClusterSource(srv.URL, nil, "ns", "name")
 	st := store.New()
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -150,7 +151,23 @@ type OIDCConfig struct {
 	RedirectURL string
 	// Scopes beyond "openid". Empty adds profile and email, which is what the
 	// footer needs to name who is looking.
+	//
+	// These are the *browser's* scopes. A terminal client is told about
+	// [OIDCConfig.CLIScopes] instead.
 	Scopes []string
+	// CLIScopes are the scopes a terminal client is told to request. Empty
+	// means the same as [OIDCConfig.Scopes].
+	//
+	// Separate from Scopes because the two flows want different lifetimes. A
+	// browser session should follow the provider's SSO session and end when it
+	// does. A terminal client is started and stopped all day and has to survive
+	// the gaps, which is what "offline_access" is for — and adding that scope to
+	// the browser's flow would mint a long-lived credential for a session that
+	// has no use for one.
+	//
+	// The list must include "openid": the credential a terminal presents is the
+	// ID token, and without that scope the provider returns none.
+	CLIScopes []string
 	// SessionKey signs the session cookie. Supply a stable value: a generated
 	// one invalidates every session on restart, and with more than one replica
 	// it produces a login loop as requests land on different pods.
@@ -175,6 +192,9 @@ type OIDC struct {
 	// Authorization header — the browser's client and, when configured, the
 	// terminal client's. See bearer.go.
 	bearerVerifiers []*oidc.IDTokenVerifier
+	// cliScopes is what a terminal client is told to request, already
+	// defaulted.
+	cliScopes []string
 }
 
 // NewOIDC contacts the provider's discovery endpoint and builds the flow.
@@ -202,6 +222,18 @@ func NewOIDC(ctx context.Context, cfg OIDCConfig) (*OIDC, error) {
 	if len(scopes) == 0 {
 		scopes = []string{oidc.ScopeOpenID, "profile", "email"}
 	}
+	cliScopes := cfg.CLIScopes
+	if len(cliScopes) == 0 {
+		cliScopes = scopes
+	}
+	// Checked here rather than left to fail at sign-in: without openid the
+	// provider returns no ID token, and the ID token is the whole credential.
+	// The failure would otherwise land on an operator at a device-code prompt,
+	// a long way from the flag that caused it.
+	if !slices.Contains(cliScopes, oidc.ScopeOpenID) {
+		return nil, fmt.Errorf("oidc: cli scopes %v must include %q, "+
+			"since the credential a terminal presents is the ID token", cliScopes, oidc.ScopeOpenID)
+	}
 	// The browser's audience first, so a single-client deployment verifies on
 	// the first try and the error a misconfigured CLI sees names the client it
 	// was actually meant to use.
@@ -218,6 +250,7 @@ func NewOIDC(ctx context.Context, cfg OIDCConfig) (*OIDC, error) {
 		cfg:             cfg,
 		verifier:        provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
 		bearerVerifiers: bearerVerifiers,
+		cliScopes:       cliScopes,
 		oauth: oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,

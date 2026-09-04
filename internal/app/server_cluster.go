@@ -57,7 +57,7 @@ func (remoteOpenStack) Run(context.Context, *store.Store) error { return nil }
 // assemble a dashboard for one cluster on a remote server.
 type ServerClusterConfig struct {
 	ServerURL string
-	Token     string
+	Token     remote.TokenFunc
 	Theme     tui.Theme
 	BuildInfo build.Info
 	// Profile supplies the site conventions the panes are rendered with:

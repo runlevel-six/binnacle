@@ -73,6 +73,7 @@ type options struct {
 	token         string
 	listContexts  bool
 	listProfiles  bool
+	signOut       bool
 	listThemes    bool
 	debugSnapshot bool
 	debugDuration time.Duration
@@ -128,6 +129,16 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	// server: section and the SEXTANT_SERVER* env vars, which MergeEnv and
 	// MergeFile have already layered underneath the flags.
 	serverURL := firstNonEmpty(opts.serverURL, opts.cfg.Server.URL)
+
+	// Before the server branch: signing out must work against a server that is
+	// unreachable, which is when it is most often wanted.
+	if opts.signOut {
+		if serverURL == "" {
+			return errors.New("--sign-out needs a server: pass --server, or set one in the config file")
+		}
+		return app.SignOutServer(ctx, serverURL, out)
+	}
+
 	if serverURL != "" {
 		cluster := firstNonEmpty(opts.serverCluster, opts.cfg.Server.Cluster)
 		theme, err := tui.LookupTheme(opts.cfg.Theme)
@@ -147,14 +158,14 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		// answer — a binnacle with no identity provider wants none.
 		srv := opts.cfg.Server
 		srv.Token = firstNonEmpty(opts.token, srv.Token)
-		token, err := app.ResolveServerToken(ctx, serverURL, srv, os.Stderr)
+		session, err := app.ResolveServerSession(ctx, serverURL, srv, os.Stderr)
 		if err != nil {
 			return err
 		}
 
 		return app.RunServer(ctx, app.ServerOptions{
 			URL:     serverURL,
-			Token:   token,
+			Token:   session.Token,
 			Cluster: cluster,
 			Profile: prof,
 			Theme:   theme,
@@ -264,6 +275,8 @@ func parseFlags(args []string, out io.Writer) (*options, error) {
 		"list kubeconfig contexts and which sextant would select, then exit")
 	fs.BoolVar(&o.listProfiles, "list-profiles", false,
 		"list the profiles that can be loaded, then exit")
+	fs.BoolVar(&o.signOut, "sign-out", false,
+		"discard the saved credential for --server and revoke it at the provider, then exit")
 	fs.BoolVar(&o.listThemes, "list-themes", false,
 		"list the available color schemes, then exit")
 	fs.BoolVar(&o.debugSnapshot, "debug-snapshot", false,

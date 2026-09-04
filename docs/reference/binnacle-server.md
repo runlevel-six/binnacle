@@ -23,6 +23,7 @@ without a binary.
 | `--oidc-issuer` | *(empty)* | OpenID Connect issuer URL, e.g. a Keycloak realm. |
 | `--oidc-client-id` | *(empty)* | OpenID Connect client id. |
 | `--oidc-cli-client-id` | *(empty)* | Client id for terminal clients, whose tokens are also accepted. Empty uses `--oidc-client-id`. |
+| `--oidc-cli-scopes` | *(the browser's)* | Comma-separated scopes a terminal client should request. Add `offline_access` so a terminal session survives the provider's SSO idle timeout. Must include `openid`. |
 | `--oidc-redirect-url` | *(empty)* | Binnacle's callback URL as the browser reaches it. |
 | `--scope-file` | *(empty)* | YAML mapping OIDC groups to namespaces. Empty means no scoping — everyone sees everything. |
 | `--allow-unauthenticated` | `false` | Serve without authentication on a non-loopback address. Every reader sees every cluster binnacle can read. |
@@ -114,3 +115,34 @@ prioritized, and the two front ends are not at parity until it is.
 |---|---|
 | `/healthz` | A probe cannot hold a credential. Returns 200 whenever the process is serving; it says nothing about whether any cluster is readable. |
 | `/static/` | Stylesheet, favicon and marks. Cached for 24 hours. |
+
+## Terminal sessions that outlive a meeting
+
+`sextant --server` presents an ID token, renews it as it ages, and caches the
+refresh token so a restart does not mean signing in again. Whether that survives
+a gap depends on what the refresh token is tied to.
+
+With the default scopes it is tied to the provider's **SSO session**, which
+typically goes idle in half an hour. A dashboard that stays open renews often
+enough to stay alive; one that is closed for an afternoon does not, and the next
+run asks for a new sign-in.
+
+`--oidc-cli-scopes=openid,profile,email,offline_access` changes that. An
+offline token is not bound to the SSO session, so closing sextant and coming
+back hours later works. It is deliberately not the default, and it is set on the
+*terminal* scopes rather than the browser's, because the two want opposite
+things: a browser session should end when the SSO session does.
+
+**Bound it, in both places.** An offline token in a stock Keycloak realm is good
+for 30 days of disuse, and indefinitely if used weekly.
+
+- At the provider, cap the client's offline session — in Keycloak that is the
+  client's Advanced settings, and an absolute cap may require the realm's
+  "Offline Session Max Limited" to be on.
+- On the machine, sextant applies its own ceiling: `server.max_session`,
+  12 hours by default, measured from the sign-in. It holds whatever the provider
+  is configured to allow, which is what makes it worth having.
+
+`sextant --sign-out` revokes the session at the provider and removes the local
+credential. With offline tokens that stops being housekeeping and starts being
+the way a session actually ends, so it is worth telling people it exists.

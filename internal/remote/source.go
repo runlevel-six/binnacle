@@ -21,11 +21,30 @@ import (
 	"github.com/runlevel-six/binnacle/internal/wire"
 )
 
+// TokenFunc supplies the credential to present, and is called for every
+// request rather than once.
+//
+// It is a function because a session outlives its token. An operator leaves
+// sextant open for hours; the ID token it signs in with is good for minutes,
+// and something has to exchange one for the next. Reading the value per
+// request means a renewal reaches the SSE stream's next reconnect too, with no
+// plumbing between them.
+//
+// Nil, or a function returning "", sends no credential — which is what a
+// server running with --allow-unauthenticated wants.
+type TokenFunc func() string
+
+// StaticToken is a TokenFunc for a credential that never changes: one supplied
+// on the command line, or none at all.
+func StaticToken(token string) TokenFunc {
+	return func() string { return token }
+}
+
 // Source is a [web.Source] backed by a binnacle server's JSON API.
 type Source struct {
 	base    string
 	client  *http.Client
-	token   string
+	token   TokenFunc
 	changed chan struct{}
 
 	// mu guards problem, which the UI reads from its own goroutine.
@@ -42,14 +61,23 @@ type Source struct {
 // New builds a Source pointing at base, which is the binnacle server's root
 // URL (e.g. "http://binnacle:8080").
 //
-// token, when non-empty, is sent as a Bearer header on every request. A
-// server running with --allow-unauthenticated does not need one.
-func New(base, token string) *Source {
+// token supplies the bearer credential for each request; see [TokenFunc].
+func New(base string, token TokenFunc) *Source {
 	return &Source{
 		base:    strings.TrimRight(base, "/"),
 		client:  &http.Client{},
 		token:   token,
 		changed: make(chan struct{}, 1),
+	}
+}
+
+// authorize stamps the current credential on a request, if there is one.
+func (s *Source) authorize(req *http.Request) {
+	if s.token == nil {
+		return
+	}
+	if tok := s.token(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 }
 
@@ -232,9 +260,7 @@ func (s *Source) subscribe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if s.token != "" {
-		req.Header.Set("Authorization", "Bearer "+s.token)
-	}
+	s.authorize(req)
 	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := s.client.Do(req)
@@ -263,8 +289,6 @@ func (s *Source) get(ctx context.Context, path string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.token != "" {
-		req.Header.Set("Authorization", "Bearer "+s.token)
-	}
+	s.authorize(req)
 	return s.client.Do(req)
 }

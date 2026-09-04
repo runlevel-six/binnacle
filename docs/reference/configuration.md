@@ -81,6 +81,13 @@ server:
   # prints a token on stdout. Anything works — a vendor CLI, a login helper, a
   # shell script — and sextant does not need to know what it is.
   # token_command: ["my-idp-cli", "token", "--audience", "binnacle-cli"]
+  #
+  # How long a saved sign-in may be renewed before you have to sign in again,
+  # measured from the sign-in itself rather than from the last renewal. The
+  # default is 12h — a working day. A negative value removes the ceiling and
+  # leaves the question entirely to your provider, which is only sensible if
+  # you know what it enforces.
+  # max_session: 12h
 ```
 
 Every key is optional, and an absent key is not the same as an empty one: omitting

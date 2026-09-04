@@ -18,10 +18,15 @@ func signIn(ctx context.Context, base string, info auth.ClientAuthInfo, opts Opt
 	now := opts.now()
 
 	if e, ok := opts.Store.Get(base, info.Issuer, info.ClientID); ok {
-		if fresh(e.Token, now) {
+		switch {
+		case expired(e, opts, now):
+			// Past the ceiling. Drop it rather than leave a credential on disk
+			// that this sextant will not use and something else might, and
+			// fall through to an interactive sign-in.
+			_ = opts.Store.Forget(base)
+		case fresh(e.Token, now):
 			return Credential{Token: e.Token, Source: "cached"}, nil
-		}
-		if e.Refresh != "" {
+		case e.Refresh != "":
 			cred, err := refresh(ctx, base, info, opts, e)
 			if err == nil {
 				return cred, nil
@@ -98,7 +103,41 @@ func deviceSignIn(ctx context.Context, base string, info auth.ClientAuthInfo, op
 	if err != nil {
 		return Credential{}, fmt.Errorf("waiting for sign-in: %w", err)
 	}
-	return store(base, info, opts, tok, "device sign-in")
+	return store(base, info, opts, tok, "device sign-in", opts.now())
+}
+
+// maxSession is the ceiling in force, defaulted.
+//
+// A caller sets MaxSession explicitly to change it; only a negative value turns
+// it off. Zero meaning "no ceiling" would make the safe configuration the one
+// you have to remember to write.
+func maxSession(opts Options) time.Duration {
+	if opts.MaxSession == 0 {
+		return DefaultMaxSession
+	}
+	return opts.MaxSession
+}
+
+// expired reports whether a cached session has outlived the ceiling.
+//
+// Measured from the sign-in, so refreshing does not extend it. This is the
+// bound that does not depend on the provider being configured to enforce one:
+// an offline_access token in a stock Keycloak realm is good for thirty days,
+// and nothing but this stops sextant from using it for thirty days.
+func expired(e entry, opts Options, now time.Time) bool {
+	max := maxSession(opts)
+	if max <= 0 {
+		return false
+	}
+	started, ok := e.started()
+	if !ok {
+		// Nothing to measure from. Discarding it would sign the operator out
+		// on upgrade for no security gain: the token in it carries its own
+		// exp, and the write that follows stamps a start time, so the ceiling
+		// applies from here rather than never.
+		return false
+	}
+	return now.Sub(started) > max
 }
 
 // refresh exchanges a refresh token for a new one without user interaction.
@@ -112,7 +151,13 @@ func refresh(ctx context.Context, base string, info auth.ClientAuthInfo, opts Op
 	if err != nil {
 		return Credential{}, err
 	}
-	return store(base, info, opts, tok, "refreshed")
+	// The session began when the operator signed in, and carrying that forward
+	// is what keeps the ceiling from being reset by its own renewals.
+	started, ok := e.started()
+	if !ok {
+		started = opts.now()
+	}
+	return store(base, info, opts, tok, "refreshed", started)
 }
 
 // store pulls the ID token out of a token response and remembers it.
@@ -120,21 +165,26 @@ func refresh(ctx context.Context, base string, info auth.ClientAuthInfo, opts Op
 // The ID token, not the access token, is the credential: binnacle verifies it
 // with the same checks it applies to a browser session. See internal/auth for
 // why that is the choice that needs no provider configuration.
-func store(base string, info auth.ClientAuthInfo, opts Options, tok *oauth2.Token, source string) (Credential, error) {
+func store(base string, info auth.ClientAuthInfo, opts Options, tok *oauth2.Token,
+	source string, firstSignIn time.Time,
+) (Credential, error) {
 	raw, _ := tok.Extra("id_token").(string)
 	if raw == "" {
 		return Credential{}, errors.New(
 			"the provider returned no id_token; the client may not have the openid scope")
 	}
 	if err := opts.Store.Put(base, entry{
-		Token:    raw,
-		Refresh:  tok.RefreshToken,
-		Issuer:   info.Issuer,
-		ClientID: info.ClientID,
-		Saved:    opts.now(),
-	}); err != nil {
+		Token:       raw,
+		Refresh:     tok.RefreshToken,
+		Issuer:      info.Issuer,
+		ClientID:    info.ClientID,
+		Saved:       opts.now(),
+		FirstSignIn: firstSignIn,
+	}); err != nil && opts.Prompt != nil {
 		// Failing to cache costs another sign-in next time; it does not cost
-		// this one, so it is not worth refusing a token we already hold.
+		// this one, so it is not worth refusing a token we already hold. The
+		// nil check matters: a renewal runs with no Prompt, because the
+		// dashboard owns the terminal by then.
 		opts.Prompt(fmt.Sprintf("warning: could not save the token: %v", err))
 	}
 	return Credential{Token: raw, Source: source}, nil

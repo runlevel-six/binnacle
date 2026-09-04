@@ -46,6 +46,7 @@ type options struct {
 	oidcClientID   string
 	oidcCLIClient  string
 	oidcRedirect   string
+	oidcCLIScopes  string
 	insecureCookie bool
 	allowUnauth    bool
 	scopeFile      string
@@ -82,6 +83,9 @@ func run(args []string, out io.Writer) error {
 	fs.StringVar(&o.oidcCLIClient, "oidc-cli-client-id", "",
 		"OpenID Connect client id for terminal clients, whose tokens are also accepted; empty uses --oidc-client-id")
 	fs.StringVar(&o.oidcRedirect, "oidc-redirect-url", "", "binnacle's callback URL as the browser reaches it")
+	fs.StringVar(&o.oidcCLIScopes, "oidc-cli-scopes", "",
+		"comma-separated scopes a terminal client should request; empty uses the browser's. "+
+			"Add offline_access so a terminal session survives the provider's SSO idle timeout")
 	fs.BoolVar(&o.demo, "demo", false, "serve an invented fleet instead of a real one; needs no cluster and no credentials")
 	fs.BoolVar(&o.allowUnauth, "allow-unauthenticated", false,
 		"serve without authentication on a non-loopback address; every reader sees every cluster binnacle can read")
@@ -218,9 +222,23 @@ func buildAuth(ctx context.Context, o options) (web.Authenticator, error) {
 		CLIClientID:  o.oidcCLIClient,
 		ClientSecret: os.Getenv("BINNACLE_OIDC_CLIENT_SECRET"),
 		RedirectURL:  o.oidcRedirect,
+		CLIScopes:    splitScopes(o.oidcCLIScopes),
 		SessionKey:   key,
 		Secure:       !o.insecureCookie,
 	})
+}
+
+// splitScopes parses a comma-separated scope list, ignoring empties so that a
+// trailing comma or a stray space is not published to every client as a scope
+// named "".
+func splitScopes(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // sessionKey reads the cookie signing key, generating one if none was given.

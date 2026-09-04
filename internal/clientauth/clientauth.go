@@ -55,9 +55,30 @@ type Options struct {
 	// Store persists tokens between runs. Nil disables caching, which is what
 	// tests want and what a read-only home directory gets.
 	Store *Cache
+	// MaxSession caps how long a credential may be renewed before the
+	// operator has to sign in again. Zero means no ceiling.
+	//
+	// It exists because a refresh token's real lifetime is decided by the
+	// identity provider, and the provider's default is generous: an
+	// offline_access token in a stock Keycloak realm survives 30 days of
+	// disuse and, if used weekly, indefinitely. A deployment can cap that at
+	// the provider — and should — but the cap is then a setting somebody has
+	// to keep set. This one is enforced here, so the guarantee holds whatever
+	// the realm says, and holds for a provider that offers no such setting.
+	//
+	// Measured from the last interactive sign-in, not from the last refresh:
+	// a ceiling that any refresh resets is not a ceiling.
+	MaxSession time.Duration
 	// Now is the clock, for tests.
 	Now func() time.Time
 }
+
+// DefaultMaxSession is the ceiling applied when a caller names none.
+//
+// Twelve hours is a working day: long enough that nobody signs in twice during
+// one, short enough that a laptop left somewhere overnight holds nothing that
+// still works in the morning.
+const DefaultMaxSession = 12 * time.Hour
 
 func (o Options) now() time.Time {
 	if o.Now != nil {
@@ -81,7 +102,10 @@ type Credential struct {
 	Source string
 }
 
-// Fetch obtains a credential for the binnacle server at base.
+// Fetch obtains a credential for the binnacle server at base, once.
+//
+// Prefer [Start] for anything long-running: a credential fetched here is a
+// snapshot, and the ID token behind it is typically good for minutes.
 func Fetch(ctx context.Context, base string, opts Options) (Credential, error) {
 	base = strings.TrimRight(base, "/")
 
@@ -89,6 +113,12 @@ func Fetch(ctx context.Context, base string, opts Options) (Credential, error) {
 	if err != nil {
 		return Credential{}, err
 	}
+	return fetchWith(ctx, base, info, opts)
+}
+
+// fetchWith is Fetch once the server has already been asked what it wants, so
+// that a [Session] can keep the answer instead of asking again per renewal.
+func fetchWith(ctx context.Context, base string, info auth.ClientAuthInfo, opts Options) (Credential, error) {
 	if !info.Required {
 		// Said plainly because the alternative — silently sending nothing and
 		// failing later with a 401 — is the confusing version of this.

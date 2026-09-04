@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -93,6 +94,13 @@ type ServerConfig struct {
 	// Cluster, when set, skips the fleet list and goes straight to this
 	// cluster's detail view. Format is "namespace/name".
 	Cluster string `yaml:"cluster,omitempty"`
+	// MaxSession caps how long a saved credential may be renewed before a
+	// fresh sign-in is required, measured from that sign-in. Zero uses
+	// clientauth.DefaultMaxSession; negative disables the ceiling.
+	//
+	// It is here rather than in a site profile because it is a property of the
+	// machine the credential sits on, not of the cluster being watched.
+	MaxSession time.Duration `yaml:"max_session,omitempty"`
 }
 
 // Cluster identifies one cluster to watch.
@@ -186,6 +194,9 @@ func (c *Config) MergeFile(path string) error {
 	setIfEmpty(&c.Server.URL, loaded.Server.URL)
 	setIfEmpty(&c.Server.Token, loaded.Server.Token)
 	setIfEmpty(&c.Server.Cluster, loaded.Server.Cluster)
+	if c.Server.MaxSession == 0 {
+		c.Server.MaxSession = loaded.Server.MaxSession
+	}
 	if len(c.Server.TokenCommand) == 0 {
 		c.Server.TokenCommand = loaded.Server.TokenCommand
 	}

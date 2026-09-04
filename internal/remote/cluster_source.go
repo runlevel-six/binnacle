@@ -29,14 +29,14 @@ import (
 // context is canceled.
 type ClusterSource struct {
 	base   string
-	token  string
+	token  TokenFunc
 	ns     string
 	name   string
 	client *http.Client
 }
 
 // NewClusterSource builds a source for one cluster on the given server.
-func NewClusterSource(base, token, namespace, name string) *ClusterSource {
+func NewClusterSource(base string, token TokenFunc, namespace, name string) *ClusterSource {
 	return &ClusterSource{
 		base:   strings.TrimRight(base, "/"),
 		token:  token,
@@ -58,9 +58,7 @@ func (s *ClusterSource) Detect(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if s.token != "" {
-		req.Header.Set("Authorization", "Bearer "+s.token)
-	}
+	s.authorize(req)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return false, err
@@ -104,9 +102,7 @@ func (s *ClusterSource) stream(ctx context.Context, st *store.Store) error {
 	if err != nil {
 		return err
 	}
-	if s.token != "" {
-		req.Header.Set("Authorization", "Bearer "+s.token)
-	}
+	s.authorize(req)
 	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := s.client.Do(req)
@@ -137,3 +133,13 @@ func (s *ClusterSource) stream(ctx context.Context, st *store.Store) error {
 }
 
 var _ plugin.Source = (*ClusterSource)(nil)
+
+// authorize stamps the current credential on a request, if there is one.
+func (s *ClusterSource) authorize(req *http.Request) {
+	if s.token == nil {
+		return
+	}
+	if tok := s.token(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+}

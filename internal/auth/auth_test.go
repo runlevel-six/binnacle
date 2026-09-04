@@ -1,8 +1,11 @@
 package auth
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -196,5 +199,87 @@ func TestUnauthenticated_WarnsVisibly(t *testing.T) {
 	// Open, which is only ever loopback, has nobody to warn.
 	if (Open{}).Warning() != "" {
 		t.Error("loopback should need no banner")
+	}
+}
+
+// stubProvider is an OpenID Connect discovery document and nothing else, which
+// is all NewOIDC reads at startup.
+func stubProvider(t *testing.T) string {
+	t.Helper()
+	var url string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                                url,
+			"authorization_endpoint":                url + "/auth",
+			"token_endpoint":                        url + "/token",
+			"jwks_uri":                              url + "/jwks",
+			"id_token_signing_alg_values_supported": []string{"RS256"},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	url = srv.URL
+	return url
+}
+
+// The CLI's scopes are published separately from the browser's, because
+// offline_access belongs on one flow and not the other: a browser session
+// should end with the SSO session, and a terminal has to survive the gaps.
+func TestClientAuth_PublishesCLIScopesSeparately(t *testing.T) {
+	issuer := stubProvider(t)
+	a, err := NewOIDC(context.Background(), OIDCConfig{
+		Issuer:      issuer,
+		ClientID:    "web",
+		CLIClientID: "cli",
+		RedirectURL: "https://binnacle.example/auth/callback",
+		Scopes:      []string{"openid", "profile", "email"},
+		CLIScopes:   []string{"openid", "profile", "email", "offline_access"},
+		SessionKey:  []byte("0123456789abcdef0123456789abcdef"),
+	})
+	if err != nil {
+		t.Fatalf("NewOIDC: %v", err)
+	}
+
+	if info := a.ClientAuth(); !slices.Contains(info.Scopes, "offline_access") {
+		t.Errorf("the terminal was not told to request offline_access: %v", info.Scopes)
+	}
+	if slices.Contains(a.oauth.Scopes, "offline_access") {
+		t.Error("offline_access leaked into the browser's flow")
+	}
+}
+
+// Unset, the terminal is told what the browser uses — the behavior before this
+// existed, and what a deployment that wants no offline tokens keeps.
+func TestClientAuth_CLIScopesDefaultToTheBrowsers(t *testing.T) {
+	issuer := stubProvider(t)
+	a, err := NewOIDC(context.Background(), OIDCConfig{
+		Issuer:      issuer,
+		ClientID:    "web",
+		RedirectURL: "https://binnacle.example/auth/callback",
+		SessionKey:  []byte("0123456789abcdef0123456789abcdef"),
+	})
+	if err != nil {
+		t.Fatalf("NewOIDC: %v", err)
+	}
+	if got := a.ClientAuth().Scopes; !slices.Equal(got, a.oauth.Scopes) {
+		t.Errorf("cli scopes %v, want the browser's %v", got, a.oauth.Scopes)
+	}
+}
+
+// Without openid the provider returns no ID token, and the ID token is the
+// whole credential. Better to fail at startup than at a device-code prompt.
+func TestNewOIDC_RejectsCLIScopesWithoutOpenID(t *testing.T) {
+	issuer := stubProvider(t)
+	_, err := NewOIDC(context.Background(), OIDCConfig{
+		Issuer:      issuer,
+		ClientID:    "web",
+		RedirectURL: "https://binnacle.example/auth/callback",
+		CLIScopes:   []string{"profile", "offline_access"},
+		SessionKey:  []byte("0123456789abcdef0123456789abcdef"),
+	})
+	if err == nil {
+		t.Fatal("expected an error for cli scopes without openid")
+	}
+	if !strings.Contains(err.Error(), "openid") {
+		t.Errorf("the error does not name the missing scope: %v", err)
 	}
 }

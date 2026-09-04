@@ -58,6 +58,7 @@ sextant renders the fleet list and per-cluster detail in the terminal.
 | `--server URL` | Connect to a binnacle server at this URL instead of reading a kubeconfig. |
 | `--server-cluster NS/NAME` | With `--server`, skip the fleet list and go straight to one cluster's detail. Press Esc to return to the fleet. |
 | `--token` | Bearer token for `--server`. Usually unnecessary: sextant signs in on its own. |
+| `--sign-out` | Discard the saved credential for `--server`, revoke it at the provider, and exit. |
 
 These can also be set in the config file's `server:` section or via environment
 variables; see [Configuration](configuration.md).
@@ -88,8 +89,30 @@ deployments need no configuration at all. In order:
    URL and a code, you approve it in any browser, and it continues.
 
 Tokens are saved under your user cache directory (`sextant/tokens.json`, mode
-`0600`) so a sign-in lasts across runs rather than per invocation. Delete that
-file to sign out.
+`0600`) so a sign-in lasts across runs rather than per invocation. `--sign-out`
+removes the saved credential and revokes it at the provider; deleting the file
+by hand only does the first half, which for a long-lived credential is tidying
+up rather than signing out.
+
+### How long a session lasts
+
+The credential sextant presents is an ID token, and an ID token is short —
+five minutes in a stock Keycloak. Sextant renews it as it ages, so a dashboard
+left open all day keeps working without anybody signing in again. Two things
+end a session:
+
+- **The provider.** A refresh only works while the provider still has a session
+  behind it. With the usual scopes that is the SSO session, which typically
+  goes idle after 30 minutes — long enough for a dashboard that is running and
+  refreshing, not long enough to survive an afternoon of meetings with sextant
+  closed. A deployment that wants sessions to survive the gaps configures
+  `offline_access`; see [binnacle server](binnacle-server.md).
+- **`max_session`.** Sextant's own ceiling, 12 hours by default, measured from
+  the last time you actually signed in — not from the last renewal, or it would
+  not be a ceiling. Past it, the saved credential is discarded and the next run
+  asks you to sign in. Set `server.max_session` in the config file to change it;
+  a negative value turns it off, which is only sensible where the provider
+  imposes a bound of its own.
 
 Sextant only offers to sign in when stdin and stderr are both terminals. In a
 script or a pipeline it reports what it needs instead of waiting for a browser

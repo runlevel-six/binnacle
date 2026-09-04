@@ -110,6 +110,13 @@ spec:
             # right for a deployment with one client. Clients see whichever
             # applies at /api/v1/authinfo.
             - --oidc-cli-client-id=binnacle-cli
+            # Scopes the terminal client requests. Adding offline_access lets a
+            # `sextant --server` session survive being closed for hours, which
+            # the default scopes do not: an ordinary refresh token dies with the
+            # provider's SSO session. Bound it at the provider *and* leave
+            # sextant's own max_session ceiling in place — an offline token
+            # defaults to 30 days in a stock Keycloak. Not set by default.
+            # - --oidc-cli-scopes=openid,profile,email,offline_access
           env:
             # Neither of these is a flag: a command line is visible in the
             # process table.

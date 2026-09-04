@@ -34,6 +34,31 @@ type entry struct {
 	// Saved is when this was written, for diagnostics only. Expiry is read
 	// from the token itself, which is the authority.
 	Saved time.Time `json:"saved"`
+	// FirstSignIn is when the operator last actually signed in, carried
+	// forward across every refresh. It is what [Options.MaxSession] measures,
+	// so a session cannot be extended indefinitely by refreshing it.
+	//
+	// Absent on an entry written before this field existed; see
+	// [entry.started].
+	FirstSignIn time.Time `json:"first_sign_in,omitempty"`
+}
+
+// started reports when this session began, and whether that is known at all.
+//
+// An entry written by an older sextant carries no FirstSignIn, so the time it
+// was last written stands in — the closest thing to a start time it has, and
+// wrong only in the direction of expiring sooner. An entry with neither is
+// unknown, which a ceiling cannot judge: see [expired], which lets it through
+// once. The next write stamps a real value, so unknown converts to known on the
+// first renewal rather than persisting.
+func (e entry) started() (time.Time, bool) {
+	switch {
+	case !e.FirstSignIn.IsZero():
+		return e.FirstSignIn, true
+	case !e.Saved.IsZero():
+		return e.Saved, true
+	}
+	return time.Time{}, false
 }
 
 // UserCache returns the cache in the user's cache directory, creating it.
@@ -81,10 +106,21 @@ func (c *Cache) load() map[string]entry {
 	return m
 }
 
+// Lookup returns the stored entry for a server, whatever minted it.
+//
+// Signing out uses this rather than [Cache.Get]: it has to work when the server
+// is unreachable, and asking the server which provider it uses in order to
+// decide whether to delete a local file would make signing out depend on the
+// thing you are signing out of.
+func (c *Cache) Lookup(server string) (entry, bool) {
+	e, ok := c.load()[server]
+	return e, ok
+}
+
 // Get returns the stored entry for a server, if it was minted by the same
 // provider and client the server currently names.
 func (c *Cache) Get(server, issuer, clientID string) (entry, bool) {
-	e, ok := c.load()[server]
+	e, ok := c.Lookup(server)
 	if !ok {
 		return entry{}, false
 	}

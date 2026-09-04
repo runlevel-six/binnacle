@@ -120,6 +120,22 @@ Without it you get the built-in default: the pods pane lists unhealthy pods but
 pins no critical workloads, and a node cordoned by design is reported as a
 drain in progress.
 
+## Staying signed in
+
+Sextant renews its credential while it runs, so a dashboard left open all day
+keeps working. Between runs is a different question: with the usual scopes the
+saved refresh token is tied to your provider's SSO session, which commonly goes
+idle in 30 minutes, so closing sextant before a long meeting means signing in
+again afterwards.
+
+If that is the shape of your day, ask whoever runs the deployment to add
+`offline_access` to `--oidc-cli-scopes`. Sextant then keeps a credential that
+survives the gap — bounded by `server.max_session` in your config, 12 hours by
+default, measured from when you signed in.
+
+`sextant --server ... --sign-out` ends it deliberately: the local credential is
+removed and the session is revoked at the provider.
+
 ## When something is wrong
 
 The fleet screen tells you rather than showing an empty list. An unreachable
